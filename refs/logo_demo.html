@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manifest3D - Adjusted Gap</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background-color: #f4f5f9;
+            display: flex;
+            justify-content: center;
+            font-family: sans-serif;
+        }
+
+        .header-container {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            width: 100%;
+            max-width: 1200px;
+            border-radius: 20px;
+            padding: 12px 32px;
+            display: flex;
+            align-items: center;
+            border: 1px solid rgba(255, 255, 255, 1);
+            box-shadow: 0 10px 30px -10px rgba(45, 45, 80, 0.08);
+        }
+
+        .brand-wrapper {
+            display: flex;
+            align-items: center;
+            /* REDUCED GAP: Set to a very small amount */
+            gap: 4px; 
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+
+        .brand-wrapper:hover {
+            transform: translateY(-2px) scale(1.02);
+        }
+
+        .brand-logo-img {
+            width: 48px;
+            height: 48px;
+            object-fit: contain;
+            filter: drop-shadow(0 4px 6px rgba(139, 92, 246, 0.2));
+            
+            /* NEW: Pulls the text closer, ignoring transparent space inside the PNG */
+            margin-right: -36px; 
+        }
+
+        .crystal-text-svg {
+            height: 70px;
+            width: 380px;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-container">
+        
+        <div class="brand-wrapper">
+            <img src="logo.png" alt="Manifest3D Logo" class="brand-logo-img">
+            
+            <svg class="crystal-text-svg" viewBox="0 0 380 90" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="crystalGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#e8cbf5" />
+                        <stop offset="40%" stop-color="#c175ff" />
+                        <stop offset="100%" stop-color="#8424e8" />
+                    </linearGradient>
+
+                    <filter id="smooth-glass" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur in="SourceAlpha" stdDeviation="3.5" result="smoothAlpha" />
+                        
+                        <feSpecularLighting in="smoothAlpha" surfaceScale="4" specularConstant="1.2" specularExponent="45" lighting-color="#ffffff" result="specLight">
+                            <feDistantLight azimuth="-45" elevation="55" />
+                        </feSpecularLighting>
+                        <feComposite in="specLight" in2="SourceAlpha" operator="in" result="specLightMasked" />
+
+                        <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="shadowBlur" />
+                        <feOffset dx="-1" dy="4" in="shadowBlur" result="shadowOffset" />
+                        <feComposite in="SourceAlpha" in2="shadowOffset" operator="out" result="shadowMask" />
+                        <feFlood flood-color="#410082" flood-opacity="0.8" result="shadowColor" />
+                        <feComposite in="shadowColor" in2="shadowMask" operator="in" result="innerShadow" />
+
+                        <feOffset dx="1" dy="-2" in="shadowBlur" result="rimOffset" />
+                        <feComposite in="SourceAlpha" in2="rimOffset" operator="out" result="rimMask" />
+                        <feFlood flood-color="#ffffff" flood-opacity="0.6" result="rimColor" />
+                        <feComposite in="rimColor" in2="rimMask" operator="in" result="innerRim" />
+
+                        <feMerge result="merged">
+                            <feMergeNode in="SourceGraphic" />
+                            <feMergeNode in="innerShadow" />
+                            <feMergeNode in="innerRim" />
+                            <feMergeNode in="specLightMasked" />
+                        </feMerge>
+
+                        <feDropShadow in="merged" dx="0" dy="8" stdDeviation="6" flood-color="#6924c6" flood-opacity="0.25" />
+                    </filter>
+                </defs>
+                
+                <text x="0" y="55%" dominant-baseline="middle"
+                      font-family="'Fredoka', sans-serif" 
+                      font-weight="700" 
+                      font-size="62" 
+                      letter-spacing="-0.03em"
+                      fill="url(#crystalGrad)" 
+                      stroke="#6416b5" stroke-width="2" stroke-opacity="0.8"
+                      filter="url(#smooth-glass)">
+                    Manifest3D
+                </text>
+            </svg>
+        </div>
+
+    </div>
+
+</body>
+</html>
