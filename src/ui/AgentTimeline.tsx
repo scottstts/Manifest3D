@@ -4,15 +4,19 @@ import {
   CircleDashed,
   XCircle,
 } from 'lucide-react'
-import { createValidationTimeline } from '../engine/agent/validationTimeline'
+import {
+  createValidationTimeline,
+  type AgentTimelineItem,
+} from '../engine/agent/validationTimeline'
 import type { ValidationReport } from '../engine/schema/validationTypes'
 
 type AgentTimelineProps = {
-  reports: readonly ValidationReport[]
+  items?: readonly AgentTimelineItem[]
+  reports?: readonly ValidationReport[]
 }
 
-export function AgentTimeline({ reports }: AgentTimelineProps) {
-  const timelineItems = reports.flatMap(createValidationTimeline)
+export function AgentTimeline({ items, reports = [] }: AgentTimelineProps) {
+  const timelineItems = items ?? reports.flatMap(createValidationTimeline)
 
   if (timelineItems.length === 0) {
     return null

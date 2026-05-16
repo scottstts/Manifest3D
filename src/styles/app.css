@@ -378,6 +378,14 @@
   list-style: none;
 }
 
+.agent-status {
+  margin: 0 44px 14px 0;
+  color: #3f478d;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .agent-timeline__item {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
@@ -467,6 +475,15 @@
   opacity: 1;
 }
 
+.prompt-composer textarea:disabled {
+  color: #7379b5;
+  cursor: wait;
+}
+
+.prompt-composer__file-input {
+  display: none;
+}
+
 .prompt-composer__actions {
   display: flex;
   gap: 8px;
@@ -498,9 +515,37 @@
   transform: translateY(-1px);
 }
 
+.prompt-composer button:disabled {
+  color: #8e92c4;
+  cursor: default;
+  background: rgb(255 255 255 / 0.34);
+  box-shadow: none;
+  opacity: 0.68;
+}
+
+.prompt-composer button:disabled:hover {
+  color: #8e92c4;
+  background: rgb(255 255 255 / 0.34);
+  box-shadow: none;
+  transform: none;
+}
+
 .prompt-composer svg {
   width: 18px;
   height: 18px;
+}
+
+.prompt-composer__attachment-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  background: #4f8c7c;
+  border-radius: 999px;
 }
 
 .prompt-composer .send-button {
@@ -508,6 +553,12 @@
   color: #fff;
   background: #7772ea;
   box-shadow: 0 10px 24px rgb(85 80 220 / 0.22);
+}
+
+.prompt-composer .send-button:disabled {
+  color: #8e92c4;
+  background: rgb(255 255 255 / 0.34);
+  box-shadow: none;
 }
 
 .prompt-composer .send-button svg {

@@ -14,14 +14,21 @@ Return one object with this shape:
   "materials": [],
   "checks": [],
   "allowances": [],
-  "metadata": {
+    "metadata": {
     "createdAt": "ISO-8601 datetime",
     "updatedAt": "ISO-8601 datetime",
     "sourceImageIds": [],
-    "generationStatus": "draft"
+    "generationStatus": "ready"
   }
 }
 ```
+
+For structured output, include fully populated values for optional authoring
+fields when they are useful: visual `name`, part `role` and `description`,
+all transform `position`/`rotation`/`scale` arrays, material `opacity`, and
+geometry segment or bevel fields. Use `position: [0, 0, 0]`,
+`rotation: [0, 0, 0]`, and `scale: [1, 1, 1]` when no local transform is
+needed.
 
 Part visuals support geometry types `box`, `cylinder`, `sphere`, `cone`, `torus`, `lathe`, `extrude`, and `tube`. Visual transforms are local to the owning part.
 

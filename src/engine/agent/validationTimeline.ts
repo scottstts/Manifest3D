@@ -7,6 +7,7 @@ import type {
   CandidateAttempt,
   CandidateHistorySnapshot,
 } from './candidateHistory'
+import type { AgentLoopEvent } from './agentLoop'
 
 export type AgentTimelineItemKind =
   | 'agent_step'
@@ -49,6 +50,18 @@ export function createCandidateHistoryTimeline(
       id: `${attempt.id}:${item.id}`,
     })),
   ])
+}
+
+export function createAgentEventTimelineItem(
+  event: AgentLoopEvent,
+): AgentTimelineItem {
+  return {
+    detail: event.detail,
+    id: event.id,
+    kind: 'agent_step',
+    label: event.label,
+    status: event.status,
+  }
 }
 
 function createAttemptTimelineItem(
