@@ -3,6 +3,7 @@ import type { ManifestAsset, ManifestScene } from './manifestTypes'
 
 const finiteNumber = z.number().finite()
 const positiveNumber = finiteNumber.positive()
+const nonNegativeNumber = finiteNumber.min(0)
 const nonEmptyId = z.string().trim().min(1)
 const segmentCount = z.number().int().min(3).max(192)
 const hexColor = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/)
@@ -12,6 +13,11 @@ export const manifestVector3Schema = z.tuple([
   finiteNumber,
   finiteNumber,
   finiteNumber,
+])
+const manifestPositiveVector3Schema = z.tuple([
+  positiveNumber,
+  positiveNumber,
+  positiveNumber,
 ])
 
 export const manifestTransformSchema = z
@@ -26,7 +32,7 @@ export const manifestGeometrySchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('box'),
-      size: manifestVector3Schema,
+      size: manifestPositiveVector3Schema,
     })
     .strict(),
   z
@@ -109,6 +115,7 @@ export const manifestMaterialSchema = z
 export const manifestVisualSchema = z
   .object({
     id: nonEmptyId,
+    name: z.string().trim().min(1).optional(),
     geometry: manifestGeometrySchema,
     transform: manifestTransformSchema,
     materialId: nonEmptyId,
@@ -123,15 +130,18 @@ export const manifestPartRoleSchema = z.enum([
   'hinge',
   'control',
   'decor',
+  'support',
+  'fastener',
+  'mechanism',
 ])
 
 export const manifestPartSchema = z
   .object({
     id: nonEmptyId,
     name: z.string().trim().min(1),
-    parentId: nonEmptyId.nullable(),
-    visuals: z.array(manifestVisualSchema),
     role: manifestPartRoleSchema.optional(),
+    description: z.string().trim().min(1).optional(),
+    visuals: z.array(manifestVisualSchema),
   })
   .strict()
 
@@ -142,6 +152,15 @@ export const manifestJointTypeSchema = z.enum([
   'continuous',
 ])
 
+export const manifestJointLimitsSchema = z
+  .object({
+    lower: finiteNumber.optional(),
+    upper: finiteNumber.optional(),
+    effort: positiveNumber.optional(),
+    velocity: positiveNumber.optional(),
+  })
+  .strict()
+
 export const manifestJointSchema = z
   .object({
     id: nonEmptyId,
@@ -149,70 +168,107 @@ export const manifestJointSchema = z
     type: manifestJointTypeSchema,
     parentPartId: nonEmptyId,
     childPartId: nonEmptyId,
-    origin: manifestTransformSchema.optional(),
+    origin: manifestTransformSchema,
     axis: manifestVector3Schema.optional(),
-    limits: z
-      .object({
-        lower: finiteNumber.optional(),
-        upper: finiteNumber.optional(),
-      })
-      .strict()
-      .optional(),
+    limits: manifestJointLimitsSchema.optional(),
   })
   .strict()
 
-const promptTestSchema = z.discriminatedUnion('type', [
+const manifestAxesSchema = z.enum(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'])
+
+const manifestCheckSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('part_exists'),
-      partName: z.string().trim().min(1),
+      partId: nonEmptyId,
     })
     .strict(),
   z
     .object({
       type: z.literal('joint_exists'),
-      jointName: z.string().trim().min(1),
+      jointId: nonEmptyId,
       jointType: manifestJointTypeSchema.optional(),
     })
     .strict(),
   z
     .object({
-      type: z.literal('part_count_min'),
-      count: z.number().int().min(1),
+      type: z.literal('expect_contact'),
+      partAId: nonEmptyId,
+      partBId: nonEmptyId,
+      visualAId: nonEmptyId.optional(),
+      visualBId: nonEmptyId.optional(),
+      contactTolerance: nonNegativeNumber.optional(),
     })
     .strict(),
   z
     .object({
-      type: z.literal('material_exists'),
-      materialName: z.string().trim().min(1),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('bbox_min'),
-      target: z.string().trim().min(1),
+      type: z.literal('expect_gap'),
+      positivePartId: nonEmptyId,
+      negativePartId: nonEmptyId,
       axis: z.enum(['x', 'y', 'z']),
-      min: positiveNumber,
+      minGap: finiteNumber.optional(),
+      maxGap: finiteNumber.optional(),
+      maxPenetration: nonNegativeNumber.optional(),
+      positiveVisualId: nonEmptyId.optional(),
+      negativeVisualId: nonEmptyId.optional(),
     })
     .strict(),
   z
     .object({
-      type: z.literal('connected'),
-      partA: z.string().trim().min(1),
-      partB: z.string().trim().min(1),
+      type: z.literal('expect_overlap'),
+      partAId: nonEmptyId,
+      partBId: nonEmptyId,
+      axes: manifestAxesSchema,
+      minOverlap: nonNegativeNumber.optional(),
+      visualAId: nonEmptyId.optional(),
+      visualBId: nonEmptyId.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('expect_within'),
+      innerPartId: nonEmptyId,
+      outerPartId: nonEmptyId,
+      axes: manifestAxesSchema,
+      margin: nonNegativeNumber.optional(),
+      innerVisualId: nonEmptyId.optional(),
+      outerVisualId: nonEmptyId.optional(),
+    })
+    .strict(),
+])
+
+const manifestAllowanceSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('allow_overlap'),
+      partAId: nonEmptyId,
+      partBId: nonEmptyId,
+      visualAId: nonEmptyId.optional(),
+      visualBId: nonEmptyId.optional(),
+      reason: z.string().trim().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('allow_isolated_part'),
+      partId: nonEmptyId,
+      reason: z.string().trim().min(1),
     })
     .strict(),
 ])
 
 export const manifestAssetSchema = z
   .object({
+    schemaVersion: z.literal(2),
     id: nonEmptyId,
     name: z.string().trim().min(1),
     prompt: z.string(),
+    units: z.literal('meters'),
     parts: z.array(manifestPartSchema).min(1),
     joints: z.array(manifestJointSchema),
     materials: z.array(manifestMaterialSchema).min(1),
-    tests: z.array(promptTestSchema),
+    checks: z.array(manifestCheckSchema),
+    allowances: z.array(manifestAllowanceSchema),
     metadata: z
       .object({
         createdAt: z.string().datetime(),
@@ -234,6 +290,10 @@ export const manifestSceneSchema = z
 
 export function parseManifestAsset(candidate: unknown): ManifestAsset {
   return manifestAssetSchema.parse(candidate) as ManifestAsset
+}
+
+export function safeParseManifestAsset(candidate: unknown) {
+  return manifestAssetSchema.safeParse(candidate)
 }
 
 export function parseManifestScene(candidate: unknown): ManifestScene {

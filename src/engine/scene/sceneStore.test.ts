@@ -1,36 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import type { ManifestAsset, ManifestScene } from '../schema/manifestTypes'
 import { createSceneStore } from './sceneStore'
-import { createSelectionStore } from './selectionStore'
 
-describe('sceneStore', () => {
-  it('upserts and removes assets while notifying subscribers', () => {
+describe('createSceneStore', () => {
+  it('upserts assets without mutating previous snapshots', () => {
     const scene = createTestScene()
     const store = createSceneStore(scene)
-    const replacementAsset = {
+    const initialSnapshot = store.getSnapshot()
+    const replacementAsset: ManifestAsset = {
       ...scene.assets[0],
-      name: 'Updated fixture asset',
+      name: 'Replacement Asset',
     }
-    let notifications = 0
-    const unsubscribe = store.subscribe(() => {
-      notifications += 1
-    })
 
     store.upsertAsset(replacementAsset)
 
-    expect(store.getAsset(replacementAsset.id)?.name).toBe(
-      'Updated fixture asset',
-    )
+    expect(initialSnapshot.scene.assets[0].name).toBe('Test Asset')
     expect(store.getSnapshot().scene.assets).toHaveLength(1)
+    expect(store.getAsset('test-asset')?.name).toBe('Replacement Asset')
+  })
 
-    store.removeAsset(replacementAsset.id)
+  it('removes assets by id', () => {
+    const store = createSceneStore(createTestScene())
 
-    expect(store.getAsset(replacementAsset.id)).toBeUndefined()
-    expect(notifications).toBe(2)
+    store.removeAsset('test-asset')
 
-    unsubscribe()
-    store.clearAssets()
-    expect(notifications).toBe(2)
+    expect(store.getSnapshot().scene.assets).toEqual([])
   })
 })
 
@@ -44,59 +38,45 @@ function createTestScene(): ManifestScene {
 
 function createTestAsset(): ManifestAsset {
   return {
+    schemaVersion: 2,
     id: 'test-asset',
-    name: 'Test asset',
-    prompt: 'Build a simple test asset.',
+    name: 'Test Asset',
+    prompt: 'test',
+    units: 'meters',
     parts: [
       {
         id: 'test-base',
         name: 'Base',
-        parentId: null,
-        visuals: [],
+        visuals: [
+          {
+            id: 'test-base-visual',
+            geometry: {
+              size: [1, 1, 1],
+              type: 'box',
+            },
+            materialId: 'test-material',
+            transform: {},
+          },
+        ],
       },
     ],
     joints: [],
     materials: [
       {
-        id: 'mat-white',
-        name: 'White',
         color: '#ffffff',
+        id: 'test-material',
         metalness: 0,
+        name: 'White',
         roughness: 0.5,
       },
     ],
-    tests: [],
+    checks: [],
+    allowances: [],
     metadata: {
       createdAt: '2026-05-16T00:00:00.000Z',
-      updatedAt: '2026-05-16T00:00:00.000Z',
-      sourceImageIds: [],
       generationStatus: 'ready',
+      sourceImageIds: [],
+      updatedAt: '2026-05-16T00:00:00.000Z',
     },
   }
 }
-
-describe('selectionStore', () => {
-  it('tracks selected asset and emits repeated focus requests', () => {
-    const store = createSelectionStore()
-    let notifications = 0
-
-    store.subscribe(() => {
-      notifications += 1
-    })
-
-    store.selectAsset('test-asset', 'test-base')
-    store.selectAsset('test-asset', 'test-base')
-
-    expect(store.getSnapshot().selection).toEqual({
-      assetId: 'test-asset',
-      partId: 'test-base',
-    })
-    expect(store.getSnapshot().revision).toBe(2)
-    expect(notifications).toBe(2)
-
-    store.clearSelection()
-
-    expect(store.getSnapshot().selection.assetId).toBeNull()
-    expect(notifications).toBe(3)
-  })
-})

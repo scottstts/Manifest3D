@@ -1,17 +1,21 @@
 import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import type { Ref } from 'react'
+import type { ValidationReport } from '../engine/schema/validationTypes'
+import { AgentTimeline } from './AgentTimeline'
 import { PromptComposer } from './PromptComposer'
 
 type ChatPanelProps = {
   isCollapsed: boolean
   onCollapsedChange: (isCollapsed: boolean) => void
   panelRef?: Ref<HTMLElement>
+  validationReports: readonly ValidationReport[]
 }
 
 export function ChatPanel({
   isCollapsed,
   onCollapsedChange,
   panelRef,
+  validationReports,
 }: ChatPanelProps) {
   return (
     <aside
@@ -32,7 +36,9 @@ export function ChatPanel({
           <PanelRightClose aria-hidden="true" />
         )}
       </button>
-      <div className="chat-thread" aria-label="Conversation" />
+      <div className="chat-thread" aria-label="Conversation">
+        {!isCollapsed && <AgentTimeline reports={validationReports} />}
+      </div>
       {!isCollapsed && <PromptComposer />}
     </aside>
   )

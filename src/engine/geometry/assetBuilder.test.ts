@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
 import { parseManifestAsset } from '../schema/manifestSchema'
-import type { ManifestAsset } from '../schema/manifestTypes'
 import {
   buildManifestAsset,
   disposeManifestObject,
@@ -8,118 +8,49 @@ import {
 } from './assetBuilder'
 
 describe('buildManifestAsset', () => {
-  it('builds a Manifest3D asset group with selectable metadata', () => {
-    const asset = createValidAsset()
+  it('builds a joint-driven selectable asset group', () => {
+    const asset = createValidValidationFixtureAsset()
     const builtAsset = buildManifestAsset(asset)
-    const mesh = builtAsset.visualMeshes.get('test-core-cylinder')
 
-    expect(builtAsset.group.name).toBe(asset.name)
-    expect(builtAsset.group.userData.manifest3d).toMatchObject({
-      assetId: asset.id,
-      kind: 'asset',
-    })
-    expect(builtAsset.partGroups.size).toBe(asset.parts.length)
+    expect(builtAsset.group.name).toBe('Validation Crate')
+    expect(builtAsset.partGroups.size).toBe(2)
+    expect(builtAsset.jointGroups.size).toBe(1)
     expect(builtAsset.visualMeshes.size).toBe(2)
-    expect(mesh).toBeDefined()
-    expect(findManifestObjectData(mesh!)).toMatchObject({
-      assetId: asset.id,
-      kind: 'visual',
-      partId: 'test-core',
-      visualId: 'test-core-cylinder',
-    })
     expect(builtAsset.bounds.isEmpty()).toBe(false)
+
+    const lidGroup = builtAsset.partGroups.get('crate-lid')
+    const lidJointGroup = builtAsset.jointGroups.get('crate-lid-hinge')
+
+    expect(lidGroup?.parent).toBe(lidJointGroup)
+    expect(lidJointGroup?.parent).toBe(builtAsset.partGroups.get('crate-base'))
+
+    const visual = builtAsset.visualMeshes.get('crate-lid-panel')
+
+    expect(visual).toBeDefined()
+    expect(visual ? findManifestObjectData(visual) : null).toMatchObject({
+      assetId: 'validation-crate',
+      kind: 'visual',
+      partId: 'crate-lid',
+      visualId: 'crate-lid-panel',
+    })
 
     disposeManifestObject(builtAsset.group)
   })
 
-  it('fails before building meshes that reference missing materials', () => {
-    const asset = createValidAsset()
+  it('throws when a visual references a missing material', () => {
+    const asset = createValidValidationFixtureAsset()
 
-    asset.parts[0].visuals[0].materialId = 'missing-material'
+    asset.parts[0].visuals[0].materialId = 'missing'
 
     expect(() => buildManifestAsset(asset)).toThrow(/missing material/)
   })
-})
 
-function createValidAsset(): ManifestAsset {
-  return parseManifestAsset({
-    id: 'test-asset',
-    name: 'Test asset',
-    prompt: 'Build a compact test asset.',
-    parts: [
-      {
-        id: 'test-base',
-        name: 'Base',
-        parentId: null,
-        role: 'base',
-        visuals: [
-          {
-            id: 'test-base-box',
-            geometry: {
-              type: 'box',
-              size: [0.4, 0.2, 0.3],
-            },
-            materialId: 'mat-white',
-            transform: {
-              position: [0, 0.1, 0],
-            },
-          },
-        ],
-      },
-      {
-        id: 'test-core',
-        name: 'Core',
-        parentId: 'test-base',
-        role: 'housing',
-        visuals: [
-          {
-            id: 'test-core-cylinder',
-            geometry: {
-              type: 'cylinder',
-              height: 0.32,
-              radialSegments: 16,
-              radiusBottom: 0.12,
-              radiusTop: 0.08,
-            },
-            materialId: 'mat-blue',
-            transform: {
-              position: [0, 0.36, 0],
-            },
-          },
-        ],
-      },
-    ],
-    joints: [
-      {
-        id: 'test-core-fixed',
-        name: 'Core fixed to base',
-        type: 'fixed',
-        parentPartId: 'test-base',
-        childPartId: 'test-core',
-      },
-    ],
-    materials: [
-      {
-        id: 'mat-white',
-        name: 'White',
-        color: '#ffffff',
-        metalness: 0,
-        roughness: 0.5,
-      },
-      {
-        id: 'mat-blue',
-        name: 'Blue',
-        color: '#6677ff',
-        metalness: 0.1,
-        roughness: 0.4,
-      },
-    ],
-    tests: [],
-    metadata: {
-      createdAt: '2026-05-16T00:00:00.000Z',
-      updatedAt: '2026-05-16T00:00:00.000Z',
-      sourceImageIds: [],
-      generationStatus: 'ready',
-    },
+  it('throws when the joint graph has more than one root', () => {
+    const asset = parseManifestAsset({
+      ...createValidValidationFixtureAsset(),
+      joints: [],
+    })
+
+    expect(() => buildManifestAsset(asset)).toThrow(/exactly one root/)
   })
-}
+})

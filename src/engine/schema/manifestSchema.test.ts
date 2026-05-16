@@ -3,27 +3,30 @@ import type { ManifestScene } from './manifestTypes'
 import { parseManifestScene, safeParseManifestScene } from './manifestSchema'
 
 describe('manifestSchema', () => {
-  it('parses a valid scene document', () => {
+  it('accepts a valid Contract V2 scene', () => {
     const scene = createValidScene()
 
     expect(parseManifestScene(scene)).toEqual(scene)
   })
 
-  it('rejects malformed geometry values', () => {
+  it('rejects malformed geometry descriptors', () => {
     const invalidScene = createValidScene()
 
     invalidScene.assets[0].parts[0].visuals[0].geometry = {
+      size: [0.8, 0, 0.4],
       type: 'box',
-      size: [0.2, Number.NaN, 0.2],
     }
 
     expect(safeParseManifestScene(invalidScene).success).toBe(false)
   })
 
-  it('keeps material colors constrained to compact hex values', () => {
+  it('rejects legacy parentId and tests fields', () => {
     const invalidScene = createValidScene()
+    const legacyPart = invalidScene.assets[0].parts[0] as Record<string, unknown>
+    const legacyAsset = invalidScene.assets[0] as Record<string, unknown>
 
-    invalidScene.assets[0].materials[0].color = 'lavender'
+    legacyPart.parentId = null
+    legacyAsset.tests = []
 
     expect(safeParseManifestScene(invalidScene).success).toBe(false)
   })
@@ -35,23 +38,24 @@ function createValidScene(): ManifestScene {
     units: 'meters',
     assets: [
       {
-        id: 'test-asset',
-        name: 'Test asset',
-        prompt: 'Build a simple test asset.',
+        schemaVersion: 2,
+        id: 'schema-crate',
+        name: 'Schema Crate',
+        prompt: 'A schema test crate.',
+        units: 'meters',
         parts: [
           {
-            id: 'test-base',
+            id: 'schema-base',
             name: 'Base',
-            parentId: null,
             role: 'base',
             visuals: [
               {
-                id: 'test-base-visual',
+                id: 'schema-base-visual',
                 geometry: {
+                  size: [0.8, 0.2, 0.4],
                   type: 'box',
-                  size: [0.4, 0.2, 0.3],
                 },
-                materialId: 'mat-white',
+                materialId: 'mat-blue',
                 transform: {
                   position: [0, 0.1, 0],
                 },
@@ -62,19 +66,20 @@ function createValidScene(): ManifestScene {
         joints: [],
         materials: [
           {
-            id: 'mat-white',
-            name: 'White',
-            color: '#ffffff',
-            metalness: 0,
-            roughness: 0.5,
+            color: '#88aaff',
+            id: 'mat-blue',
+            metalness: 0.1,
+            name: 'Blue',
+            roughness: 0.4,
           },
         ],
-        tests: [],
+        checks: [],
+        allowances: [],
         metadata: {
           createdAt: '2026-05-16T00:00:00.000Z',
-          updatedAt: '2026-05-16T00:00:00.000Z',
-          sourceImageIds: [],
           generationStatus: 'ready',
+          sourceImageIds: [],
+          updatedAt: '2026-05-16T00:00:00.000Z',
         },
       },
     ],

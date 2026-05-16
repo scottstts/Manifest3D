@@ -366,6 +366,73 @@
   position: relative;
   z-index: 1;
   min-height: 0;
+  padding: 48px 2px 16px;
+  overflow: auto;
+}
+
+.agent-timeline {
+  display: grid;
+  gap: 11px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.agent-timeline__item {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  color: #293174;
+}
+
+.agent-timeline__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  color: #7772ea;
+}
+
+.agent-timeline__icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.agent-timeline__item.is-passed .agent-timeline__icon {
+  color: #4f8c7c;
+}
+
+.agent-timeline__item.is-warning .agent-timeline__icon {
+  color: #a27832;
+}
+
+.agent-timeline__item.is-failed .agent-timeline__icon {
+  color: #b9536a;
+}
+
+.agent-timeline__item.is-skipped .agent-timeline__icon {
+  color: #8b8fc2;
+}
+
+.agent-timeline__copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agent-timeline__label {
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.agent-timeline__detail {
+  color: #696fa7;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .prompt-composer {

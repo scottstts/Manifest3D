@@ -1,6 +1,9 @@
 export type ManifestVector3 = readonly [number, number, number]
 export type ManifestVector2 = readonly [number, number]
 
+export type ManifestAxis = 'x' | 'y' | 'z'
+export type ManifestAxes = ManifestAxis | 'xy' | 'xz' | 'yz' | 'xyz'
+
 export type ManifestTransform = {
   position?: ManifestVector3
   rotation?: ManifestVector3
@@ -74,20 +77,40 @@ export type ManifestMaterial = {
 
 export type ManifestVisual = {
   id: string
+  name?: string
   geometry: ManifestGeometry
   transform: ManifestTransform
   materialId: string
 }
 
+export type ManifestPartRole =
+  | 'base'
+  | 'housing'
+  | 'handle'
+  | 'wheel'
+  | 'hinge'
+  | 'control'
+  | 'decor'
+  | 'support'
+  | 'fastener'
+  | 'mechanism'
+
 export type ManifestPart = {
   id: string
   name: string
-  parentId: string | null
+  role?: ManifestPartRole
+  description?: string
   visuals: ManifestVisual[]
-  role?: 'base' | 'housing' | 'handle' | 'wheel' | 'hinge' | 'control' | 'decor'
 }
 
 export type ManifestJointType = 'fixed' | 'revolute' | 'prismatic' | 'continuous'
+
+export type ManifestJointLimits = {
+  lower?: number
+  upper?: number
+  effort?: number
+  velocity?: number
+}
 
 export type ManifestJoint = {
   id: string
@@ -95,41 +118,82 @@ export type ManifestJoint = {
   type: ManifestJointType
   parentPartId: string
   childPartId: string
-  origin?: ManifestTransform
+  origin: ManifestTransform
   axis?: ManifestVector3
-  limits?: {
-    lower?: number
-    upper?: number
-  }
+  limits?: ManifestJointLimits
 }
 
-export type ManifestTest =
-  | { type: 'part_exists'; partName: string }
-  | { type: 'joint_exists'; jointName: string; jointType?: ManifestJointType }
-  | { type: 'part_count_min'; count: number }
-  | { type: 'material_exists'; materialName: string }
+export type ManifestCheck =
+  | { type: 'part_exists'; partId: string }
+  | { type: 'joint_exists'; jointId: string; jointType?: ManifestJointType }
   | {
-      type: 'bbox_min'
-      target: 'asset' | string
-      axis: 'x' | 'y' | 'z'
-      min: number
+      type: 'expect_contact'
+      partAId: string
+      partBId: string
+      visualAId?: string
+      visualBId?: string
+      contactTolerance?: number
     }
-  | { type: 'connected'; partA: string; partB: string }
+  | {
+      type: 'expect_gap'
+      positivePartId: string
+      negativePartId: string
+      axis: ManifestAxis
+      minGap?: number
+      maxGap?: number
+      maxPenetration?: number
+      positiveVisualId?: string
+      negativeVisualId?: string
+    }
+  | {
+      type: 'expect_overlap'
+      partAId: string
+      partBId: string
+      axes: ManifestAxes
+      minOverlap?: number
+      visualAId?: string
+      visualBId?: string
+    }
+  | {
+      type: 'expect_within'
+      innerPartId: string
+      outerPartId: string
+      axes: ManifestAxes
+      margin?: number
+      innerVisualId?: string
+      outerVisualId?: string
+    }
+
+export type ManifestAllowance =
+  | {
+      type: 'allow_overlap'
+      partAId: string
+      partBId: string
+      visualAId?: string
+      visualBId?: string
+      reason: string
+    }
+  | { type: 'allow_isolated_part'; partId: string; reason: string }
+
+export type ManifestAssetMetadata = {
+  createdAt: string
+  updatedAt: string
+  sourceImageIds: string[]
+  generationStatus: 'draft' | 'validating' | 'ready' | 'failed'
+}
 
 export type ManifestAsset = {
+  schemaVersion: 2
   id: string
   name: string
   prompt: string
+  units: 'meters'
   parts: ManifestPart[]
   joints: ManifestJoint[]
   materials: ManifestMaterial[]
-  tests: ManifestTest[]
-  metadata: {
-    createdAt: string
-    updatedAt: string
-    sourceImageIds: string[]
-    generationStatus: 'draft' | 'validating' | 'ready' | 'failed'
-  }
+  checks: ManifestCheck[]
+  allowances: ManifestAllowance[]
+  metadata: ManifestAssetMetadata
 }
 
 export type ManifestScene = {

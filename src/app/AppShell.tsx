@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   useAppStores,
   useSceneSnapshot,
@@ -8,6 +8,7 @@ import { ChatPanel } from '../ui/ChatPanel'
 import { FrameChrome } from '../ui/FrameChrome'
 import { WebGPUCanvas } from '../renderer/WebGPUCanvas'
 import { getRightSidePanelOcclusionWidth } from '../renderer/effectiveViewport'
+import { validateManifestAssetCandidate } from '../engine/validation/validateManifest'
 
 export function AppShell() {
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
@@ -20,6 +21,13 @@ export function AppShell() {
   const selectedAsset = selection.assetId
     ? scene.assets.find((asset) => asset.id === selection.assetId)
     : undefined
+  const validationReports = useMemo(
+    () =>
+      scene.assets.map(
+        (asset) => validateManifestAssetCandidate(asset).report,
+      ),
+    [scene.assets],
+  )
 
   useLayoutEffect(() => {
     const sidePanel = sidePanelRef.current
@@ -84,6 +92,7 @@ export function AppShell() {
           isCollapsed={isSidePanelCollapsed}
           onCollapsedChange={setIsSidePanelCollapsed}
           panelRef={sidePanelRef}
+          validationReports={validationReports}
         />
       </main>
     </div>
