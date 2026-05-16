@@ -3,9 +3,14 @@ import type {
   ValidationSignal,
   ValidationStepStatus,
 } from '../schema/validationTypes'
+import type {
+  CandidateAttempt,
+  CandidateHistorySnapshot,
+} from './candidateHistory'
 
 export type AgentTimelineItemKind =
   | 'agent_step'
+  | 'candidate_attempt'
   | 'validation_warning'
   | 'validation_failure'
   | 'validation_success'
@@ -32,6 +37,40 @@ export function createValidationTimeline(
       status: step.status,
     }
   })
+}
+
+export function createCandidateHistoryTimeline(
+  history: CandidateHistorySnapshot,
+): AgentTimelineItem[] {
+  return history.attempts.flatMap((attempt) => [
+    createAttemptTimelineItem(attempt),
+    ...createValidationTimeline(attempt.report).map((item) => ({
+      ...item,
+      id: `${attempt.id}:${item.id}`,
+    })),
+  ])
+}
+
+function createAttemptTimelineItem(
+  attempt: CandidateAttempt,
+): AgentTimelineItem {
+  const failed = attempt.status === 'failure'
+  const repeated = attempt.repeatedFailure
+    ? ` Repeated failure signature, streak ${attempt.failureStreak}.`
+    : failed
+      ? ` Failure streak ${attempt.failureStreak}.`
+      : ''
+
+  return {
+    detail: `revision=${attempt.revision} fingerprint=${attempt.candidateFingerprint}.${repeated}`,
+    id: attempt.id,
+    kind: 'candidate_attempt',
+    label:
+      attempt.status === 'success'
+        ? 'Candidate validated'
+        : 'Candidate validation failed',
+    status: attempt.status === 'success' ? 'passed' : 'failed',
+  }
 }
 
 function findPrimarySignal(
