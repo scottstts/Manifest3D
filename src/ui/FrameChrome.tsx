@@ -1,4 +1,11 @@
-export function FrameChrome() {
+import type { ManifestAsset } from '../engine/schema/manifestTypes'
+import { ViewportToolbar } from './ViewportToolbar'
+
+type FrameChromeProps = {
+  selectedAsset: ManifestAsset | undefined
+}
+
+export function FrameChrome({ selectedAsset }: FrameChromeProps) {
   return (
     <header className="frame-chrome" aria-label="Manifest3D frame">
       <div className="brand-lockup" aria-label="Manifest3D" role="img">
@@ -122,6 +129,7 @@ export function FrameChrome() {
           </text>
         </svg>
       </div>
+      <ViewportToolbar selectedAsset={selectedAsset} />
     </header>
   )
 }

@@ -1,19 +1,23 @@
 import { PanelRightClose, PanelRightOpen } from 'lucide-react'
+import type { Ref } from 'react'
 import { PromptComposer } from './PromptComposer'
 
 type ChatPanelProps = {
   isCollapsed: boolean
   onCollapsedChange: (isCollapsed: boolean) => void
+  panelRef?: Ref<HTMLElement>
 }
 
 export function ChatPanel({
   isCollapsed,
   onCollapsedChange,
+  panelRef,
 }: ChatPanelProps) {
   return (
     <aside
       className={`chat-panel${isCollapsed ? ' is-collapsed' : ''}`}
       aria-label="Agent conversation"
+      ref={panelRef}
     >
       <button
         aria-expanded={!isCollapsed}

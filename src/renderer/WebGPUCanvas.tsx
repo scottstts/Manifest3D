@@ -1,7 +1,8 @@
 import { Canvas } from '@react-three/fiber'
 import type { ComponentProps } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Quaternion } from 'three'
+import type { ManifestAsset } from '../engine/schema/manifestTypes'
 import { UnsupportedWebGPU } from '../ui/UnsupportedWebGPU'
 import { computeRendererDpr, createFiberWebGPURenderer } from './createRenderer'
 import { ViewportGizmoOverlay } from './ViewportGizmo'
@@ -15,7 +16,13 @@ type CanvasStatus =
   | { type: 'error'; reason: string }
 
 type WebGPUCanvasProps = {
+  assets: readonly ManifestAsset[]
   isSidePanelCollapsed: boolean
+  rightPanelOcclusionWidth: number
+  selectedAssetId: string | null
+  selectionRevision: number
+  onAssetSelected: (assetId: string, partId?: string | null) => void
+  onSelectionCleared: () => void
 }
 
 const webgpuRendererFactory =
@@ -23,10 +30,19 @@ const webgpuRendererFactory =
     ComponentProps<typeof Canvas>['gl']
   >
 
-export function WebGPUCanvas({ isSidePanelCollapsed }: WebGPUCanvasProps) {
+export function WebGPUCanvas({
+  assets,
+  isSidePanelCollapsed,
+  rightPanelOcclusionWidth,
+  selectedAssetId,
+  selectionRevision,
+  onAssetSelected,
+  onSelectionCleared,
+}: WebGPUCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const cameraQuaternionRef = useRef(new Quaternion())
   const [status, setStatus] = useState<CanvasStatus>({ type: 'checking' })
+  const [cameraQuaternionRevision, setCameraQuaternionRevision] = useState(0)
   const [viewportSize, setViewportSize] = useState({ height: 1, width: 1 })
 
   const rendererDpr = useMemo(
@@ -101,6 +117,9 @@ export function WebGPUCanvas({ isSidePanelCollapsed }: WebGPUCanvasProps) {
 
   const shouldRenderCanvas =
     status.type === 'initializing' || status.type === 'ready'
+  const handleCameraQuaternionChange = useCallback(() => {
+    setCameraQuaternionRevision((revision) => revision + 1)
+  }, [])
 
   return (
     <div className="webgpu-stage" ref={containerRef}>
@@ -115,16 +134,33 @@ export function WebGPUCanvas({ isSidePanelCollapsed }: WebGPUCanvasProps) {
           }}
           className="webgpu-stage__canvas"
           dpr={rendererDpr}
+          frameloop="demand"
           gl={webgpuRendererFactory}
           onCreated={() => setStatus({ type: 'ready' })}
+          onPointerDown={(event) => {
+            if (event.shiftKey && selectedAssetId) {
+              onSelectionCleared()
+            }
+          }}
+          onPointerMissed={onSelectionCleared}
           shadows
         >
-          <WebGPUScene cameraQuaternionRef={cameraQuaternionRef} />
+          <WebGPUScene
+            assets={assets}
+            cameraQuaternionRef={cameraQuaternionRef}
+            onCameraQuaternionChange={handleCameraQuaternionChange}
+            rightPanelOcclusionWidth={rightPanelOcclusionWidth}
+            selectedAssetId={selectedAssetId}
+            selectionRevision={selectionRevision}
+            onAssetSelected={onAssetSelected}
+            onSelectionCleared={onSelectionCleared}
+          />
         </Canvas>
       )}
       {status.type === 'ready' && (
         <ViewportGizmoOverlay
           cameraQuaternionRef={cameraQuaternionRef}
+          cameraQuaternionRevision={cameraQuaternionRevision}
           isSidePanelCollapsed={isSidePanelCollapsed}
         />
       )}
