@@ -308,7 +308,7 @@ Articraft generates Python, but Manifest3D should generate strict JSON. This avo
 
 ### Joints Are The Assembly Source Of Truth
 
-Use joints, including `fixed` joints, as the authoritative assembly graph. `parentId` from the current schema should either be removed in Manifest3D Contract V2 or kept temporarily as derived/backward-compatible data that must agree with the joint graph.
+Use joints, including `fixed` joints, as the authoritative assembly graph. Contract V2 removed part-level `parentId`; do not reintroduce a second hierarchy source unless there is a specific migration layer that derives it from joints.
 
 Rules:
 
@@ -430,7 +430,7 @@ Engine modules should be plain TypeScript where possible. React should orchestra
 
 ## Manifest3D Contract V2
 
-The current schema is a starting point, not final. Contract V2 should be designed before the real agent loop.
+Contract V2 is implemented as the current schema baseline. Future schema changes should preserve the same core decisions unless explicitly redesigned: stable ids, joint-driven hierarchy, authored `checks`, and scoped `allowances`.
 
 Target shape:
 
@@ -893,10 +893,16 @@ Status:
 
 - Mostly complete.
 - Selection, camera recentering, WebGPU scene setup, and viewport chrome are the practical base.
+- The renderer-adjacent Contract V2 update is implemented: `assetBuilder` now assembles parts through the joint graph instead of part-level `parentId`.
 
-Renderer-adjacent engine changes may still be required when the schema moves to joint-driven hierarchy.
+Future renderer work should build on this joint-driven hierarchy rather than restoring the legacy `parentId` path.
 
 ### Phase 3: Manifest3D Contract V2 And Articraft-Aligned Validation
+
+Status:
+
+- Implemented for the local browser harness.
+- Phase 4 still needs repair feedback rendering, candidate history/freshness, prompt compilation, and the real OpenAI loop.
 
 Tasks:
 
@@ -1075,7 +1081,7 @@ Export:
 - Direct browser calls to OpenAI may hit CORS or API-shape constraints. Verify early with the smallest real request.
 - Browser geometry QC may start approximate and require mesh-level precision later.
 - Additive primitive modeling makes hollow objects, cavities, sleeves, sockets, and cutouts hard. Prefer composed wall geometry first; add CSG only when necessary.
-- If the hierarchy model remains ambiguous, articulation preview and exact tests will become unreliable. Resolve Contract V2 before the real agent loop.
+- If the hierarchy model becomes ambiguous again, articulation preview and exact tests will become unreliable. Preserve Contract V2's joint-driven hierarchy through the real agent loop.
 - If validation history is deferred, invalid repair attempts will disappear because invalid candidates are intentionally not committed.
 
 ## Definition Of Done For First Useful Prototype

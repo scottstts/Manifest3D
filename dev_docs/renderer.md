@@ -4,12 +4,12 @@
 
 Phase 2 introduced the Manifest3D-to-Three renderer path:
 
-- Manifest documents are typed in `src/engine/schema/manifestTypes.ts` and parsed with Zod in `src/engine/schema/manifestSchema.ts`.
+- Contract V2 Manifest documents are typed in `src/engine/schema/manifestTypes.ts` and parsed with Zod in `src/engine/schema/manifestSchema.ts`.
 - Geometry construction lives in `src/engine/geometry/primitiveBuilders.ts`.
-- `src/engine/geometry/assetBuilder.ts` converts a `ManifestAsset` into a Three.js `Group`, attaches `userData.manifest3d` metadata for picking, caches basic bounds, and disposes generated geometry/materials on unmount.
+- `src/engine/geometry/assetBuilder.ts` converts a `ManifestAsset` into a Three.js `Group`, assembles parts through the joint graph, attaches `userData.manifest3d` metadata for picking, caches asset/part/visual bounds, and disposes generated geometry/materials on unmount.
 - Runtime scene and selection state are plain stores in `src/engine/scene/`, then bridged into React from `src/app/appState.ts`.
 
-The app now starts with an empty Manifest3D scene. The temporary phase-2 render fixture was removed after verification.
+The app currently starts with an empty Manifest3D scene. `src/engine/examples/rendererMockAssets.ts` is a development fixture for temporary visual inspection only; it should stay unplugged from app startup by default.
 
 ## Selection And Camera
 

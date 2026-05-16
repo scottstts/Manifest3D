@@ -27,6 +27,7 @@ renderer.setPixelRatio(Math.max(1, dpr));
 - pay attention to relevant md docs in dev_docs/ dir, these can include intentions and design principles derived or surfaced during implementation beyond the code itself that are important for further implementing related features
 - Do Not run browser to verify visuals, unless explcitly told so
 - When asked to write implementation documentations, do NOT include verbose and irrelevant things like broad project rules, what text was used, etc. The point of documentation for a specific session of implementation is to capture only design choices that were discussed or surfaced during coding beyond what code alone can tell that could potentially impact future implementations, not to repeat what the code or AGENTS.md already says 
+- the dev docs will mention a "V2", but there isn't literal versioning in code or in docs, just treat it as the de facto current plan in effect--the only version
 
 # Notes
 
