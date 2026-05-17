@@ -13,6 +13,23 @@ export type ProjectionViewOffset = {
   width: number
 }
 
+export function getLeftSidePanelOcclusionWidth(
+  panelRect: RectLike,
+  viewportWidth: number,
+) {
+  if (viewportWidth <= 0 || panelRect.width <= 0) {
+    return 0
+  }
+
+  const isLeftSidePanel = panelRect.left < viewportWidth * 0.45
+
+  if (!isLeftSidePanel) {
+    return 0
+  }
+
+  return Math.min(panelRect.left + panelRect.width, viewportWidth * 0.75)
+}
+
 export function getRightSidePanelOcclusionWidth(
   panelRect: RectLike,
   viewportWidth: number,
@@ -33,30 +50,41 @@ export function getRightSidePanelOcclusionWidth(
 export function getEffectiveViewportCenterX(
   viewportWidth: number,
   rightOcclusionWidth: number,
+  leftOcclusionWidth = 0,
 ) {
-  const occlusionWidth = clampRightOcclusionWidth(
+  const rightWidth = clampHorizontalOcclusionWidth(
     viewportWidth,
     rightOcclusionWidth,
   )
+  const leftWidth = clampHorizontalOcclusionWidth(
+    viewportWidth,
+    leftOcclusionWidth,
+  )
 
-  return (viewportWidth - occlusionWidth) / 2
+  return leftWidth + (viewportWidth - leftWidth - rightWidth) / 2
 }
 
 export function getProjectionViewOffset(
   viewportWidth: number,
   viewportHeight: number,
   rightOcclusionWidth: number,
+  leftOcclusionWidth = 0,
 ): ProjectionViewOffset | null {
   if (viewportWidth <= 0 || viewportHeight <= 0) {
     return null
   }
 
-  const occlusionWidth = clampRightOcclusionWidth(
+  const rightWidth = clampHorizontalOcclusionWidth(
     viewportWidth,
     rightOcclusionWidth,
   )
+  const leftWidth = clampHorizontalOcclusionWidth(
+    viewportWidth,
+    leftOcclusionWidth,
+  )
+  const offsetX = (rightWidth - leftWidth) / 2
 
-  if (occlusionWidth <= 0.5) {
+  if (Math.abs(offsetX) <= 0.5) {
     return null
   }
 
@@ -64,15 +92,15 @@ export function getProjectionViewOffset(
     fullHeight: viewportHeight,
     fullWidth: viewportWidth,
     height: viewportHeight,
-    offsetX: occlusionWidth / 2,
+    offsetX,
     offsetY: 0,
     width: viewportWidth,
   }
 }
 
-function clampRightOcclusionWidth(
+function clampHorizontalOcclusionWidth(
   viewportWidth: number,
-  rightOcclusionWidth: number,
+  occlusionWidth: number,
 ) {
-  return Math.max(0, Math.min(rightOcclusionWidth, viewportWidth * 0.75))
+  return Math.max(0, Math.min(occlusionWidth, viewportWidth * 0.75))
 }

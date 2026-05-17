@@ -1,3 +1,4 @@
+import { type Ref } from 'react'
 import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react'
 import type { AssetLibraryAsset } from '../engine/persistence/assetLibraryTypes'
 
@@ -9,6 +10,7 @@ type AssetHistoryPanelProps = {
   onAssetDeleteRequested: (asset: AssetLibraryAsset) => void
   onAssetOpen: (asset: AssetLibraryAsset) => void
   onCollapsedChange: (collapsed: boolean) => void
+  panelRef?: Ref<HTMLElement>
 }
 
 export function AssetHistoryPanel({
@@ -19,11 +21,13 @@ export function AssetHistoryPanel({
   onAssetDeleteRequested,
   onAssetOpen,
   onCollapsedChange,
+  panelRef,
 }: AssetHistoryPanelProps) {
   return (
     <aside
       className={`asset-history-panel${isCollapsed ? ' is-collapsed' : ''}`}
       aria-label="Asset history"
+      ref={panelRef}
     >
       <button
         aria-expanded={!isCollapsed}

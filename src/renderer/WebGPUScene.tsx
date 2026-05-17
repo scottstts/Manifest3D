@@ -27,6 +27,7 @@ type WebGPUSceneProps = {
   assets: readonly SceneAssetInstance[]
   cameraQuaternionRef: RefObject<THREE.Quaternion>
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
+  leftPanelOcclusionWidth: number
   onCameraQuaternionChange: () => void
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
@@ -84,6 +85,7 @@ export function WebGPUScene({
   assets,
   cameraQuaternionRef,
   jointPreviewPosesByInstance,
+  leftPanelOcclusionWidth,
   onCameraQuaternionChange,
   rightPanelOcclusionWidth,
   selectedTargetId,
@@ -129,6 +131,7 @@ export function WebGPUScene({
         onCameraQuaternionChange={onCameraQuaternionChange}
       />
       <EffectiveViewportProjection
+        leftPanelOcclusionWidth={leftPanelOcclusionWidth}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
       />
       <SelectionCameraTarget
@@ -746,10 +749,12 @@ function clamp(value: number, min: number, max: number) {
 }
 
 type EffectiveViewportProjectionProps = {
+  leftPanelOcclusionWidth: number
   rightPanelOcclusionWidth: number
 }
 
 function EffectiveViewportProjection({
+  leftPanelOcclusionWidth,
   rightPanelOcclusionWidth,
 }: EffectiveViewportProjectionProps) {
   const { camera, invalidate, size } = useThree()
@@ -763,6 +768,7 @@ function EffectiveViewportProjection({
       size.width,
       size.height,
       rightPanelOcclusionWidth,
+      leftPanelOcclusionWidth,
     )
 
     if (viewOffset) {
@@ -786,7 +792,14 @@ function EffectiveViewportProjection({
       camera.updateProjectionMatrix()
       invalidate()
     }
-  }, [camera, invalidate, rightPanelOcclusionWidth, size.height, size.width])
+  }, [
+    camera,
+    invalidate,
+    leftPanelOcclusionWidth,
+    rightPanelOcclusionWidth,
+    size.height,
+    size.width,
+  ])
 
   return null
 }

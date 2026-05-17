@@ -1,4 +1,6 @@
 import {
+  type Dispatch,
+  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -24,7 +26,10 @@ import { ApiKeyModal } from '../ui/ApiKeyModal'
 import { FrameChrome } from '../ui/FrameChrome'
 import { JointPreviewPanel } from '../ui/JointPreviewPanel'
 import { WebGPUCanvas, type TransformTool } from '../renderer/WebGPUCanvas'
-import { getRightSidePanelOcclusionWidth } from '../renderer/effectiveViewport'
+import {
+  getLeftSidePanelOcclusionWidth,
+  getRightSidePanelOcclusionWidth,
+} from '../renderer/effectiveViewport'
 import { validateManifestAssetCandidate } from '../engine/validation/validateManifest'
 import {
   runManifestAgentLoop,
@@ -90,6 +95,7 @@ export function AppShell() {
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
   const [isHistoryPanelCollapsed, setIsHistoryPanelCollapsed] = useState(true)
   const [rightPanelOcclusionWidth, setRightPanelOcclusionWidth] = useState(0)
+  const [leftPanelOcclusionWidth, setLeftPanelOcclusionWidth] = useState(0)
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
   const [hasSessionApiKey, setHasSessionApiKey] = useState(false)
   const [openAIClient, setOpenAIClient] = useState<OpenAIManifestClient>(() =>
@@ -122,6 +128,7 @@ export function AppShell() {
   const [playingJointPreview, setPlayingJointPreview] =
     useState<PlayingJointPreview | null>(null)
   const sidePanelRef = useRef<HTMLElement | null>(null)
+  const assetHistoryPanelRef = useRef<HTMLElement | null>(null)
   const pendingTransformHistoryRef = useRef<ComposeHistoryEntry | null>(null)
   const exportToastTimeoutRef = useRef<number | null>(null)
   const agentRunAbortControllerRef = useRef<AbortController | null>(null)
@@ -927,44 +934,26 @@ export function AppShell() {
       return undefined
     }
 
-    const measuredSidePanel = sidePanel
-    let animationFrame = 0
-
-    function measureSidePanel() {
-      const nextOcclusionWidth = Math.round(
-        getRightSidePanelOcclusionWidth(
-          measuredSidePanel.getBoundingClientRect(),
-          window.innerWidth,
-        ),
-      )
-
-      setRightPanelOcclusionWidth((currentOcclusionWidth) =>
-        currentOcclusionWidth === nextOcclusionWidth
-          ? currentOcclusionWidth
-          : nextOcclusionWidth,
-      )
-    }
-
-    function queueMeasure() {
-      cancelAnimationFrame(animationFrame)
-      animationFrame = requestAnimationFrame(measureSidePanel)
-    }
-
-    measureSidePanel()
-
-    const resizeObserver = new ResizeObserver(queueMeasure)
-
-    resizeObserver.observe(measuredSidePanel)
-    window.addEventListener('resize', queueMeasure)
-    measuredSidePanel.addEventListener('transitionend', queueMeasure)
-
-    return () => {
-      cancelAnimationFrame(animationFrame)
-      resizeObserver.disconnect()
-      window.removeEventListener('resize', queueMeasure)
-      measuredSidePanel.removeEventListener('transitionend', queueMeasure)
-    }
+    return observePanelOcclusionWidth(
+      sidePanel,
+      getRightSidePanelOcclusionWidth,
+      setRightPanelOcclusionWidth,
+    )
   }, [isSidePanelCollapsed])
+
+  useLayoutEffect(() => {
+    const assetHistoryPanel = assetHistoryPanelRef.current
+
+    if (!assetHistoryPanel) {
+      return undefined
+    }
+
+    return observePanelOcclusionWidth(
+      assetHistoryPanel,
+      getLeftSidePanelOcclusionWidth,
+      setLeftPanelOcclusionWidth,
+    )
+  }, [isHistoryPanelCollapsed])
 
   return (
     <div className="app-shell">
@@ -973,6 +962,7 @@ export function AppShell() {
         assets={sceneSnapshot.renderableAssets}
         isSidePanelCollapsed={isSidePanelCollapsed}
         jointPreviewPosesByInstance={jointPreviewByInstance}
+        leftPanelOcclusionWidth={leftPanelOcclusionWidth}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
         selectedTargetId={selection.targetId}
         selectionRevision={selectionRevision}
@@ -1023,6 +1013,7 @@ export function AppShell() {
           onAssetDeleteRequested={setAssetPendingDelete}
           onAssetOpen={handleHistoryAssetOpen}
           onCollapsedChange={setIsHistoryPanelCollapsed}
+          panelRef={assetHistoryPanelRef}
         />
         {sceneSnapshot.activeWorkspace === 'compose' && (
           <ComposeToolbar
@@ -1072,6 +1063,51 @@ export function AppShell() {
       />
     </div>
   )
+}
+
+type PanelOcclusionWidthResolver = (
+  panelRect: DOMRect,
+  viewportWidth: number,
+) => number
+
+function observePanelOcclusionWidth(
+  panel: HTMLElement,
+  resolveOcclusionWidth: PanelOcclusionWidthResolver,
+  setOcclusionWidth: Dispatch<SetStateAction<number>>,
+) {
+  let animationFrame = 0
+
+  function measurePanel() {
+    const nextOcclusionWidth = Math.round(
+      resolveOcclusionWidth(panel.getBoundingClientRect(), window.innerWidth),
+    )
+
+    setOcclusionWidth((currentOcclusionWidth) =>
+      currentOcclusionWidth === nextOcclusionWidth
+        ? currentOcclusionWidth
+        : nextOcclusionWidth,
+    )
+  }
+
+  function queueMeasure() {
+    cancelAnimationFrame(animationFrame)
+    animationFrame = requestAnimationFrame(measurePanel)
+  }
+
+  measurePanel()
+
+  const resizeObserver = new ResizeObserver(queueMeasure)
+
+  resizeObserver.observe(panel)
+  window.addEventListener('resize', queueMeasure)
+  panel.addEventListener('transitionend', queueMeasure)
+
+  return () => {
+    cancelAnimationFrame(animationFrame)
+    resizeObserver.disconnect()
+    window.removeEventListener('resize', queueMeasure)
+    panel.removeEventListener('transitionend', queueMeasure)
+  }
 }
 
 function upsertAgentEvent(

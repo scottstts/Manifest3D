@@ -24,6 +24,7 @@ type WebGPUCanvasProps = {
   activeTransformTool: TransformTool
   isSidePanelCollapsed: boolean
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
+  leftPanelOcclusionWidth: number
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
   selectionRevision: number
@@ -50,6 +51,7 @@ export function WebGPUCanvas({
   assets,
   isSidePanelCollapsed,
   jointPreviewPosesByInstance,
+  leftPanelOcclusionWidth,
   rightPanelOcclusionWidth,
   selectedTargetId,
   selectionRevision,
@@ -170,6 +172,7 @@ export function WebGPUCanvas({
             assets={assets}
             cameraQuaternionRef={cameraQuaternionRef}
             jointPreviewPosesByInstance={jointPreviewPosesByInstance}
+            leftPanelOcclusionWidth={leftPanelOcclusionWidth}
             onCameraQuaternionChange={handleCameraQuaternionChange}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             selectedTargetId={selectedTargetId}
