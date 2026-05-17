@@ -4,12 +4,15 @@ import { ViewportToolbar } from './ViewportToolbar'
 
 type FrameChromeProps = {
   activeWorkspace: WorkspaceMode
+  apiKeyButtonDisabled: boolean
   canRedoCompose: boolean
   canUndoCompose: boolean
   canNavigateNextVersion: boolean
   canNavigatePreviousVersion: boolean
   exportAsset: ManifestAsset | undefined
+  hasSessionApiKey: boolean
   versionLabel: string | null
+  onApiKeyRequested: () => void
   onExportGlb: () => void
   onRedoCompose: () => void
   onUndoCompose: () => void
@@ -20,12 +23,15 @@ type FrameChromeProps = {
 
 export function FrameChrome({
   activeWorkspace,
+  apiKeyButtonDisabled,
   canRedoCompose,
   canUndoCompose,
   canNavigateNextVersion,
   canNavigatePreviousVersion,
   exportAsset,
+  hasSessionApiKey,
   versionLabel,
+  onApiKeyRequested,
   onExportGlb,
   onRedoCompose,
   onUndoCompose,
@@ -177,12 +183,15 @@ export function FrameChrome({
         </button>
       </div>
       <ViewportToolbar
+        apiKeyButtonDisabled={apiKeyButtonDisabled}
         canRedoCompose={canRedoCompose}
         canUndoCompose={canUndoCompose}
         canNavigateNextVersion={canNavigateNextVersion}
         canNavigatePreviousVersion={canNavigatePreviousVersion}
         exportAsset={exportAsset}
+        hasSessionApiKey={hasSessionApiKey}
         versionLabel={versionLabel}
+        onApiKeyRequested={onApiKeyRequested}
         onExportGlb={onExportGlb}
         onRedoCompose={onRedoCompose}
         onUndoCompose={onUndoCompose}

@@ -1,4 +1,5 @@
 import { modelConfig, type ModelConfig } from '../config/modelConfig'
+import { resolveStartupOpenAIApiKeyStatus } from './openAiApiKey'
 import {
   manifestAssetResponseFormatName,
   manifestAssetResponseJsonSchema,
@@ -34,14 +35,13 @@ export function createOpenAIManifestClient(
   const endpoint = options.endpoint ?? defaultEndpoint
   const fetcher = options.fetcher ?? fetch
   const config = options.model ?? modelConfig
-  const apiKey = options.apiKey ?? getOpenAIApiKey()
+  const apiKey = options.apiKey ?? resolveStartupOpenAIApiKeyStatus().apiKey
 
   return {
     async generateAsset(request) {
       if (!apiKey) {
         return {
-          message:
-            'Generation is unavailable because VITE_OPENAI_API_KEY is not set.',
+          message: 'Generation is unavailable because no OpenAI API key is loaded.',
           reason: 'missing_api_key',
           status: 'unavailable',
         }
@@ -186,10 +186,6 @@ function formatImageInputs(attachments: readonly AgentImageAttachment[]) {
     image_url: attachment.imageUrl,
     type: 'input_image',
   }))
-}
-
-function getOpenAIApiKey() {
-  return import.meta.env.VITE_OPENAI_API_KEY?.trim() ?? ''
 }
 
 function extractResponseId(value: unknown): string | null {

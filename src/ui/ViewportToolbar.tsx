@@ -2,18 +2,22 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  KeyRound,
   Redo2,
   Undo2,
 } from 'lucide-react'
 import type { ManifestAsset } from '../engine/schema/manifestTypes'
 
 type ViewportToolbarProps = {
+  apiKeyButtonDisabled: boolean
   canRedoCompose: boolean
   canUndoCompose: boolean
   canNavigateNextVersion: boolean
   canNavigatePreviousVersion: boolean
   exportAsset: ManifestAsset | undefined
+  hasSessionApiKey: boolean
   versionLabel: string | null
+  onApiKeyRequested: () => void
   onExportGlb: () => void
   onRedoCompose: () => void
   onUndoCompose: () => void
@@ -22,12 +26,15 @@ type ViewportToolbarProps = {
 }
 
 export function ViewportToolbar({
+  apiKeyButtonDisabled,
   canRedoCompose,
   canUndoCompose,
   canNavigateNextVersion,
   canNavigatePreviousVersion,
   exportAsset,
+  hasSessionApiKey,
   versionLabel,
+  onApiKeyRequested,
   onExportGlb,
   onRedoCompose,
   onUndoCompose,
@@ -92,6 +99,22 @@ export function ViewportToolbar({
       >
         <Download aria-hidden="true" />
         <span>Export GLB</span>
+      </button>
+      <button
+        aria-label={
+          apiKeyButtonDisabled
+            ? 'OpenAI API key loaded from local .env'
+            : hasSessionApiKey
+              ? 'Update in-memory OpenAI API key'
+              : 'Add OpenAI API key'
+        }
+        className="viewport-toolbar__button viewport-toolbar__button--api-key"
+        disabled={apiKeyButtonDisabled}
+        type="button"
+        onClick={onApiKeyRequested}
+      >
+        <KeyRound aria-hidden="true" />
+        <span>API Key</span>
       </button>
     </div>
   )

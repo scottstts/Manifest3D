@@ -20,6 +20,7 @@ import {
 import { ComposeToolbar } from '../ui/ComposeToolbar'
 import { ConfirmDeleteModal } from '../ui/ConfirmDeleteModal'
 import { AssetHistoryPanel } from '../ui/AssetHistoryPanel'
+import { ApiKeyModal } from '../ui/ApiKeyModal'
 import { FrameChrome } from '../ui/FrameChrome'
 import { WebGPUCanvas, type TransformTool } from '../renderer/WebGPUCanvas'
 import { getRightSidePanelOcclusionWidth } from '../renderer/effectiveViewport'
@@ -29,8 +30,12 @@ import {
   type AgentLoopEvent,
 } from '../engine/agent/agentLoop'
 import { createCandidateHistory } from '../engine/agent/candidateHistory'
+import { resolveStartupOpenAIApiKeyStatus } from '../engine/agent/openAiApiKey'
 import { createOpenAIManifestClient } from '../engine/agent/openAiManifestClient'
-import type { AgentImageAttachment } from '../engine/agent/providerClient'
+import type {
+  AgentImageAttachment,
+  OpenAIManifestClient,
+} from '../engine/agent/providerClient'
 import {
   findAssetLibraryVersion,
   getAdjacentAssetVersions,
@@ -64,9 +69,20 @@ type ComposeHistoryEntry = {
 const composeHistoryLimit = 40
 
 export function AppShell() {
+  const startupOpenAIApiKeyStatus = useMemo(
+    () => resolveStartupOpenAIApiKeyStatus(),
+    [],
+  )
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
   const [isHistoryPanelCollapsed, setIsHistoryPanelCollapsed] = useState(true)
   const [rightPanelOcclusionWidth, setRightPanelOcclusionWidth] = useState(0)
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
+  const [hasSessionApiKey, setHasSessionApiKey] = useState(false)
+  const [openAIClient, setOpenAIClient] = useState<OpenAIManifestClient>(() =>
+    createOpenAIManifestClient({
+      apiKey: startupOpenAIApiKeyStatus.apiKey,
+    }),
+  )
   const [agentEvents, setAgentEvents] = useState<AgentLoopEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [candidateTimelineItems, setCandidateTimelineItems] = useState<
@@ -92,7 +108,6 @@ export function AppShell() {
   const exportToastTimeoutRef = useRef<number | null>(null)
   const agentRunAbortControllerRef = useRef<AbortController | null>(null)
   const agentHistoryRef = useRef(createCandidateHistory())
-  const openAIClientRef = useRef(createOpenAIManifestClient())
   const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
   const librarySnapshot = useAssetLibrarySnapshot(assetLibraryStore)
   const sceneSnapshot = useSceneSnapshot(sceneStore)
@@ -150,6 +165,7 @@ export function AppShell() {
     sceneSnapshot.activeWorkspace === 'compose' && composeUndoStack.length > 0
   const canRedoCompose =
     sceneSnapshot.activeWorkspace === 'compose' && composeRedoStack.length > 0
+  const isLocalEnvApiKeyLoaded = startupOpenAIApiKeyStatus.source === 'local_env'
 
   useEffect(() => {
     void assetLibraryStore.load()
@@ -339,7 +355,7 @@ export function AppShell() {
           userPrompt,
         },
         {
-          client: openAIClientRef.current,
+          client: openAIClient,
           history: agentHistoryRef.current,
           onEvent: (event) => {
             runEvents = upsertAgentEvent(runEvents, event)
@@ -419,6 +435,7 @@ export function AppShell() {
       assetLibraryStore,
       isAgentRunning,
       librarySnapshot.library,
+      openAIClient,
       sceneSnapshot.activeWorkspace,
       sceneStore,
       selectedInstance,
@@ -478,6 +495,13 @@ export function AppShell() {
         setAgentStatus(status)
       })
   }, [exportableCreateAsset])
+
+  const handleApiKeySubmit = useCallback((apiKey: string) => {
+    setOpenAIClient(createOpenAIManifestClient({ apiKey }))
+    setHasSessionApiKey(true)
+    setIsApiKeyModalOpen(false)
+    setAgentStatus('OpenAI API key loaded for this session.')
+  }, [])
 
   const handleWorkspaceChange = useCallback(
     (workspace: WorkspaceMode) => {
@@ -799,12 +823,15 @@ export function AppShell() {
       />
       <FrameChrome
         activeWorkspace={sceneSnapshot.activeWorkspace}
+        apiKeyButtonDisabled={isLocalEnvApiKeyLoaded}
         canRedoCompose={canRedoCompose}
         canUndoCompose={canUndoCompose}
         canNavigateNextVersion={Boolean(adjacentVersions.next)}
         canNavigatePreviousVersion={Boolean(adjacentVersions.previous)}
         exportAsset={exportableCreateAsset}
+        hasSessionApiKey={hasSessionApiKey}
         versionLabel={versionLabel}
+        onApiKeyRequested={() => setIsApiKeyModalOpen(true)}
         onExportGlb={handleExportGlb}
         onRedoCompose={handleRedoCompose}
         onUndoCompose={handleUndoCompose}
@@ -866,6 +893,11 @@ export function AppShell() {
         asset={assetPendingDelete}
         onCancel={() => setAssetPendingDelete(null)}
         onConfirm={handleConfirmDeleteAsset}
+      />
+      <ApiKeyModal
+        isOpen={isApiKeyModalOpen}
+        onCancel={() => setIsApiKeyModalOpen(false)}
+        onSubmit={handleApiKeySubmit}
       />
     </div>
   )

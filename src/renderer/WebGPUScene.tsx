@@ -14,6 +14,7 @@ import type {
   SceneTransform,
 } from '../engine/scene/sceneStore'
 import { getProjectionViewOffset } from './effectiveViewport'
+import { createSelectionOutlineGroup } from './selectionOutline'
 import { CameraQuaternionBridge } from './ViewportGizmo'
 import type { TransformTool } from './WebGPUCanvas'
 
@@ -205,6 +206,10 @@ function ManifestAssetObject({
   const { asset } = instance
   const groupRef = useRef<THREE.Group | null>(null)
   const builtAsset = useMemo(() => buildManifestAsset(asset), [asset])
+  const selectionOutlineGroup = useMemo(
+    () => createSelectionOutlineGroup(builtAsset.group),
+    [builtAsset.group],
+  )
   const localPlacement = useMemo(
     () => computeLocalPlacement(builtAsset.group),
     [builtAsset.group],
@@ -235,9 +240,8 @@ function ManifestAssetObject({
   ])
 
   useEffect(() => {
-    applySelectionEmphasis(builtAsset.group, isSelected)
     invalidate()
-  }, [builtAsset.group, invalidate, isSelected])
+  }, [invalidate, isSelected])
 
   function handleClick(event: ThreeEvent<MouseEvent>) {
     event.stopPropagation()
@@ -269,6 +273,7 @@ function ManifestAssetObject({
     >
       <group position={negateVector3(localPlacement.center)}>
         <primitive object={builtAsset.group} />
+        {isSelected && <primitive object={selectionOutlineGroup} />}
       </group>
     </group>
   )
@@ -710,45 +715,10 @@ function EffectiveViewportProjection({
   return null
 }
 
-function applySelectionEmphasis(group: THREE.Group, isSelected: boolean) {
-  group.traverse((object) => {
-    if (!isMesh(object)) {
-      return
-    }
-
-    const materials = Array.isArray(object.material)
-      ? object.material
-      : [object.material]
-
-    for (const material of materials) {
-      if (!isStandardNodeMaterial(material)) {
-        continue
-      }
-
-      material.emissive.set(isSelected ? '#7c5cff' : '#000000')
-      material.emissiveIntensity = isSelected ? 0.14 : 0
-      material.needsUpdate = true
-    }
-  })
-}
-
-function isMesh(object: THREE.Object3D): object is THREE.Mesh {
-  return (object as THREE.Mesh).isMesh === true
-}
-
 function isPerspectiveCamera(
   camera: THREE.Camera,
 ): camera is THREE.PerspectiveCamera {
   return (camera as THREE.PerspectiveCamera).isPerspectiveCamera === true
-}
-
-function isStandardNodeMaterial(
-  material: THREE.Material,
-): material is THREE.MeshStandardNodeMaterial {
-  return (
-    (material as THREE.MeshStandardNodeMaterial).isMeshStandardNodeMaterial ===
-    true
-  )
 }
 
 function isTransformControlMaterial(
