@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   CircleDashed,
+  LoaderCircle,
   XCircle,
 } from 'lucide-react'
 import {
@@ -28,6 +29,7 @@ export function AgentTimeline({ items, reports = [] }: AgentTimelineProps) {
         <li className={`agent-timeline__item is-${item.status}`} key={item.id}>
           <span className="agent-timeline__icon" aria-hidden="true">
             {item.status === 'passed' && <CheckCircle2 />}
+            {item.status === 'running' && <LoaderCircle />}
             {item.status === 'warning' && <AlertTriangle />}
             {item.status === 'failed' && <XCircle />}
             {item.status === 'skipped' && <CircleDashed />}

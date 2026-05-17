@@ -22,6 +22,7 @@ export type PromptCompilerInput = {
   mode: PromptCompilerMode
   scene: ManifestScene
   selectedAsset?: ManifestAsset | null
+  selectedAssetAttemptContext?: string | null
   userPrompt: string
   validationFeedback?: string | null
 }
@@ -57,6 +58,12 @@ export function compileManifestPrompt(
     tag('current_scene', summarizeScene(input.scene)),
     input.selectedAsset
       ? tag('selected_asset_json', stringifyJson(input.selectedAsset))
+      : '',
+    input.selectedAssetAttemptContext
+      ? tag(
+          'selected_asset_attempt_history',
+          input.selectedAssetAttemptContext.trim(),
+        )
       : '',
     input.candidateJson
       ? tag('candidate_json', stringifyJson(input.candidateJson))

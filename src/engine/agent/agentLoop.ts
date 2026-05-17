@@ -36,7 +36,7 @@ export type AgentLoopState =
   | 'failed'
   | 'cancelled'
 
-export type AgentLoopStatus = 'passed' | 'failed' | 'skipped'
+export type AgentLoopStatus = 'running' | 'passed' | 'failed' | 'skipped'
 
 export type AgentLoopEvent = {
   detail: string | null
@@ -55,6 +55,7 @@ export type RunManifestAgentLoopInput = {
   runId?: string
   scene: ManifestScene
   selectedAsset?: ManifestAsset | null
+  selectedAssetAttemptContext?: string | null
   signal?: AbortSignal
   userPrompt: string
 }
@@ -129,14 +130,10 @@ export async function runManifestAgentLoop(
       }
     }
 
-    emit(
-      dependencies.onEvent,
-      runId,
-      nextEventIndex,
+    const finishCompilePrompt = beginStep(
       'compiling_prompt',
       'Compile prompt',
       mode === 'repair' ? `repairTurn=${repairTurns}` : `mode=${mode}`,
-      'passed',
     )
 
     const prompt = compileManifestPrompt({
@@ -145,6 +142,7 @@ export async function runManifestAgentLoop(
       mode,
       scene,
       selectedAsset: input.selectedAsset ?? null,
+      selectedAssetAttemptContext: input.selectedAssetAttemptContext ?? null,
       userPrompt: input.userPrompt,
       validationFeedback,
     })
@@ -153,20 +151,18 @@ export async function runManifestAgentLoop(
       prompt,
       signal: input.signal,
     }
+    finishCompilePrompt('passed')
 
-    emit(
-      dependencies.onEvent,
-      runId,
-      nextEventIndex,
+    const finishModelRequest = beginStep(
       'requesting_model',
       'Request OpenAI candidate',
       `modelPromptMode=${prompt.metadata.mode}`,
-      'passed',
     )
 
     const agentResponse = await dependencies.client.generateAsset(agentRequest)
 
     if (agentResponse.status === 'unavailable') {
+      finishModelRequest('failed')
       emit(
         dependencies.onEvent,
         runId,
@@ -185,6 +181,7 @@ export async function runManifestAgentLoop(
     }
 
     if (agentResponse.status === 'refused' || agentResponse.status === 'error') {
+      finishModelRequest('failed')
       emit(
         dependencies.onEvent,
         runId,
@@ -202,34 +199,32 @@ export async function runManifestAgentLoop(
       }
     }
 
-    emit(
-      dependencies.onEvent,
-      runId,
-      nextEventIndex,
+    finishModelRequest('passed')
+
+    const finishParseCandidate = beginStep(
       'parsing_candidate',
       'Parse candidate JSON',
       agentResponse.responseId
         ? `responseId=${agentResponse.responseId}`
         : null,
-      'passed',
     )
 
     const candidate = agentResponse.candidate
+    finishParseCandidate('passed')
 
-    emit(
-      dependencies.onEvent,
-      runId,
-      nextEventIndex,
+    const finishValidateCandidate = beginStep(
       'validating_candidate',
       'Validate candidate',
       null,
-      'passed',
     )
 
     const validationResult = validateCandidate(candidate)
     const attempt = history.recordValidationAttempt(
       candidate,
       validationResult.report,
+    )
+    finishValidateCandidate(
+      validationResult.report.valid ? 'passed' : 'failed',
     )
 
     if (validationResult.asset && validationResult.report.valid) {
@@ -252,19 +247,16 @@ export async function runManifestAgentLoop(
         }
       }
 
-      emit(
-        dependencies.onEvent,
-        runId,
-        nextEventIndex,
+      const finishCommit = beginStep(
         'committing',
         'Commit validated asset',
         `assetId=${validationResult.asset.id}`,
-        'passed',
       )
 
       dependencies.sceneStore.upsertAsset(validationResult.asset)
 
       const committedReport = withCommitStep(validationResult.report, true)
+      finishCommit('passed')
 
       emit(
         dependencies.onEvent,
@@ -308,21 +300,33 @@ export async function runManifestAgentLoop(
     validationFeedback = renderRepairFeedback(attempt)
     scene = dependencies.sceneStore.getSnapshot().scene
 
-    emit(
-      dependencies.onEvent,
-      runId,
-      nextEventIndex,
+    const finishRepairFeedback = beginStep(
       'repairing',
       'Prepare repair feedback',
       `repairTurn=${repairTurns}`,
-      'passed',
     )
+    finishRepairFeedback('passed')
   }
 
   function nextEventIndex() {
     eventIndex += 1
 
     return eventIndex
+  }
+
+  function beginStep(
+    state: AgentLoopState,
+    label: string,
+    detail: string | null,
+  ) {
+    return beginAgentLoopStep(
+      dependencies.onEvent,
+      runId,
+      nextEventIndex,
+      state,
+      label,
+      detail,
+    )
   }
 }
 
@@ -361,6 +365,35 @@ function emit(
     state,
     status,
   })
+}
+
+function beginAgentLoopStep(
+  onEvent: RunManifestAgentLoopDependencies['onEvent'],
+  runId: string,
+  nextEventIndex: () => number,
+  state: AgentLoopState,
+  label: string,
+  detail: string | null,
+) {
+  const id = `${runId}:${nextEventIndex()}:${state}`
+
+  onEvent?.({
+    detail,
+    id,
+    label,
+    state,
+    status: 'running',
+  })
+
+  return (status: Exclude<AgentLoopStatus, 'running'>, nextDetail = detail) => {
+    onEvent?.({
+      detail: nextDetail,
+      id,
+      label,
+      state,
+      status,
+    })
+  }
 }
 
 function createRunId(now?: () => string) {

@@ -1,11 +1,28 @@
 import type { ManifestAsset } from '../engine/schema/manifestTypes'
+import type { WorkspaceMode } from '../engine/scene/sceneStore'
 import { ViewportToolbar } from './ViewportToolbar'
 
 type FrameChromeProps = {
+  activeWorkspace: WorkspaceMode
+  canNavigateNextVersion: boolean
+  canNavigatePreviousVersion: boolean
   selectedAsset: ManifestAsset | undefined
+  versionLabel: string | null
+  onNavigateNextVersion: () => void
+  onNavigatePreviousVersion: () => void
+  onWorkspaceChange: (workspace: WorkspaceMode) => void
 }
 
-export function FrameChrome({ selectedAsset }: FrameChromeProps) {
+export function FrameChrome({
+  activeWorkspace,
+  canNavigateNextVersion,
+  canNavigatePreviousVersion,
+  selectedAsset,
+  versionLabel,
+  onNavigateNextVersion,
+  onNavigatePreviousVersion,
+  onWorkspaceChange,
+}: FrameChromeProps) {
   return (
     <header className="frame-chrome" aria-label="Manifest3D frame">
       <div className="brand-lockup" aria-label="Manifest3D" role="img">
@@ -129,7 +146,34 @@ export function FrameChrome({ selectedAsset }: FrameChromeProps) {
           </text>
         </svg>
       </div>
-      <ViewportToolbar selectedAsset={selectedAsset} />
+      <div className="workspace-tabs" role="tablist" aria-label="Workspace mode">
+        <button
+          aria-selected={activeWorkspace === 'create'}
+          className={activeWorkspace === 'create' ? 'is-active' : ''}
+          role="tab"
+          type="button"
+          onClick={() => onWorkspaceChange('create')}
+        >
+          Create
+        </button>
+        <button
+          aria-selected={activeWorkspace === 'compose'}
+          className={activeWorkspace === 'compose' ? 'is-active' : ''}
+          role="tab"
+          type="button"
+          onClick={() => onWorkspaceChange('compose')}
+        >
+          Compose
+        </button>
+      </div>
+      <ViewportToolbar
+        canNavigateNextVersion={canNavigateNextVersion}
+        canNavigatePreviousVersion={canNavigatePreviousVersion}
+        selectedAsset={selectedAsset}
+        versionLabel={versionLabel}
+        onNavigateNextVersion={onNavigateNextVersion}
+        onNavigatePreviousVersion={onNavigatePreviousVersion}
+      />
     </header>
   )
 }

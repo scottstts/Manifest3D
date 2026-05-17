@@ -3,6 +3,7 @@ import type { ValidationReport, ValidationSignal } from '../schema/validationTyp
 export type CandidateAttemptStatus = 'success' | 'failure'
 
 export type CandidateAttempt = {
+  candidate: unknown
   candidateFingerprint: string
   createdAt: string
   failureSignature: string | null
@@ -113,6 +114,7 @@ export function createCandidateHistory(
     }
 
     const attempt: CandidateAttempt = {
+      candidate,
       candidateFingerprint,
       createdAt: now(),
       failureSignature,

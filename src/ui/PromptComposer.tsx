@@ -1,9 +1,18 @@
-import { Paperclip, Send } from 'lucide-react'
-import { type FormEvent, useRef, useState } from 'react'
+import { LoaderCircle, Paperclip, Send, X } from 'lucide-react'
+import {
+  type ClipboardEvent,
+  type FormEvent,
+  type ChangeEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import type { AgentImageAttachment } from '../engine/agent/providerClient'
 
 type PromptComposerProps = {
   disabled?: boolean
+  disabledReason?: string | null
+  isSubmitting?: boolean
   onSubmit: (
     userPrompt: string,
     imageAttachments: readonly AgentImageAttachment[],
@@ -12,11 +21,18 @@ type PromptComposerProps = {
 
 export function PromptComposer({
   disabled = false,
+  disabledReason = null,
+  isSubmitting = false,
   onSubmit,
 }: PromptComposerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [attachments, setAttachments] = useState<AgentImageAttachment[]>([])
   const [prompt, setPrompt] = useState('')
+
+  useLayoutEffect(() => {
+    resizeTextarea(textareaRef.current)
+  }, [prompt])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -30,6 +46,45 @@ export function PromptComposer({
     onSubmit(trimmedPrompt, attachments)
     setPrompt('')
     setAttachments([])
+  }
+
+  function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    setPrompt(event.currentTarget.value)
+  }
+
+  function removeAttachment(attachmentId: string) {
+    setAttachments((currentAttachments) =>
+      currentAttachments.filter((attachment) => attachment.id !== attachmentId),
+    )
+  }
+
+  async function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (disabled) {
+      return
+    }
+
+    const imageFiles = [...event.clipboardData.items]
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
+
+    if (imageFiles.length === 0) {
+      return
+    }
+
+    const nextAttachments = await Promise.all(
+      imageFiles.map((file, index) =>
+        readImageAttachment(
+          file,
+          `pasted-image-${Date.now().toString(36)}-${index + 1}`,
+        ),
+      ),
+    )
+
+    setAttachments((currentAttachments) => [
+      ...currentAttachments,
+      ...nextAttachments,
+    ])
   }
 
   async function handleFiles(files: FileList | null) {
@@ -63,13 +118,35 @@ export function PromptComposer({
       <label className="sr-only" htmlFor="scene-prompt">
         Prompt
       </label>
+      {attachments.length > 0 && (
+        <div className="prompt-composer__previews" aria-label="Attached images">
+          {attachments.map((attachment) => (
+            <div className="prompt-composer__preview" key={attachment.id}>
+              <img
+                alt={attachment.name ?? 'Attached reference'}
+                src={attachment.imageUrl}
+              />
+              <button
+                aria-label={`Remove ${attachment.name ?? 'attached image'}`}
+                className="prompt-composer__preview-remove"
+                type="button"
+                onClick={() => removeAttachment(attachment.id)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <textarea
         disabled={disabled}
         id="scene-prompt"
-        placeholder="What to create?"
+        placeholder={disabledReason ?? 'What to create?'}
+        ref={textareaRef}
         rows={1}
         value={prompt}
-        onChange={(event) => setPrompt(event.currentTarget.value)}
+        onChange={handlePromptChange}
+        onPaste={(event) => void handlePaste(event)}
       />
       <input
         accept="image/*"
@@ -89,34 +166,37 @@ export function PromptComposer({
         >
           <Paperclip aria-hidden="true" />
         </button>
-        {attachments.length > 0 && (
-          <span className="prompt-composer__attachment-count">
-            {attachments.length}
-          </span>
-        )}
         <button
-          aria-label="Send prompt"
-          className="send-button"
+          aria-label={isSubmitting ? 'Generating asset' : 'Send prompt'}
+          className={`send-button${isSubmitting ? ' is-running' : ''}`}
           disabled={disabled || prompt.trim().length === 0}
           type="submit"
         >
-          <Send aria-hidden="true" />
+          {isSubmitting ? (
+            <LoaderCircle aria-hidden="true" />
+          ) : (
+            <Send aria-hidden="true" />
+          )}
         </button>
       </div>
     </form>
   )
 }
 
-async function readImageAttachment(file: File): Promise<AgentImageAttachment> {
+async function readImageAttachment(
+  file: File,
+  fallbackName?: string,
+): Promise<AgentImageAttachment> {
   const imageUrl = await readFileAsDataUrl(file)
   const dimensions = await readImageDimensions(imageUrl)
+  const name = file.name || fallbackName || 'pasted-image'
 
   return {
     height: dimensions.height,
-    id: createImageAttachmentId(file),
+    id: createImageAttachmentId(file, fallbackName),
     imageUrl,
     mediaType: file.type || 'application/octet-stream',
-    name: file.name,
+    name,
     width: dimensions.width,
   }
 }
@@ -157,12 +237,21 @@ function readImageDimensions(
   })
 }
 
-function createImageAttachmentId(file: File) {
-  const baseName = file.name
+function createImageAttachmentId(file: File, fallbackName?: string) {
+  const baseName = (file.name || fallbackName || 'pasted-image')
     .replace(/\.[^.]+$/, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
 
-  return `ref-${baseName || 'image'}-${file.size}-${file.lastModified}`
+  return `ref-${baseName || 'image'}-${file.size}-${file.lastModified || Date.now()}`
+}
+
+function resizeTextarea(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) {
+    return
+  }
+
+  textarea.style.height = 'auto'
+  textarea.style.height = `${textarea.scrollHeight}px`
 }

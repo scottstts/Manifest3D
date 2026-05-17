@@ -2,7 +2,10 @@ import { Canvas } from '@react-three/fiber'
 import type { ComponentProps } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Quaternion } from 'three'
-import type { ManifestAsset } from '../engine/schema/manifestTypes'
+import type {
+  SceneAssetInstance,
+  SceneTransform,
+} from '../engine/scene/sceneStore'
 import { UnsupportedWebGPU } from '../ui/UnsupportedWebGPU'
 import { computeRendererDpr, createFiberWebGPURenderer } from './createRenderer'
 import { ViewportGizmoOverlay } from './ViewportGizmo'
@@ -16,14 +19,22 @@ type CanvasStatus =
   | { type: 'error'; reason: string }
 
 type WebGPUCanvasProps = {
-  assets: readonly ManifestAsset[]
+  assets: readonly SceneAssetInstance[]
+  activeTransformTool: TransformTool
   isSidePanelCollapsed: boolean
   rightPanelOcclusionWidth: number
-  selectedAssetId: string | null
+  selectedTargetId: string | null
   selectionRevision: number
-  onAssetSelected: (assetId: string, partId?: string | null) => void
+  onAssetSelected: (
+    targetId: string,
+    assetId?: string | null,
+    partId?: string | null,
+  ) => void
   onSelectionCleared: () => void
+  onTransformChanged: (instanceId: string, transform: SceneTransform) => void
 }
+
+export type TransformTool = 'move' | 'rotate' | 'scale' | null
 
 const webgpuRendererFactory =
   createFiberWebGPURenderer as unknown as NonNullable<
@@ -31,13 +42,15 @@ const webgpuRendererFactory =
   >
 
 export function WebGPUCanvas({
+  activeTransformTool,
   assets,
   isSidePanelCollapsed,
   rightPanelOcclusionWidth,
-  selectedAssetId,
+  selectedTargetId,
   selectionRevision,
   onAssetSelected,
   onSelectionCleared,
+  onTransformChanged,
 }: WebGPUCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const cameraQuaternionRef = useRef(new Quaternion())
@@ -138,7 +151,7 @@ export function WebGPUCanvas({
           gl={webgpuRendererFactory}
           onCreated={() => setStatus({ type: 'ready' })}
           onPointerDown={(event) => {
-            if (event.shiftKey && selectedAssetId) {
+            if (event.shiftKey && selectedTargetId) {
               onSelectionCleared()
             }
           }}
@@ -146,14 +159,16 @@ export function WebGPUCanvas({
           shadows
         >
           <WebGPUScene
+            activeTransformTool={activeTransformTool}
             assets={assets}
             cameraQuaternionRef={cameraQuaternionRef}
             onCameraQuaternionChange={handleCameraQuaternionChange}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
-            selectedAssetId={selectedAssetId}
+            selectedTargetId={selectedTargetId}
             selectionRevision={selectionRevision}
             onAssetSelected={onAssetSelected}
             onSelectionCleared={onSelectionCleared}
+            onTransformChanged={onTransformChanged}
           />
         </Canvas>
       )}

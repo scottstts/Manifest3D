@@ -55,7 +55,7 @@ describe('createCandidateHistory', () => {
     expect(history.canReportReady()).toBe(false)
   })
 
-  it('projects candidate history into timeline rows with repeated-failure detail', () => {
+  it('projects candidate history into label-only attempt timeline rows', () => {
     const history = createCandidateHistory({
       now: () => '2026-05-16T00:00:00.000Z',
       runId: 'run-timeline',
@@ -69,11 +69,16 @@ describe('createCandidateHistory', () => {
     const timeline = createCandidateHistoryTimeline(history.getSnapshot())
 
     expect(timeline[0]).toMatchObject({
+      detail: null,
       kind: 'candidate_attempt',
       label: 'Candidate validation failed',
       status: 'failed',
     })
-    expect(timeline[7].detail).toContain('Repeated failure signature')
+    expect(
+      timeline
+        .filter((item) => item.kind === 'candidate_attempt')
+        .map((item) => item.detail),
+    ).toEqual([null, null])
     expect(timeline.map((item) => item.id)).toContain(
       'run-timeline:attempt:2:validation:invalid-validation-crate:structure',
     )

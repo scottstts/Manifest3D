@@ -10,8 +10,14 @@ import {
   type SelectionSnapshot,
   type SelectionStore,
 } from '../engine/scene/selectionStore'
+import {
+  createAssetLibraryStore,
+  type AssetLibraryStore,
+  type AssetLibraryStoreSnapshot,
+} from '../engine/persistence/assetLibraryStore'
 
 export type AppStores = {
+  assetLibraryStore: AssetLibraryStore
   sceneStore: SceneStore
   selectionStore: SelectionStore
 }
@@ -25,10 +31,21 @@ const initialManifestScene: ManifestScene = {
 export function useAppStores(): AppStores {
   return useMemo(
     () => ({
+      assetLibraryStore: createAssetLibraryStore(),
       sceneStore: createSceneStore(initialManifestScene),
       selectionStore: createSelectionStore(),
     }),
     [],
+  )
+}
+
+export function useAssetLibrarySnapshot(
+  assetLibraryStore: AssetLibraryStore,
+): AssetLibraryStoreSnapshot {
+  return useSyncExternalStore(
+    assetLibraryStore.subscribe,
+    assetLibraryStore.getSnapshot,
+    assetLibraryStore.getSnapshot,
   )
 }
 

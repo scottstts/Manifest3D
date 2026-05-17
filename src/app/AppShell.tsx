@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -7,12 +8,20 @@ import {
 } from 'react'
 import {
   useAppStores,
+  useAssetLibrarySnapshot,
   useSceneSnapshot,
   useSelectionSnapshot,
 } from './appState'
-import { ChatPanel } from '../ui/ChatPanel'
+import {
+  ChatPanel,
+  type ChatPanelPromptMode,
+  type ChatPanelTranscriptItem,
+} from '../ui/ChatPanel'
+import { ComposeToolbar } from '../ui/ComposeToolbar'
+import { ConfirmDeleteModal } from '../ui/ConfirmDeleteModal'
+import { AssetHistoryPanel } from '../ui/AssetHistoryPanel'
 import { FrameChrome } from '../ui/FrameChrome'
-import { WebGPUCanvas } from '../renderer/WebGPUCanvas'
+import { WebGPUCanvas, type TransformTool } from '../renderer/WebGPUCanvas'
 import { getRightSidePanelOcclusionWidth } from '../renderer/effectiveViewport'
 import { validateManifestAssetCandidate } from '../engine/validation/validateManifest'
 import {
@@ -23,6 +32,20 @@ import { createCandidateHistory } from '../engine/agent/candidateHistory'
 import { createOpenAIManifestClient } from '../engine/agent/openAiManifestClient'
 import type { AgentImageAttachment } from '../engine/agent/providerClient'
 import {
+  findAssetLibraryVersion,
+  getAdjacentAssetVersions,
+  getLastSelectedAssetVersion,
+} from '../engine/persistence/assetLibraryModel'
+import type {
+  AssetLibraryAsset,
+  AssetLibraryVersion,
+  PersistedCandidateAttempt,
+} from '../engine/persistence/assetLibraryTypes'
+import type {
+  SceneTransform,
+  WorkspaceMode,
+} from '../engine/scene/sceneStore'
+import {
   createAgentEventTimelineItem,
   createCandidateHistoryTimeline,
   type AgentTimelineItem,
@@ -30,23 +53,50 @@ import {
 
 export function AppShell() {
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
+  const [isHistoryPanelCollapsed, setIsHistoryPanelCollapsed] = useState(true)
   const [rightPanelOcclusionWidth, setRightPanelOcclusionWidth] = useState(0)
   const [agentEvents, setAgentEvents] = useState<AgentLoopEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [candidateTimelineItems, setCandidateTimelineItems] = useState<
     AgentTimelineItem[]
   >([])
+  const [chatTranscriptItems, setChatTranscriptItems] = useState<
+    ChatPanelTranscriptItem[]
+  >([])
   const [isAgentRunning, setIsAgentRunning] = useState(false)
+  const [activeTransformTool, setActiveTransformTool] =
+    useState<TransformTool>(null)
+  const [assetPendingDelete, setAssetPendingDelete] =
+    useState<AssetLibraryAsset | null>(null)
   const sidePanelRef = useRef<HTMLElement | null>(null)
   const agentHistoryRef = useRef(createCandidateHistory())
   const openAIClientRef = useRef(createOpenAIManifestClient())
-  const { sceneStore, selectionStore } = useAppStores()
-  const { scene } = useSceneSnapshot(sceneStore)
+  const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
+  const librarySnapshot = useAssetLibrarySnapshot(assetLibraryStore)
+  const sceneSnapshot = useSceneSnapshot(sceneStore)
+  const { scene } = sceneSnapshot
   const { revision: selectionRevision, selection } =
     useSelectionSnapshot(selectionStore)
-  const selectedAsset = selection.assetId
-    ? scene.assets.find((asset) => asset.id === selection.assetId)
+  const selectedInstance = selection.targetId
+    ? sceneSnapshot.renderableAssets.find(
+        (instance) => instance.instanceId === selection.targetId,
+      )
     : undefined
+  const selectedAsset = selectedInstance?.asset
+  const selectedLibraryAsset = selectedAsset
+    ? librarySnapshot.library.assets.find(
+        (asset) => asset.assetId === selectedAsset.id,
+      )
+    : undefined
+  const selectedVersionId = selectedInstance?.versionId ?? null
+  const adjacentVersions = getAdjacentAssetVersions(
+    selectedLibraryAsset ?? null,
+    selectedVersionId,
+  )
+  const versionLabel =
+    selectedLibraryAsset && adjacentVersions.currentIndex >= 0
+      ? `v${adjacentVersions.currentIndex + 1}/${selectedLibraryAsset.versions.length}`
+      : null
   const validationReports = useMemo(
     () =>
       scene.assets.map(
@@ -61,71 +111,319 @@ export function AppShell() {
     ],
     [agentEvents, candidateTimelineItems],
   )
+  const composeToolbarRightOffset = Math.max(28, rightPanelOcclusionWidth + 28)
+  const composeSelectionActive =
+    sceneSnapshot.activeWorkspace === 'compose' && Boolean(selectedInstance)
+  const promptMode: ChatPanelPromptMode =
+    sceneSnapshot.activeWorkspace === 'create' &&
+    selectedInstance?.instanceId === 'create'
+      ? 'edit'
+      : 'create'
+
+  useEffect(() => {
+    void assetLibraryStore.load()
+  }, [assetLibraryStore])
+
   const handlePromptSubmit = useCallback(
     (
       userPrompt: string,
       imageAttachments: readonly AgentImageAttachment[],
     ) => {
-      if (isAgentRunning) {
+      if (isAgentRunning || sceneSnapshot.activeWorkspace !== 'create') {
         return
       }
 
-      const runScene = sceneStore.getSnapshot().scene
-      const runSelectedAsset = selectedAsset ?? null
+      const runId = `agent:${Date.now().toString(36)}`
+      const runSelectedInstance =
+        sceneSnapshot.activeWorkspace === 'create' &&
+        selectedInstance?.instanceId === 'create'
+          ? selectedInstance
+          : null
+      const runSelectedAsset = runSelectedInstance?.asset ?? null
+      const runSelectedVersion =
+        runSelectedInstance?.assetId && runSelectedInstance.versionId
+          ? findAssetLibraryVersion(
+              librarySnapshot.library,
+              runSelectedInstance.assetId,
+              runSelectedInstance.versionId,
+            )
+          : null
       const mode = runSelectedAsset ? 'edit' : 'create'
+      const runStatus = runSelectedAsset
+        ? `Editing ${runSelectedAsset.name}`
+        : 'Creating asset'
+      const assistantMessageId = `${runId}:assistant`
+
+      if (mode === 'create') {
+        sceneStore.clearCreateAsset()
+        selectionStore.clearSelection()
+      }
+
+      const runScene = sceneStore.getSnapshot().scene
 
       setAgentEvents([])
       setCandidateTimelineItems([])
-      setAgentStatus(
-        runSelectedAsset
-          ? `Editing ${runSelectedAsset.name}`
-          : 'Creating asset',
-      )
+      setAgentStatus(runStatus)
+      setChatTranscriptItems((currentItems) => {
+        const runItems: ChatPanelTranscriptItem[] = [
+          {
+            id: `${runId}:user`,
+            imageAttachments,
+            role: 'user',
+            text: userPrompt,
+          },
+          {
+            id: assistantMessageId,
+            role: 'agent',
+            status: runStatus,
+            timelineItems: [],
+          },
+        ]
+
+        return mode === 'create' ? runItems : [...currentItems, ...runItems]
+      })
       setIsAgentRunning(true)
+
+      let runEvents: AgentLoopEvent[] = []
 
       void runManifestAgentLoop(
         {
           imageAttachments,
           mode,
-          runId: `agent:${Date.now().toString(36)}`,
+          runId,
           scene: runScene,
           selectedAsset: runSelectedAsset,
+          selectedAssetAttemptContext: runSelectedVersion
+            ? formatAttemptContext(runSelectedVersion)
+            : null,
           userPrompt,
         },
         {
           client: openAIClientRef.current,
           history: agentHistoryRef.current,
           onEvent: (event) => {
-            setAgentEvents((currentEvents) => [...currentEvents, event])
+            runEvents = upsertAgentEvent(runEvents, event)
+
+            const currentTimeline = runEvents.map(createAgentEventTimelineItem)
+
+            setAgentEvents(runEvents)
+            setChatTranscriptItems((currentItems) =>
+              updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                timelineItems: currentTimeline,
+              }),
+            )
           },
           sceneStore,
         },
       )
-        .then((result) => {
-          setCandidateTimelineItems(
-            createCandidateHistoryTimeline(result.history),
-          )
+        .then(async (result) => {
+          const resultTimelineItems = [
+            ...runEvents.map(createAgentEventTimelineItem),
+            ...createCandidateHistoryTimeline(result.history),
+          ]
 
-          if (result.status === 'ready') {
-            selectionStore.selectAsset(result.asset.id)
-            setAgentStatus(`Ready: ${result.asset.name}`)
+          setCandidateTimelineItems(createCandidateHistoryTimeline(result.history))
+
+          if (result.status !== 'ready') {
+            setAgentStatus(result.message)
+            setChatTranscriptItems((currentItems) =>
+              updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                status: result.message,
+                timelineItems: resultTimelineItems,
+              }),
+            )
             return
           }
 
-          setAgentStatus(result.message)
+          const savedVersion = await assetLibraryStore.saveValidatedVersion({
+            asset: result.asset,
+            history: result.history,
+            parentVersionId:
+              mode === 'edit' ? runSelectedInstance?.versionId ?? null : null,
+            validationReport: result.report,
+          })
+
+          sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
+          selectionStore.selectAsset('create', result.asset.id)
+          setAgentStatus(`Ready: ${result.asset.name}`)
+          setChatTranscriptItems((currentItems) =>
+            updateAgentTranscriptItem(currentItems, assistantMessageId, {
+              status: `Ready: ${result.asset.name}`,
+              timelineItems: resultTimelineItems,
+            }),
+          )
         })
         .catch((error: unknown) => {
-          setAgentStatus(
+          const message =
             error instanceof Error
               ? error.message
-              : 'The agent run failed unexpectedly.',
+              : 'The agent run failed unexpectedly.'
+
+          setAgentStatus(message)
+          setChatTranscriptItems((currentItems) =>
+            updateAgentTranscriptItem(currentItems, assistantMessageId, {
+              status: message,
+              timelineItems: runEvents.map(createAgentEventTimelineItem),
+            }),
           )
         })
         .finally(() => {
           setIsAgentRunning(false)
         })
     },
-    [isAgentRunning, sceneStore, selectedAsset, selectionStore],
+    [
+      assetLibraryStore,
+      isAgentRunning,
+      librarySnapshot.library,
+      sceneSnapshot.activeWorkspace,
+      sceneStore,
+      selectedInstance,
+      selectionStore,
+    ],
+  )
+
+  const handleNewCreateAsset = useCallback(() => {
+    if (isAgentRunning) {
+      return
+    }
+
+    setAgentEvents([])
+    setCandidateTimelineItems([])
+    setChatTranscriptItems([])
+    setAgentStatus(null)
+    sceneStore.clearCreateAsset()
+    selectionStore.clearSelection()
+    setActiveTransformTool(null)
+  }, [isAgentRunning, sceneStore, selectionStore])
+
+  const handleWorkspaceChange = useCallback(
+    (workspace: WorkspaceMode) => {
+      sceneStore.setWorkspace(workspace)
+      selectionStore.clearSelection()
+      setActiveTransformTool(null)
+    },
+    [sceneStore, selectionStore],
+  )
+
+  const handleHistoryAssetOpen = useCallback(
+    (asset: AssetLibraryAsset) => {
+      const version = getLastSelectedAssetVersion(asset)
+
+      void assetLibraryStore.setLastSelectedVersion(
+        asset.assetId,
+        version.versionId,
+      )
+      setAgentEvents([])
+      setChatTranscriptItems([])
+      setCandidateTimelineItems(createVersionTimeline(version))
+      setAgentStatus(`Loaded ${asset.name} v${version.versionNumber}`)
+
+      if (sceneSnapshot.activeWorkspace === 'compose') {
+        const instance = sceneStore.addComposeAsset(
+          version.asset,
+          version.versionId,
+        )
+
+        selectionStore.selectAsset(instance.instanceId, instance.assetId)
+        return
+      }
+
+      sceneStore.setWorkspace('create')
+      sceneStore.setCreateAsset(version.asset, version.versionId)
+      selectionStore.selectAsset('create', version.asset.id)
+    },
+    [assetLibraryStore, sceneSnapshot.activeWorkspace, sceneStore, selectionStore],
+  )
+
+  const handleConfirmDeleteAsset = useCallback(() => {
+    if (!assetPendingDelete) {
+      return
+    }
+
+    void assetLibraryStore
+      .deleteAsset(assetPendingDelete.assetId)
+      .then(() => {
+        sceneStore.removeAsset(assetPendingDelete.assetId)
+
+        if (selection.assetId === assetPendingDelete.assetId) {
+          selectionStore.clearSelection()
+        }
+      })
+      .finally(() => {
+        setAssetPendingDelete(null)
+      })
+  }, [
+    assetLibraryStore,
+    assetPendingDelete,
+    sceneStore,
+    selection.assetId,
+    selectionStore,
+  ])
+
+  const handleNavigateVersion = useCallback(
+    (version: AssetLibraryVersion | null) => {
+      if (!version || !selectedInstance) {
+        return
+      }
+
+      void assetLibraryStore.setLastSelectedVersion(
+        version.assetId,
+        version.versionId,
+      )
+      setAgentEvents([])
+      setChatTranscriptItems([])
+      setCandidateTimelineItems(createVersionTimeline(version))
+      setAgentStatus(`Loaded ${version.asset.name} v${version.versionNumber}`)
+
+      if (selectedInstance.instanceId === 'create') {
+        sceneStore.setCreateAsset(version.asset, version.versionId)
+        selectionStore.selectAsset('create', version.assetId)
+        return
+      }
+
+      sceneStore.setComposeInstanceVersion(
+        selectedInstance.instanceId,
+        version.asset,
+        version.versionId,
+      )
+      selectionStore.selectAsset(selectedInstance.instanceId, version.assetId)
+    },
+    [assetLibraryStore, sceneStore, selectedInstance, selectionStore],
+  )
+
+  const handleDuplicateComposeSelection = useCallback(() => {
+    if (!selectedInstance) {
+      return
+    }
+
+    const duplicate = sceneStore.duplicateComposeInstance(
+      selectedInstance.instanceId,
+    )
+
+    if (duplicate) {
+      selectionStore.selectAsset(duplicate.instanceId, duplicate.assetId)
+    }
+  }, [sceneStore, selectedInstance, selectionStore])
+
+  const handleDeleteComposeSelection = useCallback(() => {
+    if (!selectedInstance) {
+      return
+    }
+
+    sceneStore.removeComposeInstance(selectedInstance.instanceId)
+    selectionStore.clearSelection()
+    setActiveTransformTool(null)
+  }, [sceneStore, selectedInstance, selectionStore])
+
+  const handleTransformChanged = useCallback(
+    (instanceId: string, transform: SceneTransform) => {
+      if (sceneSnapshot.activeWorkspace !== 'compose') {
+        return
+      }
+
+      sceneStore.updateComposeInstanceTransform(instanceId, transform)
+    },
+    [sceneSnapshot.activeWorkspace, sceneStore],
   )
 
   useLayoutEffect(() => {
@@ -177,27 +475,154 @@ export function AppShell() {
   return (
     <div className="app-shell">
       <WebGPUCanvas
-        assets={scene.assets}
+        activeTransformTool={activeTransformTool}
+        assets={sceneSnapshot.renderableAssets}
         isSidePanelCollapsed={isSidePanelCollapsed}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
-        selectedAssetId={selection.assetId}
+        selectedTargetId={selection.targetId}
         selectionRevision={selectionRevision}
         onAssetSelected={selectionStore.selectAsset}
         onSelectionCleared={selectionStore.clearSelection}
+        onTransformChanged={handleTransformChanged}
       />
-      <FrameChrome selectedAsset={selectedAsset} />
+      <FrameChrome
+        activeWorkspace={sceneSnapshot.activeWorkspace}
+        canNavigateNextVersion={Boolean(adjacentVersions.next)}
+        canNavigatePreviousVersion={Boolean(adjacentVersions.previous)}
+        selectedAsset={selectedAsset}
+        versionLabel={versionLabel}
+        onNavigateNextVersion={() => handleNavigateVersion(adjacentVersions.next)}
+        onNavigatePreviousVersion={() =>
+          handleNavigateVersion(adjacentVersions.previous)
+        }
+        onWorkspaceChange={handleWorkspaceChange}
+      />
       <main className="app-overlays" aria-label="Manifest3D creation workspace">
+        <AssetHistoryPanel
+          activeAssetId={selectedAsset?.id ?? null}
+          assets={librarySnapshot.library.assets}
+          isCollapsed={isHistoryPanelCollapsed}
+          modeLabel={
+            sceneSnapshot.activeWorkspace === 'compose' ? 'Add' : 'View'
+          }
+          onAssetDeleteRequested={setAssetPendingDelete}
+          onAssetOpen={handleHistoryAssetOpen}
+          onCollapsedChange={setIsHistoryPanelCollapsed}
+        />
+        {sceneSnapshot.activeWorkspace === 'compose' && (
+          <ComposeToolbar
+            activeTool={activeTransformTool}
+            disabled={!composeSelectionActive}
+            rightOffset={composeToolbarRightOffset}
+            onDelete={handleDeleteComposeSelection}
+            onDuplicate={handleDuplicateComposeSelection}
+            onToolChange={setActiveTransformTool}
+          />
+        )}
         <ChatPanel
           agentStatus={agentStatus}
           isCollapsed={isSidePanelCollapsed}
           isRunning={isAgentRunning}
+          isWorkspaceDisabled={sceneSnapshot.activeWorkspace === 'compose'}
+          mode={promptMode}
+          onNewAsset={handleNewCreateAsset}
           onCollapsedChange={setIsSidePanelCollapsed}
           onPromptSubmit={handlePromptSubmit}
           panelRef={sidePanelRef}
           timelineItems={timelineItems}
+          transcriptItems={chatTranscriptItems}
           validationReports={validationReports}
         />
       </main>
+      <ConfirmDeleteModal
+        asset={assetPendingDelete}
+        onCancel={() => setAssetPendingDelete(null)}
+        onConfirm={handleConfirmDeleteAsset}
+      />
     </div>
   )
+}
+
+function upsertAgentEvent(
+  events: readonly AgentLoopEvent[],
+  event: AgentLoopEvent,
+) {
+  const existingEventIndex = events.findIndex(
+    (currentEvent) => currentEvent.id === event.id,
+  )
+
+  if (existingEventIndex < 0) {
+    return [...events, event]
+  }
+
+  const nextEvents = [...events]
+
+  nextEvents[existingEventIndex] = event
+
+  return nextEvents
+}
+
+function updateAgentTranscriptItem(
+  items: readonly ChatPanelTranscriptItem[],
+  messageId: string,
+  update: Partial<Extract<ChatPanelTranscriptItem, { role: 'agent' }>>,
+): ChatPanelTranscriptItem[] {
+  return items.map((item) =>
+    item.role === 'agent' && item.id === messageId
+      ? {
+          ...item,
+          ...update,
+        }
+      : item,
+  )
+}
+
+function formatAttemptContext(version: AssetLibraryVersion) {
+  const latestAttempt = version.attempts.at(-1)
+  const failureAttempts = version.attempts.filter(
+    (attempt) => attempt.status === 'failure',
+  )
+
+  return [
+    `versionId=${version.versionId}`,
+    `assetId=${version.assetId}`,
+    `attempts=${version.attempts.length}`,
+    `failedAttempts=${failureAttempts.length}`,
+    latestAttempt
+      ? `latestAttemptStatus=${latestAttempt.status} latestReport=${latestAttempt.report.bundle.summary}`
+      : 'latestAttemptStatus=none',
+    ...version.attempts
+      .slice(-4)
+      .map((attempt) => formatAttemptSummary(attempt)),
+  ].join('\n')
+}
+
+function formatAttemptSummary(attempt: PersistedCandidateAttempt) {
+  return [
+    `- revision=${attempt.revision}`,
+    `status=${attempt.status}`,
+    `failureStreak=${attempt.failureStreak}`,
+    `report=${attempt.report.bundle.summary}`,
+  ].join(' ')
+}
+
+function createVersionTimeline(version: AssetLibraryVersion) {
+  const latestAttempt = version.attempts.at(-1) ?? null
+  const latestSuccessfulAttempt =
+    [...version.attempts].reverse().find((attempt) => attempt.status === 'success') ??
+    null
+  const latestFailureAttempt =
+    [...version.attempts].reverse().find((attempt) => attempt.status === 'failure') ??
+    null
+
+  return createCandidateHistoryTimeline({
+    activeCandidateFingerprint: latestAttempt?.candidateFingerprint ?? null,
+    attempts: version.attempts,
+    canReportReady: latestAttempt?.status === 'success',
+    consecutiveFailureCount: latestFailureAttempt?.failureStreak ?? 0,
+    currentRevision: latestAttempt?.revision ?? 0,
+    latestFailureSignature: latestFailureAttempt?.failureSignature ?? null,
+    latestSuccessfulAttempt,
+    runId: version.sourceRunId,
+  })
 }

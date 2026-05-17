@@ -21,7 +21,7 @@ export type AgentTimelineItem = {
   id: string
   kind: AgentTimelineItemKind
   label: string
-  status: ValidationStepStatus
+  status: ValidationStepStatus | 'running'
 }
 
 export function createValidationTimeline(
@@ -56,7 +56,7 @@ export function createAgentEventTimelineItem(
   event: AgentLoopEvent,
 ): AgentTimelineItem {
   return {
-    detail: event.detail,
+    detail: null,
     id: event.id,
     kind: 'agent_step',
     label: event.label,
@@ -67,15 +67,8 @@ export function createAgentEventTimelineItem(
 function createAttemptTimelineItem(
   attempt: CandidateAttempt,
 ): AgentTimelineItem {
-  const failed = attempt.status === 'failure'
-  const repeated = attempt.repeatedFailure
-    ? ` Repeated failure signature, streak ${attempt.failureStreak}.`
-    : failed
-      ? ` Failure streak ${attempt.failureStreak}.`
-      : ''
-
   return {
-    detail: `revision=${attempt.revision} fingerprint=${attempt.candidateFingerprint}.${repeated}`,
+    detail: null,
     id: attempt.id,
     kind: 'candidate_attempt',
     label:

@@ -63,12 +63,16 @@ describe('compileManifestPrompt', () => {
       mode: 'edit',
       scene,
       selectedAsset,
+      selectedAssetAttemptContext:
+        'versionId=validation-crate:v1 attempts=2 latestStatus=success',
       userPrompt: 'Make the lid thicker.',
     })
 
     expect(compiled.user).toContain('Revise the selected Manifest3D asset')
     expect(compiled.user).toContain('physical support paths')
     expect(compiled.user).toContain('<selected_asset_json>')
+    expect(compiled.user).toContain('<selected_asset_attempt_history>')
+    expect(compiled.user).toContain('versionId=validation-crate:v1')
     expect(compiled.user).toContain('"id": "validation-crate"')
     expect(compiled.metadata.selectedAssetId).toBe('validation-crate')
   })

@@ -1,6 +1,7 @@
 export type SceneSelection = {
   assetId: string | null
   partId: string | null
+  targetId: string | null
 }
 
 export type SelectionSnapshot = {
@@ -11,7 +12,11 @@ export type SelectionSnapshot = {
 export type SelectionStore = {
   clearSelection: () => void
   getSnapshot: () => SelectionSnapshot
-  selectAsset: (assetId: string, partId?: string | null) => void
+  selectAsset: (
+    targetId: string,
+    assetId?: string | null,
+    partId?: string | null,
+  ) => void
   subscribe: (listener: SelectionStoreListener) => () => void
 }
 
@@ -20,6 +25,7 @@ export type SelectionStoreListener = () => void
 const emptySelection: SceneSelection = {
   assetId: null,
   partId: null,
+  targetId: null,
 }
 
 export function createSelectionStore(
@@ -39,7 +45,7 @@ export function createSelectionStore(
 
   return {
     clearSelection() {
-      if (snapshot.selection.assetId === null) {
+      if (snapshot.selection.targetId === null) {
         return
       }
 
@@ -52,12 +58,13 @@ export function createSelectionStore(
     getSnapshot() {
       return snapshot
     },
-    selectAsset(assetId, partId = null) {
+    selectAsset(targetId, assetId = targetId, partId = null) {
       snapshot = {
         revision: snapshot.revision + 1,
         selection: {
           assetId,
           partId,
+          targetId,
         },
       }
       emit()
