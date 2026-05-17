@@ -123,18 +123,36 @@ export type ManifestJoint = {
   limits?: ManifestJointLimits
 }
 
+export type ManifestJointPose = {
+  jointId: string
+  value: number
+}
+
+export type ManifestPoseSpec = {
+  name?: string
+  joints: readonly ManifestJointPose[]
+}
+
+type ManifestCheckPoseField = {
+  pose?: ManifestPoseSpec
+}
+
 export type ManifestCheck =
-  | { type: 'part_exists'; partId: string }
-  | { type: 'joint_exists'; jointId: string; jointType?: ManifestJointType }
-  | {
+  | ({ type: 'part_exists'; partId: string } & ManifestCheckPoseField)
+  | ({
+      type: 'joint_exists'
+      jointId: string
+      jointType?: ManifestJointType
+    } & ManifestCheckPoseField)
+  | ({
       type: 'expect_contact'
       partAId: string
       partBId: string
       visualAId?: string
       visualBId?: string
       contactTolerance?: number
-    }
-  | {
+    } & ManifestCheckPoseField)
+  | ({
       type: 'expect_gap'
       positivePartId: string
       negativePartId: string
@@ -144,8 +162,8 @@ export type ManifestCheck =
       maxPenetration?: number
       positiveVisualId?: string
       negativeVisualId?: string
-    }
-  | {
+    } & ManifestCheckPoseField)
+  | ({
       type: 'expect_overlap'
       partAId: string
       partBId: string
@@ -153,8 +171,8 @@ export type ManifestCheck =
       minOverlap?: number
       visualAId?: string
       visualBId?: string
-    }
-  | {
+    } & ManifestCheckPoseField)
+  | ({
       type: 'expect_within'
       innerPartId: string
       outerPartId: string
@@ -162,7 +180,7 @@ export type ManifestCheck =
       margin?: number
       innerVisualId?: string
       outerVisualId?: string
-    }
+    } & ManifestCheckPoseField)
 
 export type ManifestAllowance =
   | {

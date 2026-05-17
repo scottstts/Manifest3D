@@ -4,6 +4,7 @@ export type ValidationStage =
   | 'build'
   | 'baseline_qc'
   | 'checks'
+  | 'sampled_poses'
   | 'export'
   | 'commit'
 

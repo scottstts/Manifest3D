@@ -8,7 +8,7 @@ import {
   normalizeAxes,
 } from '../geometry/measurements'
 import type { ManifestAsset, ManifestCheck } from '../schema/manifestTypes'
-import type { ValidationSignal } from '../schema/validationTypes'
+import type { ValidationSignal, ValidationStage } from '../schema/validationTypes'
 import { createValidationSignal } from './reportBuilder'
 
 type ResolvedPairBounds =
@@ -25,11 +25,31 @@ type ResolvedPairBounds =
       refs: Record<string, string>
     }
 
+export type IndexedManifestCheck = {
+  check: ManifestCheck
+  index: number
+}
+
+export type RunPromptChecksOptions = {
+  checks?: readonly IndexedManifestCheck[]
+  includeMissingChecksWarning?: boolean
+  poseLabel?: string
+  stage?: ValidationStage
+}
+
 export function runPromptChecks(
   asset: ManifestAsset,
   builtAsset: BuiltManifestAsset,
+  options: RunPromptChecksOptions = {},
 ): ValidationSignal[] {
-  if (asset.checks.length === 0) {
+  const includeMissingChecksWarning = options.includeMissingChecksWarning ?? true
+  const indexedChecks =
+    options.checks ??
+    asset.checks
+      .map((check, index) => ({ check, index }))
+      .filter(({ check }) => !check.pose)
+
+  if (asset.checks.length === 0 && includeMissingChecksWarning) {
     return [
       createValidationSignal(
         'authored_checks',
@@ -39,14 +59,17 @@ export function runPromptChecks(
           path: '/checks',
           severity: 'warning',
           source: 'checks',
-          stage: 'checks',
+          stage: options.stage ?? 'checks',
         },
       ),
     ]
   }
 
-  return asset.checks.flatMap((check, index) =>
-    runPromptCheck(asset, builtAsset, check, `/checks/${index}`),
+  return indexedChecks.flatMap(({ check, index }) =>
+    runPromptCheck(asset, builtAsset, check, `/checks/${index}`, {
+      poseLabel: options.poseLabel,
+      stage: options.stage ?? 'checks',
+    }),
   )
 }
 
@@ -55,6 +78,10 @@ function runPromptCheck(
   builtAsset: BuiltManifestAsset,
   check: ManifestCheck,
   path: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  },
 ): ValidationSignal[] {
   switch (check.type) {
     case 'part_exists':
@@ -67,18 +94,20 @@ function runPromptCheck(
               `Authored check expected part "${check.partId}".`,
               path,
               { partId: check.partId },
+              undefined,
+              context,
             ),
           ]
     case 'joint_exists':
-      return runJointExistsCheck(asset, check, path)
+      return runJointExistsCheck(asset, check, path, context)
     case 'expect_contact':
-      return runContactCheck(builtAsset, check, path)
+      return runContactCheck(builtAsset, check, path, context)
     case 'expect_gap':
-      return runGapCheck(builtAsset, check, path)
+      return runGapCheck(builtAsset, check, path, context)
     case 'expect_overlap':
-      return runOverlapCheck(builtAsset, check, path)
+      return runOverlapCheck(builtAsset, check, path, context)
     case 'expect_within':
-      return runWithinCheck(builtAsset, check, path)
+      return runWithinCheck(builtAsset, check, path, context)
     default:
       return assertNever(check)
   }
@@ -88,6 +117,10 @@ function runJointExistsCheck(
   asset: ManifestAsset,
   check: Extract<ManifestCheck, { type: 'joint_exists' }>,
   path: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  },
 ) {
   const joint = asset.joints.find((candidate) => candidate.id === check.jointId)
 
@@ -99,6 +132,8 @@ function runJointExistsCheck(
         `Authored check expected joint "${check.jointId}".`,
         path,
         { jointId: check.jointId },
+        undefined,
+        context,
       ),
     ]
   }
@@ -111,6 +146,8 @@ function runJointExistsCheck(
         `Authored check expected joint "${check.jointId}" to be "${check.jointType}", but it is "${joint.type}".`,
         path,
         { jointId: check.jointId },
+        undefined,
+        context,
       ),
     ]
   }
@@ -122,6 +159,10 @@ function runContactCheck(
   builtAsset: BuiltManifestAsset,
   check: Extract<ManifestCheck, { type: 'expect_contact' }>,
   path: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  },
 ) {
   const resolved = resolvePairBounds(
     builtAsset,
@@ -132,7 +173,17 @@ function runContactCheck(
   )
 
   if (isResolvedPairError(resolved)) {
-    return [createCheckFailure('missing_exact_geometry', 'check_ref_missing', resolved.error, path, resolved.refs)]
+    return [
+      createCheckFailure(
+        'missing_exact_geometry',
+        'check_ref_missing',
+        resolved.error,
+        path,
+        resolved.refs,
+        undefined,
+        context,
+      ),
+    ]
   }
 
   const contactTolerance = check.contactTolerance ?? 0.005
@@ -150,6 +201,7 @@ function runContactCheck(
       path,
       resolved.refs,
       `minDistance=${distance.toFixed(4)} contactTolerance=${contactTolerance}`,
+      context,
     ),
   ]
 }
@@ -158,6 +210,10 @@ function runGapCheck(
   builtAsset: BuiltManifestAsset,
   check: Extract<ManifestCheck, { type: 'expect_gap' }>,
   path: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  },
 ) {
   const resolved = resolvePairBounds(
     builtAsset,
@@ -168,7 +224,17 @@ function runGapCheck(
   )
 
   if (isResolvedPairError(resolved)) {
-    return [createCheckFailure('missing_exact_geometry', 'check_ref_missing', resolved.error, path, resolved.refs)]
+    return [
+      createCheckFailure(
+        'missing_exact_geometry',
+        'check_ref_missing',
+        resolved.error,
+        path,
+        resolved.refs,
+        undefined,
+        context,
+      ),
+    ]
   }
 
   const minGap =
@@ -184,6 +250,8 @@ function runGapCheck(
         'expect_gap maxGap must be greater than or equal to minGap.',
         path,
         resolved.refs,
+        undefined,
+        context,
       ),
     ]
   }
@@ -202,6 +270,7 @@ function runGapCheck(
       path,
       resolved.refs,
       `gap=${gap.toFixed(4)} minGap=${minGap} maxGap=${Number.isFinite(maxGap) ? maxGap : 'inf'}`,
+      context,
     ),
   ]
 }
@@ -210,6 +279,10 @@ function runOverlapCheck(
   builtAsset: BuiltManifestAsset,
   check: Extract<ManifestCheck, { type: 'expect_overlap' }>,
   path: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  },
 ) {
   const resolved = resolvePairBounds(
     builtAsset,
@@ -220,7 +293,17 @@ function runOverlapCheck(
   )
 
   if (isResolvedPairError(resolved)) {
-    return [createCheckFailure('missing_exact_geometry', 'check_ref_missing', resolved.error, path, resolved.refs)]
+    return [
+      createCheckFailure(
+        'missing_exact_geometry',
+        'check_ref_missing',
+        resolved.error,
+        path,
+        resolved.refs,
+        undefined,
+        context,
+      ),
+    ]
   }
 
   const minOverlap = check.minOverlap ?? 0
@@ -246,6 +329,7 @@ function runOverlapCheck(
             `overlap_${axis}=${getProjectedOverlap(resolved.boundsA, resolved.boundsB, axis).toFixed(4)}`,
         )
         .join(' '),
+      context,
     ),
   ]
 }
@@ -254,6 +338,10 @@ function runWithinCheck(
   builtAsset: BuiltManifestAsset,
   check: Extract<ManifestCheck, { type: 'expect_within' }>,
   path: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  },
 ) {
   const resolved = resolvePairBounds(
     builtAsset,
@@ -264,7 +352,17 @@ function runWithinCheck(
   )
 
   if (isResolvedPairError(resolved)) {
-    return [createCheckFailure('missing_exact_geometry', 'check_ref_missing', resolved.error, path, resolved.refs)]
+    return [
+      createCheckFailure(
+        'missing_exact_geometry',
+        'check_ref_missing',
+        resolved.error,
+        path,
+        resolved.refs,
+        undefined,
+        context,
+      ),
+    ]
   }
 
   const margin = check.margin ?? 0
@@ -284,6 +382,7 @@ function runWithinCheck(
       path,
       resolved.refs,
       `failedAxes=${failedAxes.join(',')} margin=${margin}`,
+      context,
     ),
   ]
 }
@@ -350,14 +449,23 @@ function createCheckFailure(
   path: string,
   refs: Record<string, string>,
   details?: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  } = {
+    stage: 'checks',
+  },
 ) {
+  const poseDetails = context.poseLabel ? `pose=${context.poseLabel}` : null
+  const combinedDetails = [details, poseDetails].filter(Boolean).join(' ')
+
   return createValidationSignal(kind, code, summary, {
     checkName: code,
-    details,
+    details: combinedDetails || undefined,
     path,
     refs,
     source: 'checks',
-    stage: 'checks',
+    stage: context.stage,
   })
 }
 

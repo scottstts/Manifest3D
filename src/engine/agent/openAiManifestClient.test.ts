@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
+import { manifestAssetResponseJsonSchema } from '../schema/manifestContract'
 import type { ManifestScene } from '../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
 import {
@@ -56,6 +57,10 @@ describe('buildOpenAIResponsesRequestBody', () => {
         }),
       ]),
     )
+  })
+
+  it('uses strict-compatible object schemas for the response format', () => {
+    expect(findStrictRequiredMismatches(manifestAssetResponseJsonSchema)).toEqual([])
   })
 })
 
@@ -120,3 +125,67 @@ describe('createOpenAIManifestClient', () => {
     })
   })
 })
+
+function findStrictRequiredMismatches(
+  schema: unknown,
+  path = '$',
+): string[] {
+  if (!isRecord(schema)) {
+    return []
+  }
+
+  const mismatches: string[] = []
+
+  if (schema.type === 'object' && isRecord(schema.properties)) {
+    const propertyKeys = Object.keys(schema.properties).sort()
+    const requiredKeys = Array.isArray(schema.required)
+      ? schema.required.filter((key): key is string => typeof key === 'string').sort()
+      : []
+
+    if (!arraysEqual(propertyKeys, requiredKeys)) {
+      mismatches.push(
+        `${path}: properties=[${propertyKeys.join(',')}] required=[${requiredKeys.join(',')}]`,
+      )
+    }
+  }
+
+  if (isRecord(schema.properties)) {
+    for (const [key, value] of Object.entries(schema.properties)) {
+      mismatches.push(
+        ...findStrictRequiredMismatches(value, `${path}.properties.${key}`),
+      )
+    }
+  }
+
+  if (Array.isArray(schema.anyOf)) {
+    schema.anyOf.forEach((value, index) => {
+      mismatches.push(...findStrictRequiredMismatches(value, `${path}.anyOf.${index}`))
+    })
+  }
+
+  if (Array.isArray(schema.oneOf)) {
+    schema.oneOf.forEach((value, index) => {
+      mismatches.push(...findStrictRequiredMismatches(value, `${path}.oneOf.${index}`))
+    })
+  }
+
+  if (Array.isArray(schema.allOf)) {
+    schema.allOf.forEach((value, index) => {
+      mismatches.push(...findStrictRequiredMismatches(value, `${path}.allOf.${index}`))
+    })
+  }
+
+  if (schema.items) {
+    mismatches.push(...findStrictRequiredMismatches(schema.items, `${path}.items`))
+  }
+
+  return mismatches
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}

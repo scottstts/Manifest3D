@@ -45,6 +45,20 @@ describe('buildManifestAsset', () => {
     expect(() => buildManifestAsset(asset)).toThrow(/missing material/)
   })
 
+  it('applies movable joint preview poses while building the hierarchy', () => {
+    const asset = createValidValidationFixtureAsset()
+    const builtAsset = buildManifestAsset(asset, {
+      jointPoses: {
+        'crate-lid-hinge': -1.2,
+      },
+    })
+    const lidJointGroup = builtAsset.jointGroups.get('crate-lid-hinge')
+
+    expect(lidJointGroup?.rotation.x).toBeCloseTo(-1.2)
+
+    disposeManifestObject(builtAsset.group)
+  })
+
   it('throws when the joint graph has more than one root', () => {
     const asset = parseManifestAsset({
       ...createValidValidationFixtureAsset(),

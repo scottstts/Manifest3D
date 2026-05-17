@@ -22,6 +22,7 @@ import { ConfirmDeleteModal } from '../ui/ConfirmDeleteModal'
 import { AssetHistoryPanel } from '../ui/AssetHistoryPanel'
 import { ApiKeyModal } from '../ui/ApiKeyModal'
 import { FrameChrome } from '../ui/FrameChrome'
+import { JointPreviewPanel } from '../ui/JointPreviewPanel'
 import { WebGPUCanvas, type TransformTool } from '../renderer/WebGPUCanvas'
 import { getRightSidePanelOcclusionWidth } from '../renderer/effectiveViewport'
 import { validateManifestAssetCandidate } from '../engine/validation/validateManifest'
@@ -60,10 +61,23 @@ import {
   downloadGlbExport,
   exportManifestAssetGlb,
 } from '../engine/scene/exportGlb'
+import {
+  getDefaultJointPoseValue,
+  getJointPreviewRange,
+  normalizeJointPoseValue,
+  type JointPoseValues,
+} from '../engine/geometry/jointPoses'
 
 type ComposeHistoryEntry = {
   instances: readonly SceneAssetInstance[]
   selectedTargetId: string | null
+}
+
+type JointPreviewByInstance = Record<string, JointPoseValues>
+
+type PlayingJointPreview = {
+  instanceId: string
+  jointId: string
 }
 
 const composeHistoryLimit = 40
@@ -103,10 +117,15 @@ export function AppShell() {
   const [composeRedoStack, setComposeRedoStack] = useState<
     ComposeHistoryEntry[]
   >([])
+  const [jointPreviewByInstance, setJointPreviewByInstance] =
+    useState<JointPreviewByInstance>({})
+  const [playingJointPreview, setPlayingJointPreview] =
+    useState<PlayingJointPreview | null>(null)
   const sidePanelRef = useRef<HTMLElement | null>(null)
   const pendingTransformHistoryRef = useRef<ComposeHistoryEntry | null>(null)
   const exportToastTimeoutRef = useRef<number | null>(null)
   const agentRunAbortControllerRef = useRef<AbortController | null>(null)
+  const jointAnimationDirectionRef = useRef(1)
   const agentHistoryRef = useRef(createCandidateHistory())
   const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
   const librarySnapshot = useAssetLibrarySnapshot(assetLibraryStore)
@@ -120,6 +139,14 @@ export function AppShell() {
       )
     : undefined
   const selectedAsset = selectedInstance?.asset
+  const selectedJointPreviewPoses =
+    selectedInstance ? jointPreviewByInstance[selectedInstance.instanceId] ?? {} : {}
+  const selectedPlayingJointId =
+    playingJointPreview &&
+    selectedInstance &&
+    playingJointPreview.instanceId === selectedInstance.instanceId
+      ? playingJointPreview.jointId
+      : null
   const exportableCreateAsset =
     sceneSnapshot.activeWorkspace === 'create' &&
     selectedInstance?.instanceId === 'create'
@@ -277,6 +304,72 @@ export function AppShell() {
     sceneStore,
   ])
 
+  const handleJointPoseChange = useCallback(
+    (instanceId: string, jointId: string, value: number) => {
+      const instance = sceneStore.getInstance(instanceId)
+      const joint = instance?.asset.joints.find((candidate) => candidate.id === jointId)
+
+      if (!joint) {
+        return
+      }
+
+      const normalizedValue = normalizeJointPoseValue(joint, value)
+
+      setJointPreviewByInstance((currentPreview) => ({
+        ...currentPreview,
+        [instanceId]: {
+          ...(currentPreview[instanceId] ?? {}),
+          [jointId]: normalizedValue,
+        },
+      }))
+    },
+    [sceneStore],
+  )
+
+  const handleJointReset = useCallback(
+    (instanceId: string, jointId: string) => {
+      const instance = sceneStore.getInstance(instanceId)
+      const joint = instance?.asset.joints.find((candidate) => candidate.id === jointId)
+
+      if (!joint) {
+        return
+      }
+
+      setJointPreviewByInstance((currentPreview) => ({
+        ...currentPreview,
+        [instanceId]: {
+          ...(currentPreview[instanceId] ?? {}),
+          [jointId]: getDefaultJointPoseValue(joint),
+        },
+      }))
+    },
+    [sceneStore],
+  )
+
+  const handleJointResetAll = useCallback((instanceId: string) => {
+    setJointPreviewByInstance((currentPreview) => {
+      const remainingPreview = { ...currentPreview }
+
+      delete remainingPreview[instanceId]
+      return remainingPreview
+    })
+    setPlayingJointPreview((currentPlaying) =>
+      currentPlaying?.instanceId === instanceId ? null : currentPlaying,
+    )
+  }, [])
+
+  const handleJointTogglePlayback = useCallback(
+    (instanceId: string, jointId: string) => {
+      setPlayingJointPreview((currentPlaying) =>
+        currentPlaying?.instanceId === instanceId &&
+        currentPlaying.jointId === jointId
+          ? null
+          : { instanceId, jointId },
+      )
+    },
+    [],
+  )
+
   const handlePromptSubmit = useCallback(
     (
       userPrompt: string,
@@ -311,6 +404,7 @@ export function AppShell() {
       if (mode === 'create') {
         sceneStore.clearCreateAsset()
         selectionStore.clearSelection()
+        handleJointResetAll('create')
       }
 
       const runScene = sceneStore.getSnapshot().scene
@@ -433,6 +527,7 @@ export function AppShell() {
     },
     [
       assetLibraryStore,
+      handleJointResetAll,
       isAgentRunning,
       librarySnapshot.library,
       openAIClient,
@@ -464,7 +559,8 @@ export function AppShell() {
     sceneStore.clearCreateAsset()
     selectionStore.clearSelection()
     setActiveTransformTool(null)
-  }, [isAgentRunning, sceneStore, selectionStore])
+    handleJointResetAll('create')
+  }, [handleJointResetAll, isAgentRunning, sceneStore, selectionStore])
 
   const handleExportGlb = useCallback(() => {
     if (!exportableCreateAsset) {
@@ -760,6 +856,70 @@ export function AppShell() {
     selectedInstance,
   ])
 
+  useEffect(() => {
+    if (!playingJointPreview) {
+      return undefined
+    }
+
+    const instance = sceneStore.getInstance(playingJointPreview.instanceId)
+    const joint = instance?.asset.joints.find(
+      (candidate) => candidate.id === playingJointPreview.jointId,
+    )
+
+    if (!instance || !joint || joint.type === 'fixed') {
+      return undefined
+    }
+
+    const activeInstance = instance
+    const activeJoint = joint
+    let animationFrame = 0
+    let previousTime = performance.now()
+
+    jointAnimationDirectionRef.current = 1
+
+    function animateJointPreview(time: number) {
+      const deltaSeconds = Math.min(0.05, Math.max(0, (time - previousTime) / 1000))
+
+      previousTime = time
+      setJointPreviewByInstance((currentPreview) => {
+        const range = getJointPreviewRange(activeJoint)
+        const currentValue = normalizeJointPoseValue(
+          activeJoint,
+          currentPreview[activeInstance.instanceId]?.[activeJoint.id],
+        )
+        const speed = getJointAnimationSpeed(activeJoint.type, range.max - range.min)
+        let nextValue =
+          currentValue + speed * deltaSeconds * jointAnimationDirectionRef.current
+
+        if (activeJoint.type === 'continuous') {
+          nextValue = normalizeJointPoseValue(activeJoint, nextValue)
+        } else if (nextValue >= range.max) {
+          nextValue = range.max
+          jointAnimationDirectionRef.current = -1
+        } else if (nextValue <= range.min) {
+          nextValue = range.min
+          jointAnimationDirectionRef.current = 1
+        }
+
+        return {
+          ...currentPreview,
+          [activeInstance.instanceId]: {
+            ...(currentPreview[activeInstance.instanceId] ?? {}),
+            [activeJoint.id]: nextValue,
+          },
+        }
+      })
+
+      animationFrame = requestAnimationFrame(animateJointPreview)
+    }
+
+    animationFrame = requestAnimationFrame(animateJointPreview)
+
+    return () => {
+      cancelAnimationFrame(animationFrame)
+    }
+  }, [playingJointPreview, sceneStore])
+
   useLayoutEffect(() => {
     const sidePanel = sidePanelRef.current
 
@@ -812,6 +972,7 @@ export function AppShell() {
         activeTransformTool={activeTransformTool}
         assets={sceneSnapshot.renderableAssets}
         isSidePanelCollapsed={isSidePanelCollapsed}
+        jointPreviewPosesByInstance={jointPreviewByInstance}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
         selectedTargetId={selection.targetId}
         selectionRevision={selectionRevision}
@@ -873,6 +1034,16 @@ export function AppShell() {
             onToolChange={setActiveTransformTool}
           />
         )}
+        <JointPreviewPanel
+          instance={selectedInstance ?? null}
+          jointPoses={selectedJointPreviewPoses}
+          playingJointId={selectedPlayingJointId}
+          rightOffset={composeToolbarRightOffset}
+          onJointPoseChange={handleJointPoseChange}
+          onJointReset={handleJointReset}
+          onResetAll={handleJointResetAll}
+          onTogglePlayback={handleJointTogglePlayback}
+        />
         <ChatPanel
           agentStatus={agentStatus}
           isCollapsed={isSidePanelCollapsed}
@@ -1000,6 +1171,14 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement
   )
+}
+
+function getJointAnimationSpeed(jointType: string, rangeSpan: number) {
+  if (jointType === 'prismatic') {
+    return Math.max(0.08, Math.abs(rangeSpan) / 2)
+  }
+
+  return Math.PI / 2
 }
 
 function formatAttemptContext(version: AssetLibraryVersion) {

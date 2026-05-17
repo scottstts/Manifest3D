@@ -41,7 +41,7 @@ export function createValidValidationFixtureAsset(): ManifestAsset {
             },
             materialId: 'mat-white',
             transform: {
-              position: [0, 0.04, 0],
+              position: [0, 0.04, 0.28],
             },
           },
         ],
@@ -54,13 +54,13 @@ export function createValidValidationFixtureAsset(): ManifestAsset {
         id: 'crate-lid-hinge',
         limits: {
           effort: 10,
-          lower: 0,
-          upper: 1.9,
+          lower: -1.9,
+          upper: 0,
           velocity: 2,
         },
         name: 'Lid Hinge',
         origin: {
-          position: [0, 0.34, 0],
+          position: [0, 0.34, -0.28],
         },
         parentPartId: 'crate-base',
         type: 'revolute',
@@ -171,7 +171,7 @@ export function createOverlappingValidationFixtureAsset(): ManifestAsset {
       {
         ...asset.joints[0],
         origin: {
-          position: [0, 0.28, 0],
+          position: [0, 0.28, -0.28],
         },
       },
     ],

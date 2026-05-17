@@ -176,11 +176,28 @@ export const manifestJointSchema = z
 
 const manifestAxesSchema = z.enum(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'])
 
+export const manifestPoseSpecSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    joints: z
+      .array(
+        z
+          .object({
+            jointId: nonEmptyId,
+            value: finiteNumber,
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict()
+
 const manifestCheckSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('part_exists'),
       partId: nonEmptyId,
+      pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),
   z
@@ -188,6 +205,7 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       type: z.literal('joint_exists'),
       jointId: nonEmptyId,
       jointType: manifestJointTypeSchema.optional(),
+      pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),
   z
@@ -198,6 +216,7 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       visualAId: nonEmptyId.optional(),
       visualBId: nonEmptyId.optional(),
       contactTolerance: nonNegativeNumber.optional(),
+      pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),
   z
@@ -211,6 +230,7 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       maxPenetration: nonNegativeNumber.optional(),
       positiveVisualId: nonEmptyId.optional(),
       negativeVisualId: nonEmptyId.optional(),
+      pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),
   z
@@ -222,6 +242,7 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       minOverlap: nonNegativeNumber.optional(),
       visualAId: nonEmptyId.optional(),
       visualBId: nonEmptyId.optional(),
+      pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),
   z
@@ -233,6 +254,7 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       margin: nonNegativeNumber.optional(),
       innerVisualId: nonEmptyId.optional(),
       outerVisualId: nonEmptyId.optional(),
+      pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),
 ])

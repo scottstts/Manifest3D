@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:headless": "cross-env MANIFEST3D_HEADLESS_AGENT=1 vitest run test/headless/agentPipelineSmoke.test.ts --reporter=verbose",
     "typecheck": "tsc -b"
   },
   "dependencies": {

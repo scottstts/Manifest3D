@@ -78,6 +78,20 @@
       "partBId": "box-lid",
       "visualAId": "box-base-shell",
       "visualBId": "box-lid-panel"
+    },
+    {
+      "type": "expect_gap",
+      "positivePartId": "box-lid",
+      "negativePartId": "box-base",
+      "axis": "y",
+      "minGap": -0.08,
+      "maxGap": 0.6,
+      "positiveVisualId": "box-lid-panel",
+      "negativeVisualId": "box-base-shell",
+      "pose": {
+        "name": "lid-open",
+        "joints": [{ "jointId": "box-lid-hinge", "value": 1.2 }]
+      }
     }
   ],
   "allowances": [],

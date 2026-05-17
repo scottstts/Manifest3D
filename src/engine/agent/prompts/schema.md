@@ -54,6 +54,8 @@ Authored checks should prove prompt-critical exact relationships:
 - `expect_gap`
 - `expect_overlap`
 - `expect_within`
+- Any check may include `pose: { "name": "...", "joints": [{ "jointId": "...", "value": number }] }` to run it at a sampled joint pose. Use radians for revolute/continuous values and meters for prismatic values.
+- Add pose-specific checks for primary mechanisms: open lids, extended drawers/slides, rotated handles, wheels, hinges, sleeves, retainers, and controls.
 
 Allowances:
 

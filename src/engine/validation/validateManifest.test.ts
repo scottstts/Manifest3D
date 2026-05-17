@@ -31,6 +31,7 @@ describe('validateManifestAssetCandidate', () => {
       'passed',
       'passed',
       'passed',
+      'passed',
     ])
   })
 
@@ -240,6 +241,84 @@ describe('validateManifestAssetCandidate', () => {
       ]),
     )
   })
+
+  it('runs pose-specific authored checks in the sampled-pose stage', () => {
+    const passingAsset = createValidValidationFixtureAsset()
+    const failingAsset = createValidValidationFixtureAsset()
+    const poseCheck = {
+      axis: 'y' as const,
+      maxGap: 0.6,
+      minGap: -0.05,
+      negativePartId: 'crate-base',
+      negativeVisualId: 'crate-base-shell',
+      pose: {
+        joints: [
+          {
+            jointId: 'crate-lid-hinge',
+            value: -1.9,
+          },
+        ],
+        name: 'lid-open',
+      },
+      positivePartId: 'crate-lid',
+      positiveVisualId: 'crate-lid-panel',
+      type: 'expect_gap' as const,
+    }
+
+    passingAsset.checks = [...passingAsset.checks, poseCheck]
+    failingAsset.checks = [
+      ...failingAsset.checks,
+      {
+        ...poseCheck,
+        minGap: 0.1,
+      },
+    ]
+
+    const passingResult = validateManifestAssetCandidate(passingAsset)
+    const failingResult = validateManifestAssetCandidate(failingAsset)
+
+    expect(passingResult.report.valid).toBe(true)
+    expect(failingResult.report.valid).toBe(false)
+    expect(failingResult.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'expect_gap_failed',
+          stage: 'sampled_poses',
+        }),
+      ]),
+    )
+  })
+
+  it('flags generated sampled-pose overlaps separately from rest-pose overlaps', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.joints[0] = {
+      ...asset.joints[0],
+      limits: {
+        effort: 10,
+        lower: 0,
+        upper: 1.9,
+        velocity: 2,
+      },
+    }
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(false)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'part_overlap_sampled_pose',
+          stage: 'sampled_poses',
+        }),
+      ]),
+    )
+    expect(
+      result.report.bundle.signals.some(
+        (signal) => signal.code === 'part_overlap_current_pose',
+      ),
+    ).toBe(false)
+  })
 })
 
 describe('commitValidatedAsset', () => {
@@ -287,6 +366,7 @@ describe('createValidationTimeline', () => {
       'validation:invalid-validation-crate:build',
       'validation:invalid-validation-crate:baseline_qc',
       'validation:invalid-validation-crate:checks',
+      'validation:invalid-validation-crate:sampled_poses',
       'validation:invalid-validation-crate:export',
     ])
     expect(timeline[1]).toMatchObject({

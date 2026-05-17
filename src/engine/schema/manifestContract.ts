@@ -217,16 +217,34 @@ const jointSchema = {
   ],
 }
 
+const poseSpecSchema = objectSchema(
+  {
+    name: stringSchema('Short pose name, for example open or extended.'),
+    joints: arraySchema(
+      objectSchema(
+        {
+          jointId: stringSchema('Existing movable joint id.'),
+          value: numberSchema(
+            'Joint value: radians for revolute/continuous, meters for prismatic.',
+          ),
+        },
+        ['jointId', 'value'],
+      ),
+    ),
+  },
+  ['name', 'joints'],
+)
+
 const checkSchema = {
   anyOf: [
-    objectSchema(
+    ...checkSchemaVariants(
       {
         type: literalSchema('part_exists'),
         partId: stringSchema('Existing part id.'),
       },
       ['type', 'partId'],
     ),
-    objectSchema(
+    ...checkSchemaVariants(
       {
         type: literalSchema('joint_exists'),
         jointId: stringSchema('Existing joint id.'),
@@ -234,7 +252,7 @@ const checkSchema = {
       },
       ['type', 'jointId', 'jointType'],
     ),
-    objectSchema(
+    ...checkSchemaVariants(
       {
         type: literalSchema('expect_contact'),
         partAId: stringSchema('Existing part id.'),
@@ -252,7 +270,7 @@ const checkSchema = {
         'contactTolerance',
       ],
     ),
-    objectSchema(
+    ...checkSchemaVariants(
       {
         type: literalSchema('expect_gap'),
         positivePartId: stringSchema('Existing part id.'),
@@ -276,7 +294,7 @@ const checkSchema = {
         'negativeVisualId',
       ],
     ),
-    objectSchema(
+    ...checkSchemaVariants(
       {
         type: literalSchema('expect_overlap'),
         partAId: stringSchema('Existing part id.'),
@@ -296,7 +314,7 @@ const checkSchema = {
         'visualBId',
       ],
     ),
-    objectSchema(
+    ...checkSchemaVariants(
       {
         type: literalSchema('expect_within'),
         innerPartId: stringSchema('Existing inner part id.'),
@@ -408,6 +426,22 @@ function arraySchema(items: JsonSchema): JsonSchema {
     type: 'array',
     items,
   }
+}
+
+function checkSchemaVariants(
+  properties: Record<string, JsonSchema>,
+  required: readonly string[],
+) {
+  return [
+    objectSchema(properties, required),
+    objectSchema(
+      {
+        ...properties,
+        pose: poseSpecSchema,
+      },
+      [...required, 'pose'],
+    ),
+  ]
 }
 
 function vector2Schema(description: string): JsonSchema {

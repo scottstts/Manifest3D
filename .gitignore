@@ -27,3 +27,6 @@ dist-ssr
 # Playwright
 dev_docs/ui_verification/
 .playwright-mcp
+
+# Headless agent smoke artifacts
+test/artifacts/

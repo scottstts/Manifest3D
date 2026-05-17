@@ -14,6 +14,7 @@ import {
 } from './reportBuilder'
 import { runBaselineQc } from './runBaselineQc'
 import { runPromptChecks } from './runPromptChecks'
+import { runSampledPoseValidation } from './runSampledPoseValidation'
 import { validateGeometryDescriptors } from './validateGeometryDescriptors'
 import { validateStructure } from './validateStructure'
 
@@ -50,6 +51,7 @@ export function validateManifestAssetCandidate(
       'build',
       'baseline_qc',
       'checks',
+      'sampled_poses',
       'export',
     ])
 
@@ -69,7 +71,13 @@ export function validateManifestAssetCandidate(
   signals.push(...validateGeometryDescriptors(asset))
 
   if (hasBlockingSignals(signals, ['structure'])) {
-    markSkipped(skippedStages, ['build', 'baseline_qc', 'checks', 'export'])
+    markSkipped(skippedStages, [
+      'build',
+      'baseline_qc',
+      'checks',
+      'sampled_poses',
+      'export',
+    ])
 
     return {
       asset,
@@ -87,6 +95,7 @@ export function validateManifestAssetCandidate(
     try {
       signals.push(...runBaselineQc(asset, builtAsset))
       signals.push(...runPromptChecks(asset, builtAsset))
+      signals.push(...runSampledPoseValidation(asset))
       signals.push(...runExportReadiness(asset, builtAsset.group))
     } finally {
       disposeManifestObject(builtAsset.group)
@@ -105,7 +114,7 @@ export function validateManifestAssetCandidate(
         },
       ),
     )
-    markSkipped(skippedStages, ['baseline_qc', 'checks', 'export'])
+    markSkipped(skippedStages, ['baseline_qc', 'checks', 'sampled_poses', 'export'])
   }
 
   return {

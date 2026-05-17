@@ -145,6 +145,10 @@ function formatSignalDetail(signal: ValidationSignal) {
       return `Part ${quoteRef(signal, 'partId', 'this part')} is not physically connected to the main body.`
     case 'part_overlap_current_pose':
       return `Parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} overlap in the current pose.`
+    case 'part_overlap_sampled_pose':
+      return `Parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} overlap in a sampled joint pose.`
+    case 'sampled_pose_invalid':
+      return 'A pose-specific authored check references a joint pose that cannot be applied.'
     case 'joint_origin_far_from_geometry':
       return `Joint ${quoteRef(signal, 'jointId', 'this joint')} is far from the geometry it connects. This may make motion or placement look wrong.`
     case 'authored_checks_missing':
@@ -248,6 +252,8 @@ function getFallbackDetail(
       return `${prefix} The generated geometry failed a physical quality check.`
     case 'checks':
       return `${prefix} The generated asset does not satisfy one of its authored prompt checks.`
+    case 'sampled_poses':
+      return `${prefix} The generated mechanism failed a sampled pose or pose-specific authored check.`
     case 'export':
       return `${prefix} The generated asset is not ready for export.`
     case 'commit':

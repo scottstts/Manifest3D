@@ -8,10 +8,12 @@ import { outline } from 'three/addons/tsl/display/OutlineNode.js'
 import { color, float, max, mix, pass, vec4 } from 'three/tsl'
 import * as THREE from 'three/webgpu'
 import {
+  applyBuiltManifestJointPoses,
   buildManifestAsset,
   disposeManifestObject,
   findManifestObjectData,
 } from '../engine/geometry/assetBuilder'
+import type { JointPoseValues } from '../engine/geometry/jointPoses'
 import type {
   SceneAssetInstance,
   SceneTransform,
@@ -24,6 +26,7 @@ type WebGPUSceneProps = {
   activeTransformTool: TransformTool
   assets: readonly SceneAssetInstance[]
   cameraQuaternionRef: RefObject<THREE.Quaternion>
+  jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
   onCameraQuaternionChange: () => void
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
@@ -74,11 +77,13 @@ const selectionOutlineColor = '#007acc'
 const selectionOutlineStrength = 5.2
 const selectionOutlineThickness = 5.0
 const selectionOutlineGlow = 1.45
+const emptyJointPoseValues: JointPoseValues = {}
 
 export function WebGPUScene({
   activeTransformTool,
   assets,
   cameraQuaternionRef,
+  jointPreviewPosesByInstance,
   onCameraQuaternionChange,
   rightPanelOcclusionWidth,
   selectedTargetId,
@@ -171,6 +176,9 @@ export function WebGPUScene({
         <ManifestAssetObject
           instance={asset}
           isSelected={asset.instanceId === selectedTargetId}
+          jointPreviewPoses={
+            jointPreviewPosesByInstance[asset.instanceId] ?? emptyJointPoseValues
+          }
           key={`${asset.instanceId}:${asset.versionId ?? asset.asset.id}`}
           onAssetSelected={onAssetSelected}
           onSelectionCleared={onSelectionCleared}
@@ -196,6 +204,7 @@ export function WebGPUScene({
 type ManifestAssetObjectProps = {
   instance: SceneAssetInstance
   isSelected: boolean
+  jointPreviewPoses: JointPoseValues
   onAssetSelected: (
     targetId: string,
     assetId?: string | null,
@@ -211,6 +220,7 @@ type ManifestAssetObjectProps = {
 function ManifestAssetObject({
   instance,
   isSelected,
+  jointPreviewPoses,
   onAssetSelected,
   onSelectionCleared,
   registerAssetGroup,
@@ -223,6 +233,11 @@ function ManifestAssetObject({
     [builtAsset.group],
   )
   const invalidate = useThree((state) => state.invalidate)
+
+  useEffect(() => {
+    applyBuiltManifestJointPoses(builtAsset, jointPreviewPoses)
+    invalidate()
+  }, [builtAsset, invalidate, jointPreviewPoses])
 
   useEffect(() => {
     const group = groupRef.current

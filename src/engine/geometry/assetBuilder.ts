@@ -4,11 +4,16 @@ import type {
   ManifestJoint,
   ManifestMaterial,
   ManifestPart,
-  ManifestTransform,
   ManifestVisual,
 } from '../schema/manifestTypes'
 import { buildPrimitiveGeometry } from './primitiveBuilders'
 import { boundsFromObject, unionBounds } from './bounds'
+import {
+  applyJointPosesToBuiltGroups,
+  applyJointTransform,
+  applyManifestTransform,
+  type JointPoseValues,
+} from './jointPoses'
 
 export type ManifestObjectKind = 'asset' | 'part' | 'visual' | 'joint'
 
@@ -32,7 +37,14 @@ export type BuiltManifestAsset = {
   visualPartIds: Map<string, string>
 }
 
-export function buildManifestAsset(asset: ManifestAsset): BuiltManifestAsset {
+export type BuildManifestAssetOptions = {
+  jointPoses?: JointPoseValues
+}
+
+export function buildManifestAsset(
+  asset: ManifestAsset,
+  options: BuildManifestAssetOptions = {},
+): BuiltManifestAsset {
   const group = new THREE.Group()
   const materialById = buildMaterialMap(asset.materials)
   const partGroups = new Map<string, THREE.Group>()
@@ -62,7 +74,7 @@ export function buildManifestAsset(asset: ManifestAsset): BuiltManifestAsset {
     const jointGroup = new THREE.Group()
 
     jointGroup.name = joint.name
-    applyTransform(jointGroup, joint.origin)
+    applyJointTransform(jointGroup, joint, options.jointPoses?.[joint.id])
     setManifestUserData(jointGroup, {
       kind: 'joint',
       assetId: asset.id,
@@ -114,6 +126,14 @@ export function buildManifestAsset(asset: ManifestAsset): BuiltManifestAsset {
     visualMeshes,
     visualPartIds,
   }
+}
+
+export function applyBuiltManifestJointPoses(
+  builtAsset: BuiltManifestAsset,
+  jointPoses: JointPoseValues,
+) {
+  applyJointPosesToBuiltGroups(builtAsset.asset, builtAsset.jointGroups, jointPoses)
+  builtAsset.group.updateMatrixWorld(true)
 }
 
 export function findManifestObjectData(
@@ -295,7 +315,7 @@ function buildVisualMesh(
   mesh.name = visual.name ?? visual.id
   mesh.castShadow = true
   mesh.receiveShadow = true
-  applyTransform(mesh, visual.transform)
+  applyManifestTransform(mesh, visual.transform)
   setManifestUserData(mesh, {
     kind: 'visual',
     assetId: asset.id,
@@ -326,12 +346,6 @@ function createMaterial(material: ManifestMaterial) {
     roughness: material.roughness,
     transparent: opacity < 1,
   })
-}
-
-function applyTransform(object: THREE.Object3D, transform: ManifestTransform) {
-  object.position.fromArray(transform.position ?? [0, 0, 0])
-  object.rotation.set(...(transform.rotation ?? [0, 0, 0]))
-  object.scale.fromArray(transform.scale ?? [1, 1, 1])
 }
 
 function setManifestUserData(

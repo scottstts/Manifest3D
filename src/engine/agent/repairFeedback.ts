@@ -15,8 +15,9 @@ const stagePriority: Record<ValidationStage, number> = {
   build: 2,
   baseline_qc: 3,
   checks: 4,
-  export: 5,
-  commit: 6,
+  sampled_poses: 5,
+  export: 6,
+  commit: 7,
 }
 
 const kindPriority: Record<string, number> = {
@@ -27,9 +28,10 @@ const kindPriority: Record<string, number> = {
   mesh_assets: 4,
   isolated_part: 5,
   real_overlap: 6,
-  missing_exact_geometry: 7,
-  exact_contact_gap: 8,
-  authored_check: 9,
+  sampled_pose_overlap: 7,
+  missing_exact_geometry: 8,
+  exact_contact_gap: 9,
+  authored_check: 10,
 }
 
 export function renderValidationSignals(
@@ -247,6 +249,16 @@ function responseRulesForFailures(
       '- Decide whether the current-pose overlap is intentional embedding or an unintended collision.',
       '- For unintended collisions, change geometry, placement, or rest joint origins while preserving prompt-critical visible form.',
       '- For intentional simplified fits, prefer exact visual-pair allowances and pair them with prompt checks that prove the intended relationship.',
+      allowanceRule,
+    ]
+  } else if (
+    primary.kind === 'sampled_pose_overlap' ||
+    primary.stage === 'sampled_poses'
+  ) {
+    rules = [
+      '- Repair the articulated pose that failed, not only the rest pose.',
+      '- Adjust joint origins, axes, limits, child-part placement, or geometry clearance so the mechanism works through its sampled motion.',
+      '- Keep pose-specific checks when they prove prompt-critical open, extended, rotated, or retained states.',
       allowanceRule,
     ]
   } else if (primary.kind === 'missing_exact_geometry') {

@@ -36,6 +36,7 @@ const validationStageLabels: Record<ValidationStage, string> = {
   checks: 'Run authored checks',
   commit: 'Commit validated asset',
   export: 'Check export readiness',
+  sampled_poses: 'Run sampled-pose checks',
   schema: 'Parse Manifest3D schema',
   structure: 'Check asset structure',
 }
@@ -46,6 +47,7 @@ export const coreValidationStages: readonly ValidationStage[] = [
   'build',
   'baseline_qc',
   'checks',
+  'sampled_poses',
   'export',
 ]
 
@@ -186,6 +188,7 @@ function defaultSource(stage: ValidationStage | undefined): ValidationSignalSour
     case 'baseline_qc':
       return 'baseline_qc'
     case 'checks':
+    case 'sampled_poses':
       return 'checks'
     case 'export':
       return 'export'
@@ -219,6 +222,7 @@ function defaultGroup(
     case 'baseline_qc':
       return 'qc'
     case 'checks':
+    case 'sampled_poses':
       return 'design'
     case undefined:
       return 'qc'
