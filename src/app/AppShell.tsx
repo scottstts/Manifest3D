@@ -1,4 +1,6 @@
 import {
+  type Dispatch,
+  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -51,6 +53,10 @@ import {
   createCandidateHistoryTimeline,
   type AgentTimelineItem,
 } from '../engine/agent/validationTimeline'
+import {
+  downloadGlbExport,
+  exportManifestAssetGlb,
+} from '../engine/scene/exportGlb'
 
 type ComposeHistoryEntry = {
   instances: readonly SceneAssetInstance[]
@@ -99,6 +105,11 @@ export function AppShell() {
       )
     : undefined
   const selectedAsset = selectedInstance?.asset
+  const exportableCreateAsset =
+    sceneSnapshot.activeWorkspace === 'create' &&
+    selectedInstance?.instanceId === 'create'
+      ? selectedInstance.asset
+      : undefined
   const selectedLibraryAsset = selectedAsset
     ? librarySnapshot.library.assets.find(
         (asset) => asset.assetId === selectedAsset.id,
@@ -429,6 +440,32 @@ export function AppShell() {
     setActiveTransformTool(null)
   }, [isAgentRunning, sceneStore, selectionStore])
 
+  const handleExportGlb = useCallback(() => {
+    if (!exportableCreateAsset) {
+      return
+    }
+
+    void exportManifestAssetGlb(exportableCreateAsset)
+      .then((result) => {
+        downloadGlbExport(result)
+        appendPanelStatus(
+          setChatTranscriptItems,
+          `Exported ${result.fileName}`,
+        )
+        setAgentStatus(`Exported ${result.fileName}`)
+      })
+      .catch((error: unknown) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'The selected asset could not be exported as GLB.'
+        const status = `Export failed: ${message}`
+
+        appendPanelStatus(setChatTranscriptItems, status)
+        setAgentStatus(status)
+      })
+  }, [exportableCreateAsset])
+
   const handleWorkspaceChange = useCallback(
     (workspace: WorkspaceMode) => {
       sceneStore.setWorkspace(workspace)
@@ -753,8 +790,9 @@ export function AppShell() {
         canUndoCompose={canUndoCompose}
         canNavigateNextVersion={Boolean(adjacentVersions.next)}
         canNavigatePreviousVersion={Boolean(adjacentVersions.previous)}
-        selectedAsset={selectedAsset}
+        exportAsset={exportableCreateAsset}
         versionLabel={versionLabel}
+        onExportGlb={handleExportGlb}
         onRedoCompose={handleRedoCompose}
         onUndoCompose={handleUndoCompose}
         onNavigateNextVersion={() => handleNavigateVersion(adjacentVersions.next)}
@@ -842,6 +880,21 @@ function updateAgentTranscriptItem(
         }
       : item,
   )
+}
+
+function appendPanelStatus(
+  updateItems: Dispatch<SetStateAction<ChatPanelTranscriptItem[]>>,
+  status: string,
+) {
+  updateItems((currentItems) => [
+    ...currentItems,
+    {
+      id: `export:${Date.now().toString(36)}`,
+      role: 'agent',
+      status,
+      timelineItems: [],
+    },
+  ])
 }
 
 function cloneSceneAssetInstances(

@@ -12,8 +12,9 @@ type ViewportToolbarProps = {
   canUndoCompose: boolean
   canNavigateNextVersion: boolean
   canNavigatePreviousVersion: boolean
-  selectedAsset: ManifestAsset | undefined
+  exportAsset: ManifestAsset | undefined
   versionLabel: string | null
+  onExportGlb: () => void
   onRedoCompose: () => void
   onUndoCompose: () => void
   onNavigateNextVersion: () => void
@@ -25,8 +26,9 @@ export function ViewportToolbar({
   canUndoCompose,
   canNavigateNextVersion,
   canNavigatePreviousVersion,
-  selectedAsset,
+  exportAsset,
   versionLabel,
+  onExportGlb,
   onRedoCompose,
   onUndoCompose,
   onNavigateNextVersion,
@@ -79,13 +81,14 @@ export function ViewportToolbar({
       </div>
       <button
         aria-label={
-          selectedAsset
-            ? `Export ${selectedAsset.name} as GLB`
-            : 'Select an asset to export GLB'
+          exportAsset
+            ? `Export ${exportAsset.name} as GLB`
+            : 'Select an asset in Create to export GLB'
         }
         className="viewport-toolbar__button"
-        disabled={!selectedAsset}
+        disabled={!exportAsset}
         type="button"
+        onClick={onExportGlb}
       >
         <Download aria-hidden="true" />
         <span>Export GLB</span>

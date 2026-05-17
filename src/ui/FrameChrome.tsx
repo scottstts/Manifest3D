@@ -8,8 +8,9 @@ type FrameChromeProps = {
   canUndoCompose: boolean
   canNavigateNextVersion: boolean
   canNavigatePreviousVersion: boolean
-  selectedAsset: ManifestAsset | undefined
+  exportAsset: ManifestAsset | undefined
   versionLabel: string | null
+  onExportGlb: () => void
   onRedoCompose: () => void
   onUndoCompose: () => void
   onNavigateNextVersion: () => void
@@ -23,8 +24,9 @@ export function FrameChrome({
   canUndoCompose,
   canNavigateNextVersion,
   canNavigatePreviousVersion,
-  selectedAsset,
+  exportAsset,
   versionLabel,
+  onExportGlb,
   onRedoCompose,
   onUndoCompose,
   onNavigateNextVersion,
@@ -179,8 +181,9 @@ export function FrameChrome({
         canUndoCompose={canUndoCompose}
         canNavigateNextVersion={canNavigateNextVersion}
         canNavigatePreviousVersion={canNavigatePreviousVersion}
-        selectedAsset={selectedAsset}
+        exportAsset={exportAsset}
         versionLabel={versionLabel}
+        onExportGlb={onExportGlb}
         onRedoCompose={onRedoCompose}
         onUndoCompose={onUndoCompose}
         onNavigateNextVersion={onNavigateNextVersion}
