@@ -7,11 +7,11 @@ This is a vite React TS + three.js TSL WebGPU project.
 - DPR of the viewport if applicable should use below setting:
 
 ```typescript
-const maxPixels = 1_650_000;
+const maxPixels = 4_000_000;
 
 const dpr = Math.min(
   window.devicePixelRatio,
-  1.5,
+  1.75,
   Math.sqrt(maxPixels / (innerWidth * innerHeight))
 );
 
