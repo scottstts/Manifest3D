@@ -4,10 +4,14 @@ import { ViewportToolbar } from './ViewportToolbar'
 
 type FrameChromeProps = {
   activeWorkspace: WorkspaceMode
+  canRedoCompose: boolean
+  canUndoCompose: boolean
   canNavigateNextVersion: boolean
   canNavigatePreviousVersion: boolean
   selectedAsset: ManifestAsset | undefined
   versionLabel: string | null
+  onRedoCompose: () => void
+  onUndoCompose: () => void
   onNavigateNextVersion: () => void
   onNavigatePreviousVersion: () => void
   onWorkspaceChange: (workspace: WorkspaceMode) => void
@@ -15,10 +19,14 @@ type FrameChromeProps = {
 
 export function FrameChrome({
   activeWorkspace,
+  canRedoCompose,
+  canUndoCompose,
   canNavigateNextVersion,
   canNavigatePreviousVersion,
   selectedAsset,
   versionLabel,
+  onRedoCompose,
+  onUndoCompose,
   onNavigateNextVersion,
   onNavigatePreviousVersion,
   onWorkspaceChange,
@@ -167,10 +175,14 @@ export function FrameChrome({
         </button>
       </div>
       <ViewportToolbar
+        canRedoCompose={canRedoCompose}
+        canUndoCompose={canUndoCompose}
         canNavigateNextVersion={canNavigateNextVersion}
         canNavigatePreviousVersion={canNavigatePreviousVersion}
         selectedAsset={selectedAsset}
         versionLabel={versionLabel}
+        onRedoCompose={onRedoCompose}
+        onUndoCompose={onUndoCompose}
         onNavigateNextVersion={onNavigateNextVersion}
         onNavigatePreviousVersion={onNavigatePreviousVersion}
       />

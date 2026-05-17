@@ -9,6 +9,7 @@ import { createSceneStore } from '../scene/sceneStore'
 import { createValidationTimeline } from '../agent/validationTimeline'
 import { commitValidatedAsset } from './commitValidatedAsset'
 import { validateManifestAssetCandidate } from './validateManifest'
+import { createValidationReport } from './reportBuilder'
 
 describe('validateManifestAssetCandidate', () => {
   it('accepts a valid Contract V2 asset fixture', () => {
@@ -293,6 +294,30 @@ describe('createValidationTimeline', () => {
       label: 'Check asset structure',
       status: 'failed',
     })
-    expect(timeline[1].detail).toContain('Duplicate id')
+    expect(timeline[1].detail).toBe(
+      'The candidate reused an id that must be unique.',
+    )
+  })
+
+  it('shows a fallback explanation when a failed step has no signal detail', () => {
+    const baseReport = createValidationReport({
+      asset: createValidValidationFixtureAsset(),
+      signals: [],
+      stages: ['baseline_qc'],
+    })
+    const timeline = createValidationTimeline({
+      ...baseReport,
+      steps: [
+        {
+          ...baseReport.steps[0],
+          signalIds: [],
+          status: 'failed',
+        },
+      ],
+    })
+
+    expect(timeline[0].detail).toBe(
+      'This step found an issue the agent needs to fix. The generated geometry failed a physical quality check.',
+    )
   })
 })

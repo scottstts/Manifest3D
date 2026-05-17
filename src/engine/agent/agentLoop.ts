@@ -155,11 +155,30 @@ export async function runManifestAgentLoop(
 
     const finishModelRequest = beginStep(
       'requesting_model',
-      'Request OpenAI candidate',
+      'Request candidate',
       `modelPromptMode=${prompt.metadata.mode}`,
     )
 
     const agentResponse = await dependencies.client.generateAsset(agentRequest)
+
+    if (input.signal?.aborted) {
+      finishModelRequest('skipped')
+      emit(
+        dependencies.onEvent,
+        runId,
+        nextEventIndex,
+        'cancelled',
+        'Agent run cancelled',
+        null,
+        'skipped',
+      )
+
+      return {
+        history: history.getSnapshot(),
+        message: 'The agent run was cancelled.',
+        status: 'cancelled',
+      }
+    }
 
     if (agentResponse.status === 'unavailable') {
       finishModelRequest('failed')

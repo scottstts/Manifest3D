@@ -46,6 +46,7 @@ export type SceneStore = {
     asset: ManifestAsset,
     versionId: string | null,
   ) => void
+  setComposeInstances: (instances: readonly SceneAssetInstance[]) => void
   setCreateAsset: (asset: ManifestAsset, versionId?: string | null) => void
   setCreateAssetVersionId: (assetId: string, versionId: string | null) => void
   setScene: (scene: ManifestScene) => void
@@ -197,6 +198,10 @@ export function createSceneStore(initialScene: ManifestScene): SceneStore {
       )
       emit()
     },
+    setComposeInstances(instances) {
+      composeInstances = instances.map(cloneSceneAssetInstance)
+      emit()
+    },
     setCreateAsset(asset, versionId = null) {
       createInstance = createSceneAssetInstance(asset, versionId, 'create')
       emit()
@@ -246,6 +251,13 @@ export function createSceneStore(initialScene: ManifestScene): SceneStore {
       activeWorkspace = 'create'
       emit()
     },
+  }
+}
+
+function cloneSceneAssetInstance(instance: SceneAssetInstance): SceneAssetInstance {
+  return {
+    ...instance,
+    transform: cloneTransform(instance.transform),
   }
 }
 

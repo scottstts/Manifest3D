@@ -35,7 +35,7 @@ describe('buildOpenAIResponsesRequestBody', () => {
     })
 
     expect(body.model).toBe('gpt-5.5')
-    expect(body.reasoning).toEqual({ effort: 'medium' })
+    expect(body.reasoning).toEqual({ effort: 'high' })
     expect(body.temperature).toBe(1)
     expect(body.max_output_tokens).toBe(64_000)
     expect(body.text.format).toMatchObject({

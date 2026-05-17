@@ -32,6 +32,8 @@ type WebGPUCanvasProps = {
   ) => void
   onSelectionCleared: () => void
   onTransformChanged: (instanceId: string, transform: SceneTransform) => void
+  onTransformEnded: () => void
+  onTransformStarted: () => void
 }
 
 export type TransformTool = 'move' | 'rotate' | 'scale' | null
@@ -51,6 +53,8 @@ export function WebGPUCanvas({
   onAssetSelected,
   onSelectionCleared,
   onTransformChanged,
+  onTransformEnded,
+  onTransformStarted,
 }: WebGPUCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const cameraQuaternionRef = useRef(new Quaternion())
@@ -169,6 +173,8 @@ export function WebGPUCanvas({
             onAssetSelected={onAssetSelected}
             onSelectionCleared={onSelectionCleared}
             onTransformChanged={onTransformChanged}
+            onTransformEnded={onTransformEnded}
+            onTransformStarted={onTransformStarted}
           />
         </Canvas>
       )}

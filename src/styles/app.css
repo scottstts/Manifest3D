@@ -58,6 +58,7 @@
   pointer-events: auto;
 }
 
+.compose-history-toolbar,
 .version-toolbar {
   display: inline-flex;
   gap: 7px;
@@ -482,14 +483,21 @@
   font-size: 0.72rem;
   font-weight: 900;
   line-height: 1;
-  background: #7772ea;
+  background: #2f6f9f;
   border-radius: 999px;
-  box-shadow: 0 9px 20px rgb(85 80 220 / 0.18);
+  box-shadow: 0 9px 20px rgb(47 111 159 / 0.18);
 }
 
-.chat-panel__mode-pill.is-edit {
-  background: #4f8c7c;
-  box-shadow: 0 9px 20px rgb(79 140 124 / 0.18);
+.chat-panel__mode-pill.is-create,
+.chat-panel__mode-pill.is-creating {
+  background: #2f6f9f;
+  box-shadow: 0 9px 20px rgb(47 111 159 / 0.18);
+}
+
+.chat-panel__mode-pill.is-edit,
+.chat-panel__mode-pill.is-editing {
+  background: #a65f2f;
+  box-shadow: 0 9px 20px rgb(166 95 47 / 0.18);
 }
 
 .chat-panel__new-asset {
@@ -1122,9 +1130,42 @@
   box-shadow: none;
 }
 
+.prompt-composer .send-button.is-running {
+  color: #fff;
+  cursor: pointer;
+  background: #7772ea;
+  box-shadow: 0 10px 24px rgb(85 80 220 / 0.22);
+  opacity: 1;
+}
+
+.prompt-composer .send-button.is-running:hover {
+  color: #fff;
+  background: #7772ea;
+  box-shadow: 0 10px 24px rgb(85 80 220 / 0.22);
+  transform: translateY(-1px);
+}
+
+.prompt-composer .send-button__running {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
 .prompt-composer .send-button.is-running svg {
+  width: 20px;
+  height: 20px;
   animation: spin 900ms linear infinite;
   transform: none;
+}
+
+.prompt-composer .send-button__stop-square {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background: currentColor;
+  border-radius: 1.5px;
 }
 
 .prompt-composer .send-button svg {

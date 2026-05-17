@@ -42,6 +42,7 @@ import type {
   PersistedCandidateAttempt,
 } from '../engine/persistence/assetLibraryTypes'
 import type {
+  SceneAssetInstance,
   SceneTransform,
   WorkspaceMode,
 } from '../engine/scene/sceneStore'
@@ -50,6 +51,13 @@ import {
   createCandidateHistoryTimeline,
   type AgentTimelineItem,
 } from '../engine/agent/validationTimeline'
+
+type ComposeHistoryEntry = {
+  instances: readonly SceneAssetInstance[]
+  selectedTargetId: string | null
+}
+
+const composeHistoryLimit = 40
 
 export function AppShell() {
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
@@ -68,7 +76,15 @@ export function AppShell() {
     useState<TransformTool>(null)
   const [assetPendingDelete, setAssetPendingDelete] =
     useState<AssetLibraryAsset | null>(null)
+  const [composeUndoStack, setComposeUndoStack] = useState<
+    ComposeHistoryEntry[]
+  >([])
+  const [composeRedoStack, setComposeRedoStack] = useState<
+    ComposeHistoryEntry[]
+  >([])
   const sidePanelRef = useRef<HTMLElement | null>(null)
+  const pendingTransformHistoryRef = useRef<ComposeHistoryEntry | null>(null)
+  const agentRunAbortControllerRef = useRef<AbortController | null>(null)
   const agentHistoryRef = useRef(createCandidateHistory())
   const openAIClientRef = useRef(createOpenAIManifestClient())
   const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
@@ -117,12 +133,113 @@ export function AppShell() {
   const promptMode: ChatPanelPromptMode =
     sceneSnapshot.activeWorkspace === 'create' &&
     selectedInstance?.instanceId === 'create'
-      ? 'edit'
-      : 'create'
+      ? 'editing'
+      : 'creating'
+  const canUndoCompose =
+    sceneSnapshot.activeWorkspace === 'compose' && composeUndoStack.length > 0
+  const canRedoCompose =
+    sceneSnapshot.activeWorkspace === 'compose' && composeRedoStack.length > 0
 
   useEffect(() => {
     void assetLibraryStore.load()
   }, [assetLibraryStore])
+
+  const captureComposeHistoryEntry = useCallback(
+    (): ComposeHistoryEntry => ({
+      instances: cloneSceneAssetInstances(
+        sceneStore.getSnapshot().composeInstances,
+      ),
+      selectedTargetId: selectionStore.getSnapshot().selection.targetId,
+    }),
+    [sceneStore, selectionStore],
+  )
+
+  const pushComposeUndoEntry = useCallback((entry: ComposeHistoryEntry) => {
+    setComposeUndoStack((currentStack) => [
+      ...currentStack.slice(-(composeHistoryLimit - 1)),
+      entry,
+    ])
+    setComposeRedoStack([])
+  }, [])
+
+  const clearComposeHistory = useCallback(() => {
+    setComposeUndoStack([])
+    setComposeRedoStack([])
+    pendingTransformHistoryRef.current = null
+  }, [])
+
+  const restoreComposeHistoryEntry = useCallback(
+    (entry: ComposeHistoryEntry) => {
+      sceneStore.setComposeInstances(entry.instances)
+
+      const selectedInstance = entry.selectedTargetId
+        ? entry.instances.find(
+            (instance) => instance.instanceId === entry.selectedTargetId,
+          )
+        : null
+
+      if (selectedInstance) {
+        selectionStore.selectAsset(
+          selectedInstance.instanceId,
+          selectedInstance.assetId,
+        )
+      } else {
+        selectionStore.clearSelection()
+        setActiveTransformTool(null)
+      }
+    },
+    [sceneStore, selectionStore],
+  )
+
+  const handleUndoCompose = useCallback(() => {
+    if (sceneStore.getSnapshot().activeWorkspace !== 'compose') {
+      return
+    }
+
+    const entry = composeUndoStack.at(-1)
+
+    if (!entry) {
+      return
+    }
+
+    pendingTransformHistoryRef.current = null
+    setComposeUndoStack((currentStack) => currentStack.slice(0, -1))
+    setComposeRedoStack((currentStack) => [
+      ...currentStack.slice(-(composeHistoryLimit - 1)),
+      captureComposeHistoryEntry(),
+    ])
+    restoreComposeHistoryEntry(entry)
+  }, [
+    captureComposeHistoryEntry,
+    composeUndoStack,
+    restoreComposeHistoryEntry,
+    sceneStore,
+  ])
+
+  const handleRedoCompose = useCallback(() => {
+    if (sceneStore.getSnapshot().activeWorkspace !== 'compose') {
+      return
+    }
+
+    const entry = composeRedoStack.at(-1)
+
+    if (!entry) {
+      return
+    }
+
+    pendingTransformHistoryRef.current = null
+    setComposeRedoStack((currentStack) => currentStack.slice(0, -1))
+    setComposeUndoStack((currentStack) => [
+      ...currentStack.slice(-(composeHistoryLimit - 1)),
+      captureComposeHistoryEntry(),
+    ])
+    restoreComposeHistoryEntry(entry)
+  }, [
+    captureComposeHistoryEntry,
+    composeRedoStack,
+    restoreComposeHistoryEntry,
+    sceneStore,
+  ])
 
   const handlePromptSubmit = useCallback(
     (
@@ -153,6 +270,7 @@ export function AppShell() {
         ? `Editing ${runSelectedAsset.name}`
         : 'Creating asset'
       const assistantMessageId = `${runId}:assistant`
+      const abortController = new AbortController()
 
       if (mode === 'create') {
         sceneStore.clearCreateAsset()
@@ -183,6 +301,7 @@ export function AppShell() {
         return mode === 'create' ? runItems : [...currentItems, ...runItems]
       })
       setIsAgentRunning(true)
+      agentRunAbortControllerRef.current = abortController
 
       let runEvents: AgentLoopEvent[] = []
 
@@ -196,6 +315,7 @@ export function AppShell() {
           selectedAssetAttemptContext: runSelectedVersion
             ? formatAttemptContext(runSelectedVersion)
             : null,
+          signal: abortController.signal,
           userPrompt,
         },
         {
@@ -268,6 +388,10 @@ export function AppShell() {
           )
         })
         .finally(() => {
+          if (agentRunAbortControllerRef.current === abortController) {
+            agentRunAbortControllerRef.current = null
+          }
+
           setIsAgentRunning(false)
         })
     },
@@ -281,6 +405,15 @@ export function AppShell() {
       selectionStore,
     ],
   )
+
+  const handleStopAgentRun = useCallback(() => {
+    if (!isAgentRunning) {
+      return
+    }
+
+    agentRunAbortControllerRef.current?.abort()
+    setAgentStatus('Stopping agent run...')
+  }, [isAgentRunning])
 
   const handleNewCreateAsset = useCallback(() => {
     if (isAgentRunning) {
@@ -319,6 +452,7 @@ export function AppShell() {
       setAgentStatus(`Loaded ${asset.name} v${version.versionNumber}`)
 
       if (sceneSnapshot.activeWorkspace === 'compose') {
+        clearComposeHistory()
         const instance = sceneStore.addComposeAsset(
           version.asset,
           version.versionId,
@@ -332,7 +466,13 @@ export function AppShell() {
       sceneStore.setCreateAsset(version.asset, version.versionId)
       selectionStore.selectAsset('create', version.asset.id)
     },
-    [assetLibraryStore, sceneSnapshot.activeWorkspace, sceneStore, selectionStore],
+    [
+      assetLibraryStore,
+      clearComposeHistory,
+      sceneSnapshot.activeWorkspace,
+      sceneStore,
+      selectionStore,
+    ],
   )
 
   const handleConfirmDeleteAsset = useCallback(() => {
@@ -343,6 +483,7 @@ export function AppShell() {
     void assetLibraryStore
       .deleteAsset(assetPendingDelete.assetId)
       .then(() => {
+        clearComposeHistory()
         sceneStore.removeAsset(assetPendingDelete.assetId)
 
         if (selection.assetId === assetPendingDelete.assetId) {
@@ -355,6 +496,7 @@ export function AppShell() {
   }, [
     assetLibraryStore,
     assetPendingDelete,
+    clearComposeHistory,
     sceneStore,
     selection.assetId,
     selectionStore,
@@ -381,6 +523,7 @@ export function AppShell() {
         return
       }
 
+      clearComposeHistory()
       sceneStore.setComposeInstanceVersion(
         selectedInstance.instanceId,
         version.asset,
@@ -388,7 +531,13 @@ export function AppShell() {
       )
       selectionStore.selectAsset(selectedInstance.instanceId, version.assetId)
     },
-    [assetLibraryStore, sceneStore, selectedInstance, selectionStore],
+    [
+      assetLibraryStore,
+      clearComposeHistory,
+      sceneStore,
+      selectedInstance,
+      selectionStore,
+    ],
   )
 
   const handleDuplicateComposeSelection = useCallback(() => {
@@ -396,24 +545,51 @@ export function AppShell() {
       return
     }
 
+    const beforeDuplicate = captureComposeHistoryEntry()
     const duplicate = sceneStore.duplicateComposeInstance(
       selectedInstance.instanceId,
     )
 
     if (duplicate) {
+      pushComposeUndoEntry(beforeDuplicate)
       selectionStore.selectAsset(duplicate.instanceId, duplicate.assetId)
     }
-  }, [sceneStore, selectedInstance, selectionStore])
+  }, [
+    captureComposeHistoryEntry,
+    pushComposeUndoEntry,
+    sceneStore,
+    selectedInstance,
+    selectionStore,
+  ])
 
   const handleDeleteComposeSelection = useCallback(() => {
     if (!selectedInstance) {
       return
     }
 
+    pushComposeUndoEntry(captureComposeHistoryEntry())
     sceneStore.removeComposeInstance(selectedInstance.instanceId)
     selectionStore.clearSelection()
     setActiveTransformTool(null)
-  }, [sceneStore, selectedInstance, selectionStore])
+  }, [
+    captureComposeHistoryEntry,
+    pushComposeUndoEntry,
+    sceneStore,
+    selectedInstance,
+    selectionStore,
+  ])
+
+  const handleTransformStarted = useCallback(() => {
+    if (sceneStore.getSnapshot().activeWorkspace !== 'compose') {
+      return
+    }
+
+    pendingTransformHistoryRef.current = captureComposeHistoryEntry()
+  }, [captureComposeHistoryEntry, sceneStore])
+
+  const handleTransformEnded = useCallback(() => {
+    pendingTransformHistoryRef.current = null
+  }, [])
 
   const handleTransformChanged = useCallback(
     (instanceId: string, transform: SceneTransform) => {
@@ -421,10 +597,94 @@ export function AppShell() {
         return
       }
 
+      const pendingEntry = pendingTransformHistoryRef.current
+
+      if (
+        pendingEntry &&
+        hasTransformChanged(instanceId, transform, pendingEntry.instances)
+      ) {
+        pushComposeUndoEntry(pendingEntry)
+        pendingTransformHistoryRef.current = null
+      }
+
       sceneStore.updateComposeInstanceTransform(instanceId, transform)
     },
-    [sceneSnapshot.activeWorkspace, sceneStore],
+    [pushComposeUndoEntry, sceneSnapshot.activeWorkspace, sceneStore],
   )
+
+  useEffect(() => {
+    function handleComposeKeyDown(event: KeyboardEvent) {
+      if (
+        sceneStore.getSnapshot().activeWorkspace !== 'compose' ||
+        event.repeat ||
+        isEditableKeyboardTarget(event.target)
+      ) {
+        return
+      }
+
+      const key = event.key.toLowerCase()
+      const hasCommandModifier = event.metaKey || event.ctrlKey
+      const hasOnlyShortcutModifier =
+        hasCommandModifier && !event.altKey && !event.shiftKey
+
+      if (hasOnlyShortcutModifier && key === 'z') {
+        event.preventDefault()
+        handleUndoCompose()
+        return
+      }
+
+      if (hasOnlyShortcutModifier && key === 'd') {
+        event.preventDefault()
+        handleDuplicateComposeSelection()
+        return
+      }
+
+      if (
+        key === 'backspace' ||
+        (key === 'delete' && !event.metaKey && !event.ctrlKey)
+      ) {
+        if (selectedInstance) {
+          event.preventDefault()
+          handleDeleteComposeSelection()
+        }
+
+        return
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return
+      }
+
+      if (key === 'g') {
+        event.preventDefault()
+        setActiveTransformTool(selectedInstance ? 'move' : null)
+        return
+      }
+
+      if (key === 'r') {
+        event.preventDefault()
+        setActiveTransformTool(selectedInstance ? 'rotate' : null)
+        return
+      }
+
+      if (key === 's') {
+        event.preventDefault()
+        setActiveTransformTool(selectedInstance ? 'scale' : null)
+      }
+    }
+
+    window.addEventListener('keydown', handleComposeKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleComposeKeyDown)
+    }
+  }, [
+    handleDeleteComposeSelection,
+    handleDuplicateComposeSelection,
+    handleUndoCompose,
+    sceneStore,
+    selectedInstance,
+  ])
 
   useLayoutEffect(() => {
     const sidePanel = sidePanelRef.current
@@ -484,13 +744,19 @@ export function AppShell() {
         onAssetSelected={selectionStore.selectAsset}
         onSelectionCleared={selectionStore.clearSelection}
         onTransformChanged={handleTransformChanged}
+        onTransformEnded={handleTransformEnded}
+        onTransformStarted={handleTransformStarted}
       />
       <FrameChrome
         activeWorkspace={sceneSnapshot.activeWorkspace}
+        canRedoCompose={canRedoCompose}
+        canUndoCompose={canUndoCompose}
         canNavigateNextVersion={Boolean(adjacentVersions.next)}
         canNavigatePreviousVersion={Boolean(adjacentVersions.previous)}
         selectedAsset={selectedAsset}
         versionLabel={versionLabel}
+        onRedoCompose={handleRedoCompose}
+        onUndoCompose={handleUndoCompose}
         onNavigateNextVersion={() => handleNavigateVersion(adjacentVersions.next)}
         onNavigatePreviousVersion={() =>
           handleNavigateVersion(adjacentVersions.previous)
@@ -528,6 +794,7 @@ export function AppShell() {
           onNewAsset={handleNewCreateAsset}
           onCollapsedChange={setIsSidePanelCollapsed}
           onPromptSubmit={handlePromptSubmit}
+          onStop={handleStopAgentRun}
           panelRef={sidePanelRef}
           timelineItems={timelineItems}
           transcriptItems={chatTranscriptItems}
@@ -574,6 +841,71 @@ function updateAgentTranscriptItem(
           ...update,
         }
       : item,
+  )
+}
+
+function cloneSceneAssetInstances(
+  instances: readonly SceneAssetInstance[],
+): SceneAssetInstance[] {
+  return instances.map((instance) => ({
+    ...instance,
+    transform: cloneSceneTransform(instance.transform),
+  }))
+}
+
+function cloneSceneTransform(transform: SceneTransform): SceneTransform {
+  return {
+    position: [
+      transform.position[0],
+      transform.position[1],
+      transform.position[2],
+    ],
+    rotation: [
+      transform.rotation[0],
+      transform.rotation[1],
+      transform.rotation[2],
+    ],
+    scale: [transform.scale[0], transform.scale[1], transform.scale[2]],
+  }
+}
+
+function hasTransformChanged(
+  instanceId: string,
+  nextTransform: SceneTransform,
+  instances: readonly SceneAssetInstance[],
+) {
+  const previousTransform = instances.find(
+    (instance) => instance.instanceId === instanceId,
+  )?.transform
+
+  if (!previousTransform) {
+    return true
+  }
+
+  return (
+    !vectorsAlmostEqual(previousTransform.position, nextTransform.position) ||
+    !vectorsAlmostEqual(previousTransform.rotation, nextTransform.rotation) ||
+    !vectorsAlmostEqual(previousTransform.scale, nextTransform.scale)
+  )
+}
+
+function vectorsAlmostEqual(
+  left: readonly [number, number, number],
+  right: readonly [number, number, number],
+) {
+  return left.every((value, index) => Math.abs(value - right[index]) < 0.000001)
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
   )
 }
 

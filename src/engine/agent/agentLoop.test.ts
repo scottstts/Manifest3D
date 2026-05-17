@@ -151,6 +151,55 @@ describe('runManifestAgentLoop', () => {
     expect(result.history.attempts).toHaveLength(0)
     expect(sceneStore.getSnapshot().scene.assets).toHaveLength(0)
   })
+
+  it('reports cancellation after an in-flight model request is aborted', async () => {
+    const controller = new AbortController()
+    const events: AgentLoopEvent[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const client: OpenAIManifestClient = {
+      async generateAsset() {
+        controller.abort()
+
+        return {
+          message: 'The request was aborted.',
+          responseId: null,
+          status: 'error',
+        }
+      },
+    }
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        runId: 'run-cancel',
+        scene: emptyScene,
+        signal: controller.signal,
+        userPrompt: 'Create a small box.',
+      },
+      {
+        client,
+        onEvent: (event) => events.push(event),
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('cancelled')
+    expect(sceneStore.getSnapshot().scene.assets).toHaveLength(0)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'Request candidate',
+          state: 'requesting_model',
+          status: 'skipped',
+        }),
+        expect.objectContaining({
+          label: 'Agent run cancelled',
+          state: 'cancelled',
+          status: 'skipped',
+        }),
+      ]),
+    )
+  })
 })
 
 function createQueuedClient(

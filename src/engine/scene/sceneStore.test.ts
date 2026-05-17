@@ -72,6 +72,30 @@ describe('createSceneStore', () => {
     })
   })
 
+  it('restores compose instances from a snapshot for undo and redo', () => {
+    const asset = createTestAsset('test-asset')
+    const store = createSceneStore(createTestScene())
+
+    store.setWorkspace('compose')
+    const firstInstance = store.addComposeAsset(asset, 'test-asset:v1')
+    const snapshot = store.getSnapshot().composeInstances
+
+    store.duplicateComposeInstance(firstInstance.instanceId)
+    store.setComposeInstances(snapshot)
+
+    expect(store.getSnapshot().composeInstances).toHaveLength(1)
+    expect(store.getSnapshot().composeInstances[0]).toMatchObject({
+      assetId: 'test-asset',
+      instanceId: firstInstance.instanceId,
+      transform: {
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      },
+      versionId: 'test-asset:v1',
+    })
+  })
+
   it('removes assets from both workspaces by asset id', () => {
     const asset = createTestAsset('test-asset')
     const store = createSceneStore(createTestScene(asset))

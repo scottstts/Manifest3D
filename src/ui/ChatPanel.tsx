@@ -12,7 +12,7 @@ import type { ValidationReport } from '../engine/schema/validationTypes'
 import { AgentTimeline } from './AgentTimeline'
 import { PromptComposer } from './PromptComposer'
 
-export type ChatPanelPromptMode = 'create' | 'edit'
+export type ChatPanelPromptMode = 'creating' | 'editing'
 
 export type ChatPanelTranscriptItem =
   | {
@@ -36,6 +36,7 @@ type ChatPanelProps = {
   mode: ChatPanelPromptMode
   onNewAsset: () => void
   onCollapsedChange: (isCollapsed: boolean) => void
+  onStop: () => void
   onPromptSubmit: (
     userPrompt: string,
     imageAttachments: readonly AgentImageAttachment[],
@@ -54,6 +55,7 @@ export function ChatPanel({
   mode,
   onNewAsset,
   onCollapsedChange,
+  onStop,
   onPromptSubmit,
   panelRef,
   timelineItems,
@@ -175,9 +177,10 @@ export function ChatPanel({
       </div>
       {!isCollapsed && (
         <PromptComposer
-          disabled={isRunning || isWorkspaceDisabled}
+          disabled={isWorkspaceDisabled}
           disabledReason={isWorkspaceDisabled ? 'Compose mode' : null}
           isSubmitting={isRunning}
+          onStop={onStop}
           onSubmit={onPromptSubmit}
         />
       )}

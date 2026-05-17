@@ -13,6 +13,7 @@ type PromptComposerProps = {
   disabled?: boolean
   disabledReason?: string | null
   isSubmitting?: boolean
+  onStop?: () => void
   onSubmit: (
     userPrompt: string,
     imageAttachments: readonly AgentImageAttachment[],
@@ -23,6 +24,7 @@ export function PromptComposer({
   disabled = false,
   disabledReason = null,
   isSubmitting = false,
+  onStop,
   onSubmit,
 }: PromptComposerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -38,6 +40,11 @@ export function PromptComposer({
     event.preventDefault()
 
     const trimmedPrompt = prompt.trim()
+
+    if (isSubmitting) {
+      onStop?.()
+      return
+    }
 
     if (!trimmedPrompt || disabled) {
       return
@@ -59,7 +66,7 @@ export function PromptComposer({
   }
 
   async function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    if (disabled) {
+    if (disabled || isSubmitting) {
       return
     }
 
@@ -88,7 +95,7 @@ export function PromptComposer({
   }
 
   async function handleFiles(files: FileList | null) {
-    if (!files || disabled) {
+    if (!files || disabled || isSubmitting) {
       return
     }
 
@@ -139,7 +146,7 @@ export function PromptComposer({
         </div>
       )}
       <textarea
-        disabled={disabled}
+        disabled={disabled || isSubmitting}
         id="scene-prompt"
         placeholder={disabledReason ?? 'What to create?'}
         ref={textareaRef}
@@ -160,20 +167,25 @@ export function PromptComposer({
       <div className="prompt-composer__actions">
         <button
           aria-label="Attach reference file"
-          disabled={disabled}
+          disabled={disabled || isSubmitting}
           type="button"
           onClick={() => fileInputRef.current?.click()}
         >
           <Paperclip aria-hidden="true" />
         </button>
         <button
-          aria-label={isSubmitting ? 'Generating asset' : 'Send prompt'}
+          aria-label={isSubmitting ? 'Stop generation' : 'Send prompt'}
           className={`send-button${isSubmitting ? ' is-running' : ''}`}
-          disabled={disabled || prompt.trim().length === 0}
-          type="submit"
+          disabled={isSubmitting ? false : disabled || prompt.trim().length === 0}
+          title={isSubmitting ? 'Stop generation' : 'Send prompt'}
+          type={isSubmitting ? 'button' : 'submit'}
+          onClick={isSubmitting ? onStop : undefined}
         >
           {isSubmitting ? (
-            <LoaderCircle aria-hidden="true" />
+            <span className="send-button__running" aria-hidden="true">
+              <LoaderCircle />
+              <span className="send-button__stop-square" />
+            </span>
           ) : (
             <Send aria-hidden="true" />
           )}

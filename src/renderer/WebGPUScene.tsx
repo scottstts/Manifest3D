@@ -32,9 +32,19 @@ type WebGPUSceneProps = {
   ) => void
   onSelectionCleared: () => void
   onTransformChanged: (instanceId: string, transform: SceneTransform) => void
+  onTransformEnded: () => void
+  onTransformStarted: () => void
 }
 
 type OrbitControlsHandle = ComponentRef<typeof OrbitControls>
+type TransformControlsHandle = ComponentRef<typeof TransformControls> & {
+  setColors?: (
+    xAxis: string,
+    yAxis: string,
+    zAxis: string,
+    active: string,
+  ) => void
+}
 type AssetGroupHandle = {
   center: THREE.Vector3
   group: THREE.Group
@@ -48,6 +58,11 @@ type OrbitDistanceLimits = {
   maxDistance: number
   minDistance: number
 }
+type ObjectTransformSnapshot = {
+  position: THREE.Vector3
+  quaternion: THREE.Quaternion
+  scale: THREE.Vector3
+}
 
 export function WebGPUScene({
   activeTransformTool,
@@ -60,6 +75,8 @@ export function WebGPUScene({
   onAssetSelected,
   onSelectionCleared,
   onTransformChanged,
+  onTransformEnded,
+  onTransformStarted,
 }: WebGPUSceneProps) {
   const assetGroupsRef = useRef(new Map<string, AssetGroupHandle>())
   const controlsRef = useRef<OrbitControlsHandle | null>(null)
@@ -111,6 +128,8 @@ export function WebGPUScene({
         object={selectedTransformHandle?.group ?? null}
         selectedTargetId={selectedTargetId}
         onTransformChanged={onTransformChanged}
+        onTransformEnded={onTransformEnded}
+        onTransformStarted={onTransformStarted}
       />
       <fogExp2 attach="fog" args={['#efeff9', 0.018]} />
 
@@ -325,6 +344,8 @@ type SelectedTransformControlsProps = {
   object: THREE.Object3D | null
   selectedTargetId: string | null
   onTransformChanged: (instanceId: string, transform: SceneTransform) => void
+  onTransformEnded: () => void
+  onTransformStarted: () => void
 }
 
 function SelectedTransformControls({
@@ -334,8 +355,28 @@ function SelectedTransformControls({
   object,
   selectedTargetId,
   onTransformChanged,
+  onTransformEnded,
+  onTransformStarted,
 }: SelectedTransformControlsProps) {
   const invalidate = useThree((state) => state.invalidate)
+  const transformControlsRef = useRef<TransformControlsHandle | null>(null)
+  const lastValidTransformRef = useRef<ObjectTransformSnapshot | null>(null)
+  const isRotationBlockedRef = useRef(false)
+
+  useEffect(() => {
+    const controls = transformControlsRef.current
+
+    if (!controls) {
+      return
+    }
+
+    controls.setColors?.('#e94b65', '#279e72', '#4267ff', '#31268f')
+    applyTransformControlMaterialTreatment(controls)
+    lastValidTransformRef.current = object
+      ? readObjectTransformSnapshot(object)
+      : null
+    invalidate()
+  }, [activeTransformTool, invalidate, object])
 
   if (!activeTransformTool || !object || !selectedTargetId) {
     return null
@@ -343,10 +384,15 @@ function SelectedTransformControls({
 
   return (
     <TransformControls
+      ref={transformControlsRef}
       mode={toTransformControlsMode(activeTransformTool)}
       object={object}
       onChange={() => invalidate()}
       onMouseDown={() => {
+        lastValidTransformRef.current = readObjectTransformSnapshot(object)
+        isRotationBlockedRef.current = false
+        onTransformStarted()
+
         if (controlsRef.current) {
           controlsRef.current.enabled = false
         }
@@ -356,12 +402,31 @@ function SelectedTransformControls({
           controlsRef.current.enabled = true
         }
 
+        if (activeTransformTool === 'move') {
+          clampObjectAbovePlane(object)
+        } else if (activeTransformTool === 'rotate') {
+          keepRotationAbovePlane(object, lastValidTransformRef, isRotationBlockedRef)
+        } else if (activeTransformTool === 'scale') {
+          keepLastValidAbovePlane(object, lastValidTransformRef)
+        }
+
         onTransformChanged(
           selectedTargetId,
           readObjectTransform(object, center),
         )
+        onTransformEnded()
+        isRotationBlockedRef.current = false
       }}
       onObjectChange={() => {
+        if (activeTransformTool === 'move') {
+          clampObjectAbovePlane(object)
+          lastValidTransformRef.current = readObjectTransformSnapshot(object)
+        } else if (activeTransformTool === 'rotate') {
+          keepRotationAbovePlane(object, lastValidTransformRef, isRotationBlockedRef)
+        } else if (activeTransformTool === 'scale') {
+          keepLastValidAbovePlane(object, lastValidTransformRef)
+        }
+
         onTransformChanged(
           selectedTargetId,
           readObjectTransform(object, center),
@@ -370,6 +435,87 @@ function SelectedTransformControls({
       }}
     />
   )
+}
+
+function applyTransformControlMaterialTreatment(
+  controls: TransformControlsHandle,
+) {
+  controls.traverse((object) => {
+    if (!('material' in object)) {
+      return
+    }
+
+    const materialValue = object.material
+    const materials = Array.isArray(materialValue)
+      ? materialValue
+      : [materialValue]
+
+    for (const material of materials) {
+      if (!isTransformControlMaterial(material)) {
+        continue
+      }
+
+      material.depthTest = false
+      material.toneMapped = false
+
+      if (material.transparent && material.opacity < 0.44) {
+        material.opacity = 0.44
+        material._opacity = 0.44
+      }
+
+      material.needsUpdate = true
+    }
+  })
+}
+
+function clampObjectAbovePlane(object: THREE.Object3D) {
+  object.updateMatrixWorld(true)
+
+  const bounds = new THREE.Box3().setFromObject(object)
+
+  if (bounds.isEmpty() || bounds.min.y >= 0) {
+    return
+  }
+
+  object.position.y += -bounds.min.y
+  object.updateMatrixWorld(true)
+}
+
+function keepLastValidAbovePlane(
+  object: THREE.Object3D,
+  lastValidTransformRef: { current: ObjectTransformSnapshot | null },
+) {
+  object.updateMatrixWorld(true)
+
+  if (isObjectAbovePlane(object)) {
+    lastValidTransformRef.current = readObjectTransformSnapshot(object)
+    return
+  }
+
+  if (lastValidTransformRef.current) {
+    restoreObjectTransformSnapshot(object, lastValidTransformRef.current)
+  }
+}
+
+function keepRotationAbovePlane(
+  object: THREE.Object3D,
+  lastValidTransformRef: { current: ObjectTransformSnapshot | null },
+  isRotationBlockedRef: { current: boolean },
+) {
+  object.updateMatrixWorld(true)
+
+  if (isRotationBlockedRef.current) {
+    restoreObjectTransformSnapshotIfPresent(object, lastValidTransformRef)
+    return
+  }
+
+  if (isObjectAbovePlane(object)) {
+    lastValidTransformRef.current = readObjectTransformSnapshot(object)
+    return
+  }
+
+  isRotationBlockedRef.current = true
+  restoreObjectTransformSnapshotIfPresent(object, lastValidTransformRef)
 }
 
 function toTransformControlsMode(tool: Exclude<TransformTool, null>) {
@@ -383,6 +529,41 @@ function toTransformControlsMode(tool: Exclude<TransformTool, null>) {
     default:
       return assertNever(tool)
   }
+}
+
+function isObjectAbovePlane(object: THREE.Object3D) {
+  const bounds = new THREE.Box3().setFromObject(object)
+
+  return bounds.isEmpty() || bounds.min.y >= 0
+}
+
+function restoreObjectTransformSnapshotIfPresent(
+  object: THREE.Object3D,
+  snapshotRef: { current: ObjectTransformSnapshot | null },
+) {
+  if (snapshotRef.current) {
+    restoreObjectTransformSnapshot(object, snapshotRef.current)
+  }
+}
+
+function readObjectTransformSnapshot(
+  object: THREE.Object3D,
+): ObjectTransformSnapshot {
+  return {
+    position: object.position.clone(),
+    quaternion: object.quaternion.clone(),
+    scale: object.scale.clone(),
+  }
+}
+
+function restoreObjectTransformSnapshot(
+  object: THREE.Object3D,
+  snapshot: ObjectTransformSnapshot,
+) {
+  object.position.copy(snapshot.position)
+  object.quaternion.copy(snapshot.quaternion)
+  object.scale.copy(snapshot.scale)
+  object.updateMatrixWorld(true)
 }
 
 function readObjectTransform(
@@ -568,6 +749,19 @@ function isStandardNodeMaterial(
     (material as THREE.MeshStandardNodeMaterial).isMeshStandardNodeMaterial ===
     true
   )
+}
+
+function isTransformControlMaterial(
+  material: unknown,
+): material is THREE.Material & {
+  _opacity?: number
+  depthTest: boolean
+  needsUpdate: boolean
+  opacity: number
+  toneMapped: boolean
+  transparent: boolean
+} {
+  return material instanceof THREE.Material
 }
 
 function assertNever(value: never): never {
