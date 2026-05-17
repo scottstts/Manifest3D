@@ -1,6 +1,4 @@
 import {
-  type Dispatch,
-  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -82,6 +80,7 @@ export function AppShell() {
     useState<TransformTool>(null)
   const [assetPendingDelete, setAssetPendingDelete] =
     useState<AssetLibraryAsset | null>(null)
+  const [exportToastId, setExportToastId] = useState<number | null>(null)
   const [composeUndoStack, setComposeUndoStack] = useState<
     ComposeHistoryEntry[]
   >([])
@@ -90,6 +89,7 @@ export function AppShell() {
   >([])
   const sidePanelRef = useRef<HTMLElement | null>(null)
   const pendingTransformHistoryRef = useRef<ComposeHistoryEntry | null>(null)
+  const exportToastTimeoutRef = useRef<number | null>(null)
   const agentRunAbortControllerRef = useRef<AbortController | null>(null)
   const agentHistoryRef = useRef(createCandidateHistory())
   const openAIClientRef = useRef(createOpenAIManifestClient())
@@ -154,6 +154,15 @@ export function AppShell() {
   useEffect(() => {
     void assetLibraryStore.load()
   }, [assetLibraryStore])
+
+  useEffect(
+    () => () => {
+      if (exportToastTimeoutRef.current !== null) {
+        window.clearTimeout(exportToastTimeoutRef.current)
+      }
+    },
+    [],
+  )
 
   const captureComposeHistoryEntry = useCallback(
     (): ComposeHistoryEntry => ({
@@ -448,11 +457,16 @@ export function AppShell() {
     void exportManifestAssetGlb(exportableCreateAsset)
       .then((result) => {
         downloadGlbExport(result)
-        appendPanelStatus(
-          setChatTranscriptItems,
-          `Exported ${result.fileName}`,
-        )
-        setAgentStatus(`Exported ${result.fileName}`)
+        setExportToastId(Date.now())
+
+        if (exportToastTimeoutRef.current !== null) {
+          window.clearTimeout(exportToastTimeoutRef.current)
+        }
+
+        exportToastTimeoutRef.current = window.setTimeout(() => {
+          setExportToastId(null)
+          exportToastTimeoutRef.current = null
+        }, 3000)
       })
       .catch((error: unknown) => {
         const message =
@@ -461,7 +475,6 @@ export function AppShell() {
             : 'The selected asset could not be exported as GLB.'
         const status = `Export failed: ${message}`
 
-        appendPanelStatus(setChatTranscriptItems, status)
         setAgentStatus(status)
       })
   }, [exportableCreateAsset])
@@ -802,6 +815,16 @@ export function AppShell() {
         onWorkspaceChange={handleWorkspaceChange}
       />
       <main className="app-overlays" aria-label="Manifest3D creation workspace">
+        {exportToastId !== null && (
+          <div
+            aria-live="polite"
+            className="export-toast"
+            key={exportToastId}
+            role="status"
+          >
+            Exported
+          </div>
+        )}
         <AssetHistoryPanel
           activeAssetId={selectedAsset?.id ?? null}
           assets={librarySnapshot.library.assets}
@@ -880,21 +903,6 @@ function updateAgentTranscriptItem(
         }
       : item,
   )
-}
-
-function appendPanelStatus(
-  updateItems: Dispatch<SetStateAction<ChatPanelTranscriptItem[]>>,
-  status: string,
-) {
-  updateItems((currentItems) => [
-    ...currentItems,
-    {
-      id: `export:${Date.now().toString(36)}`,
-      role: 'agent',
-      status,
-      timelineItems: [],
-    },
-  ])
 }
 
 function cloneSceneAssetInstances(
