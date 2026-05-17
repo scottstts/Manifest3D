@@ -3,6 +3,9 @@ import type { ThreeEvent } from '@react-three/fiber'
 import { useFrame, useThree } from '@react-three/fiber'
 import type { ComponentRef, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type OutlineNode from 'three/addons/tsl/display/OutlineNode.js'
+import { outline } from 'three/addons/tsl/display/OutlineNode.js'
+import { color, float, max, mix, pass, vec4 } from 'three/tsl'
 import * as THREE from 'three/webgpu'
 import {
   buildManifestAsset,
@@ -14,7 +17,6 @@ import type {
   SceneTransform,
 } from '../engine/scene/sceneStore'
 import { getProjectionViewOffset } from './effectiveViewport'
-import { createSelectionOutlineGroup } from './selectionOutline'
 import { CameraQuaternionBridge } from './ViewportGizmo'
 import type { TransformTool } from './WebGPUCanvas'
 
@@ -50,7 +52,6 @@ type AssetGroupHandle = {
   center: THREE.Vector3
   group: THREE.Group
 }
-type AssetGroupRegistry = RefObject<Map<string, AssetGroupHandle>>
 type AssetLocalPlacement = {
   anchorOffset: THREE.Vector3
   center: THREE.Vector3
@@ -64,6 +65,15 @@ type ObjectTransformSnapshot = {
   quaternion: THREE.Quaternion
   scale: THREE.Vector3
 }
+type SelectionOutlinePipelineHandle = {
+  outlinePass: OutlineNode
+  pipeline: THREE.RenderPipeline
+}
+
+const selectionOutlineColor = '#007acc'
+const selectionOutlineStrength = 5.2
+const selectionOutlineThickness = 5.0
+const selectionOutlineGlow = 1.45
 
 export function WebGPUScene({
   activeTransformTool,
@@ -117,8 +127,8 @@ export function WebGPUScene({
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
       />
       <SelectionCameraTarget
-        assetGroupsRef={assetGroupsRef}
         controlsRef={controlsRef}
+        selectedObject={selectedTransformHandle?.group ?? null}
         selectedTargetId={selectedTargetId}
         selectionRevision={selectionRevision}
       />
@@ -132,6 +142,8 @@ export function WebGPUScene({
         onTransformEnded={onTransformEnded}
         onTransformStarted={onTransformStarted}
       />
+      <SelectionOutlinePipeline object={selectedTransformHandle?.group ?? null} />
+      <color attach="background" args={['#f7f7fb']} />
       <fogExp2 attach="fog" args={['#efeff9', 0.018]} />
 
       <hemisphereLight args={['#ffffff', '#d9dbee', 1.35]} />
@@ -206,10 +218,6 @@ function ManifestAssetObject({
   const { asset } = instance
   const groupRef = useRef<THREE.Group | null>(null)
   const builtAsset = useMemo(() => buildManifestAsset(asset), [asset])
-  const selectionOutlineGroup = useMemo(
-    () => createSelectionOutlineGroup(builtAsset.group),
-    [builtAsset.group],
-  )
   const localPlacement = useMemo(
     () => computeLocalPlacement(builtAsset.group),
     [builtAsset.group],
@@ -273,22 +281,77 @@ function ManifestAssetObject({
     >
       <group position={negateVector3(localPlacement.center)}>
         <primitive object={builtAsset.group} />
-        {isSelected && <primitive object={selectionOutlineGroup} />}
       </group>
     </group>
   )
 }
 
+type SelectionOutlinePipelineProps = {
+  object: THREE.Object3D | null
+}
+
+function SelectionOutlinePipeline({ object }: SelectionOutlinePipelineProps) {
+  const { camera, gl, scene } = useThree()
+  const invalidate = useThree((state) => state.invalidate)
+  const pipelineHandle = useMemo<SelectionOutlinePipelineHandle>(() => {
+    const selectedObjects = object ? [object] : []
+    const scenePass = pass(scene, camera)
+    const outlinePass = outline(scene, camera, {
+      downSampleRatio: 1,
+      edgeGlow: float(selectionOutlineGlow),
+      edgeThickness: float(selectionOutlineThickness),
+      selectedObjects,
+    })
+    const outlineMask = max(outlinePass.visibleEdge, outlinePass.hiddenEdge)
+      .mul(float(selectionOutlineStrength))
+      .clamp()
+    const outputNode = mix(
+      scenePass,
+      vec4(color(selectionOutlineColor), 1),
+      outlineMask,
+    )
+    const pipeline = new THREE.RenderPipeline(
+      gl as unknown as THREE.WebGPURenderer,
+    )
+
+    pipeline.outputNode = outputNode
+    pipeline.needsUpdate = true
+
+    return {
+      outlinePass,
+      pipeline,
+    }
+  }, [camera, gl, object, scene])
+
+  useEffect(() => {
+    invalidate()
+  }, [invalidate, pipelineHandle])
+
+  useEffect(
+    () => () => {
+      pipelineHandle.outlinePass.dispose()
+      pipelineHandle.pipeline.dispose()
+    },
+    [pipelineHandle],
+  )
+
+  useFrame(() => {
+    pipelineHandle.pipeline.render()
+  }, 1)
+
+  return null
+}
+
 type SelectionCameraTargetProps = {
-  assetGroupsRef: AssetGroupRegistry
   controlsRef: RefObject<OrbitControlsHandle | null>
+  selectedObject: THREE.Object3D | null
   selectedTargetId: string | null
   selectionRevision: number
 }
 
 function SelectionCameraTarget({
-  assetGroupsRef,
   controlsRef,
+  selectedObject,
   selectedTargetId,
   selectionRevision,
 }: SelectionCameraTargetProps) {
@@ -303,16 +366,14 @@ function SelectionCameraTarget({
       return
     }
 
-    const assetGroup = assetGroupsRef.current.get(selectedTargetId)?.group
-
-    if (!assetGroup) {
+    if (!selectedObject) {
       invalidate()
       return
     }
 
-    assetGroup.updateWorldMatrix(true, true)
+    selectedObject.updateWorldMatrix(true, true)
 
-    const bounds = new THREE.Box3().setFromObject(assetGroup)
+    const bounds = new THREE.Box3().setFromObject(selectedObject)
 
     if (!bounds.isEmpty()) {
       bounds.getCenter(targetRef.current)
@@ -320,7 +381,7 @@ function SelectionCameraTarget({
     }
 
     invalidate()
-  }, [assetGroupsRef, invalidate, selectedTargetId, selectionRevision])
+  }, [invalidate, selectedObject, selectedTargetId, selectionRevision])
 
   useFrame(() => {
     const controls = controlsRef.current

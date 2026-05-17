@@ -3,13 +3,13 @@ import { computeRendererDpr } from './createRenderer'
 
 describe('computeRendererDpr', () => {
   it('caps high-density viewports by total pixel budget', () => {
-    expect(computeRendererDpr(1000, 1000, 2)).toBeCloseTo(
-      Math.sqrt(1_650_000 / 1_000_000),
+    expect(computeRendererDpr(1600, 1600, 2)).toBeCloseTo(
+      Math.sqrt(4_000_000 / (1_600 * 1_600)),
     )
   })
 
-  it('caps dpr at 1.5 for smaller viewports', () => {
-    expect(computeRendererDpr(800, 600, 3)).toBe(1.5)
+  it('caps dpr at 1.75 for smaller viewports', () => {
+    expect(computeRendererDpr(800, 600, 3)).toBe(1.75)
   })
 
   it('never returns below one', () => {

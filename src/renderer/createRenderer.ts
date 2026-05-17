@@ -1,7 +1,7 @@
 import type { Renderer as FiberRenderer } from '@react-three/fiber'
 import { WebGPURenderer } from 'three/webgpu'
 
-const maxPixels = 1_650_000
+const maxPixels = 4_000_000
 
 export function computeRendererDpr(
   viewportWidth: number,
@@ -14,7 +14,7 @@ export function computeRendererDpr(
 
   const dpr = Math.min(
     devicePixelRatio,
-    1.5,
+    1.75,
     Math.sqrt(maxPixels / (viewportWidth * viewportHeight)),
   )
 
