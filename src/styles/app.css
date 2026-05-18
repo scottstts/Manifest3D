@@ -109,6 +109,10 @@
     transform 160ms ease;
 }
 
+a.viewport-toolbar__button {
+  text-decoration: none;
+}
+
 .viewport-toolbar__button:hover {
   color: #fff;
   background: #7772ea;
@@ -142,6 +146,10 @@
 
 .viewport-toolbar__button--api-key:disabled {
   filter: saturate(0.45);
+}
+
+.viewport-toolbar__button--github {
+  white-space: nowrap;
 }
 
 .viewport-toolbar__export {
@@ -246,6 +254,11 @@
   height: 17px;
 }
 
+.viewport-toolbar__button i {
+  font-size: 1.08rem;
+  line-height: 1;
+}
+
 .viewport-toolbar__button span {
   font-size: 0.82rem;
   font-weight: 800;
@@ -260,7 +273,7 @@
   z-index: 5;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 24px;
   height: 76px;
   padding: 0 36px;
@@ -276,19 +289,23 @@
 }
 
 .workspace-tabs {
-  position: absolute;
-  left: 50%;
+  position: static;
   display: inline-flex;
+  flex: 0 0 auto;
   gap: 4px;
+  margin-left: 10px;
   padding: 4px;
   pointer-events: auto;
   background: rgb(255 255 255 / 0.46);
   border: 1px solid rgb(127 121 219 / 0.18);
   border-radius: 999px;
-  transform: translateX(-50%);
 }
 
 .workspace-tabs button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
   min-width: 86px;
   height: 32px;
   padding: 0 16px;
@@ -303,6 +320,12 @@
     color 160ms ease,
     background-color 160ms ease,
     box-shadow 160ms ease;
+}
+
+.workspace-tabs button i {
+  display: none;
+  font-size: 0.96rem;
+  line-height: 1;
 }
 
 .workspace-tabs button.is-active {
@@ -1553,6 +1576,42 @@
   }
 }
 
+@media (max-width: 1360px) {
+  .workspace-tabs button {
+    width: 38px;
+    min-width: 0;
+    padding: 0;
+  }
+
+  .workspace-tabs button i {
+    display: block;
+  }
+
+  .workspace-tabs__label,
+  .viewport-toolbar__button span,
+  .version-toolbar__label {
+    display: none;
+  }
+
+  .viewport-toolbar__button {
+    width: 38px;
+    padding: 0;
+  }
+
+  .viewport-toolbar__button.viewport-toolbar__button--export-menu {
+    width: 46px;
+  }
+
+  .viewport-toolbar__button--github {
+    width: 38px;
+    padding: 0;
+  }
+
+  .version-toolbar {
+    padding: 0 8px;
+  }
+}
+
 @media (max-width: 980px) {
   .frame-chrome {
     top: 8px;
@@ -1586,6 +1645,10 @@
     transform: none;
   }
 
+  .asset-history-panel:not(.is-collapsed) {
+    bottom: calc(min(260px, 34svh) + 24px);
+  }
+
   .viewport-gizmo-overlay,
   .viewport-gizmo-overlay.is-panel-collapsed {
     top: 94px;
@@ -1596,10 +1659,6 @@
 
   .viewport-toolbar__button {
     height: 36px;
-    padding: 0 12px;
-  }
-
-  .viewport-toolbar__button {
     width: 38px;
     padding: 0;
   }
@@ -1608,8 +1667,9 @@
     width: 46px;
   }
 
-  .viewport-toolbar__button span {
-    display: none;
+  .viewport-toolbar__button--github {
+    width: 38px;
+    padding: 0;
   }
 
   .joint-preview-panel {
@@ -1641,7 +1701,8 @@
     width: 46px;
   }
 
-  .viewport-toolbar__button span {
-    display: none;
+  .viewport-toolbar__button--github {
+    width: 38px;
+    padding: 0;
   }
 }

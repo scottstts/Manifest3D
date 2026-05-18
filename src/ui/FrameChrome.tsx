@@ -165,22 +165,26 @@ export function FrameChrome({
       </div>
       <div className="workspace-tabs" role="tablist" aria-label="Workspace mode">
         <button
+          aria-label="Create workspace"
           aria-selected={activeWorkspace === 'create'}
           className={activeWorkspace === 'create' ? 'is-active' : ''}
           role="tab"
           type="button"
           onClick={() => onWorkspaceChange('create')}
         >
-          Create
+          <i aria-hidden="true" className="fa-solid fa-palette" />
+          <span className="workspace-tabs__label">Create</span>
         </button>
         <button
+          aria-label="Compose workspace"
           aria-selected={activeWorkspace === 'compose'}
           className={activeWorkspace === 'compose' ? 'is-active' : ''}
           role="tab"
           type="button"
           onClick={() => onWorkspaceChange('compose')}
         >
-          Compose
+          <i aria-hidden="true" className="fa-solid fa-puzzle-piece" />
+          <span className="workspace-tabs__label">Compose</span>
         </button>
       </div>
       <ViewportToolbar

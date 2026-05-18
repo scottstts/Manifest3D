@@ -218,6 +218,16 @@ export function ViewportToolbar({
         <KeyRound aria-hidden="true" />
         <span>API Key</span>
       </button>
+      <a
+        aria-label="Open Manifest3D GitHub repository"
+        className="viewport-toolbar__button viewport-toolbar__button--github"
+        href="https://github.com/scottstts/Manifest3D"
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        <i aria-hidden="true" className="fa-brands fa-github" />
+        <span>Manifest3D</span>
+      </a>
     </div>
   )
 }
