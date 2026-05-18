@@ -1,5 +1,9 @@
 # Manifest3D
 
-Taking inspiration from the [Articraft project](https://articraft3d.github.io/), building a three.js ported (or somewhat equivalent) version of the same creation-validation-render process for 3d assets in a nice scene builder and exporter.
+Taking inspiration from the [Articraft project](https://articraft3d.github.io/), Manifest3D is a mini procedural 3d asset factory that runs in your browser.
 
-In dev...
+![Manifest3d](assets/screenshot.png)
+
+When running this app locally, remember to add a .env file with openai api key (see .env.example)
+
+When using this app non locally, provide the API key directly in app
