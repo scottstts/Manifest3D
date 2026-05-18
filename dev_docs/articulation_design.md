@@ -41,7 +41,7 @@ This means:
 
 - scrubbing a joint does not mutate the asset JSON
 - the same saved asset can be previewed differently in different scene instances
-- export still uses the canonical asset unless a future phase explicitly adds pose export
+- export still uses the canonical asset; dynamic GLB export adds generated motion clips instead of exporting the current preview pose
 - resetting the preview simply removes per-instance pose state
 
 The preview panel appears only for selected instances that have movable joints. If the asset declares `controls`, those controls define the dials; uncovered movable joints still get fallback individual dials. This supports linked controls such as all wheel-spin joints under one dial while keeping independent hinges separate. Limited revolute/prismatic controls ping-pong during playback; continuous controls wrap through a full turn.

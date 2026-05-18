@@ -65,6 +65,7 @@ import {
 import {
   downloadGlbExport,
   exportManifestAssetGlb,
+  type GlbExportMode,
 } from '../engine/scene/exportGlb'
 import {
   getDefaultJointControlValue,
@@ -598,12 +599,12 @@ export function AppShell() {
     handleJointResetAll('create')
   }, [handleJointResetAll, isAgentRunning, sceneStore, selectionStore])
 
-  const handleExportGlb = useCallback(() => {
+  const handleExportGlb = useCallback((mode: GlbExportMode) => {
     if (!exportableCreateAsset) {
       return
     }
 
-    void exportManifestAssetGlb(exportableCreateAsset)
+    void exportManifestAssetGlb(exportableCreateAsset, { mode })
       .then((result) => {
         downloadGlbExport(result)
         setExportToastId(Date.now())

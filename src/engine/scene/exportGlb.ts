@@ -3,12 +3,43 @@ import {
   buildManifestAsset,
   disposeManifestObject,
 } from '../geometry/assetBuilder'
-import type { ManifestAsset } from '../schema/manifestTypes'
+import {
+  applyManifestTransform,
+  getDefaultJointControlValue,
+  getJointPreviewControls,
+  getMovableJoints,
+  getNormalizedJointAxis,
+  normalizeJointControlValue,
+  normalizeJointPoseValue,
+  resolveJointControlPoseValues,
+  type JointPreviewControl,
+} from '../geometry/jointPoses'
+import type { ManifestAsset, ManifestJoint } from '../schema/manifestTypes'
 
 export type GlbExportResult = {
   arrayBuffer: ArrayBuffer
   blob: Blob
   fileName: string
+}
+
+export type GlbExportMode = 'static' | 'dynamic'
+
+export type ExportManifestAssetGlbOptions = {
+  mode?: GlbExportMode
+}
+
+type ExportableManifestAsset = {
+  animations: THREE.AnimationClip[]
+  root: THREE.Object3D
+}
+
+type CloneExportableObjectOptions = {
+  clonedObjects?: Map<THREE.Object3D, THREE.Object3D>
+}
+
+type ControlAnimationKeyframe = {
+  controlValue: number
+  time: number
 }
 
 const helperObjectTypes = new Set([
@@ -29,14 +60,19 @@ const helperObjectTypes = new Set([
 
 export async function exportManifestAssetGlb(
   asset: ManifestAsset,
+  options: ExportManifestAssetGlbOptions = {},
 ): Promise<GlbExportResult> {
-  const exportRoot = createExportableManifestAssetGroup(asset)
+  const exportableAsset = createExportableManifestAsset(
+    asset,
+    options.mode ?? 'static',
+  )
 
   try {
     const { GLTFExporter } = await import(
       'three/examples/jsm/exporters/GLTFExporter.js'
     )
-    const gltf = await new GLTFExporter().parseAsync(exportRoot, {
+    const gltf = await new GLTFExporter().parseAsync(exportableAsset.root, {
+      animations: exportableAsset.animations,
       binary: true,
       includeCustomExtensions: false,
       onlyVisible: true,
@@ -53,15 +89,29 @@ export async function exportManifestAssetGlb(
       fileName: createGlbFileName(asset),
     }
   } finally {
-    disposeManifestObject(exportRoot)
+    disposeManifestObject(exportableAsset.root)
   }
 }
 
+export function canExportManifestAssetAnimation(asset: ManifestAsset) {
+  return getMovableJoints(asset).length > 0
+}
+
 export function createExportableManifestAssetGroup(asset: ManifestAsset) {
+  return createExportableManifestAsset(asset, 'static').root
+}
+
+function createExportableManifestAsset(
+  asset: ManifestAsset,
+  mode: GlbExportMode,
+): ExportableManifestAsset {
   const builtAsset = buildManifestAsset(asset)
 
   try {
-    const exportRoot = cloneExportableObject(builtAsset.group)
+    const clonedObjects = new Map<THREE.Object3D, THREE.Object3D>()
+    const exportRoot = cloneExportableObject(builtAsset.group, {
+      clonedObjects,
+    })
 
     exportRoot.name = asset.name
     exportRoot.updateMatrixWorld(true)
@@ -70,14 +120,43 @@ export function createExportableManifestAssetGroup(asset: ManifestAsset) {
       throw new Error(`Asset "${asset.id}" contains no exportable mesh geometry.`)
     }
 
-    return exportRoot
+    const animations =
+      mode === 'dynamic'
+        ? createManifestAssetAnimationClips(
+            asset,
+            builtAsset.jointGroups,
+            clonedObjects,
+          )
+        : []
+
+    if (
+      mode === 'dynamic' &&
+      canExportManifestAssetAnimation(asset) &&
+      animations.length === 0
+    ) {
+      throw new Error(
+        `Asset "${asset.id}" contains movable joints but no exportable animation tracks.`,
+      )
+    }
+
+    return {
+      animations,
+      root: exportRoot,
+    }
   } finally {
     disposeManifestObject(builtAsset.group)
   }
 }
 
-export function cloneExportableObject(source: THREE.Object3D) {
+export function cloneExportableObject(
+  source: THREE.Object3D,
+  options: CloneExportableObjectOptions = {},
+) {
   const clone = source.clone(true)
+
+  if (options.clonedObjects) {
+    mapClonedObjects(source, clone, options.clonedObjects)
+  }
 
   pruneNonExportableChildren(clone)
   clone.traverse((object) => {
@@ -124,6 +203,308 @@ export function downloadGlbExport(result: GlbExportResult) {
   link.click()
   link.remove()
   window.setTimeout(() => URL.revokeObjectURL(href), 0)
+}
+
+function createManifestAssetAnimationClips(
+  asset: ManifestAsset,
+  sourceJointGroups: ReadonlyMap<string, THREE.Object3D>,
+  clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
+) {
+  return getJointPreviewControls(asset)
+    .map((control) =>
+      createControlAnimationClip(control, sourceJointGroups, clonedObjects),
+    )
+    .filter((clip): clip is THREE.AnimationClip => clip !== null)
+}
+
+function createControlAnimationClip(
+  control: JointPreviewControl,
+  sourceJointGroups: ReadonlyMap<string, THREE.Object3D>,
+  clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
+) {
+  const keyframes = createControlAnimationKeyframes(control)
+
+  if (keyframes.length < 2) {
+    return null
+  }
+
+  const times = keyframes.map((keyframe) => keyframe.time)
+  const poseValuesByKeyframe = keyframes.map((keyframe) =>
+    resolveAnimationControlPoseValues(control, keyframe.controlValue),
+  )
+  const tracks: THREE.KeyframeTrack[] = []
+
+  for (const binding of control.bindings) {
+    const sourceJointGroup = sourceJointGroups.get(binding.joint.id)
+    const exportJointGroup = sourceJointGroup
+      ? clonedObjects.get(sourceJointGroup)
+      : undefined
+
+    if (!exportJointGroup) {
+      continue
+    }
+
+    const track = createJointAnimationTrack(
+      binding.joint,
+      exportJointGroup,
+      times,
+      poseValuesByKeyframe.map((poseValues) => poseValues[binding.joint.id]),
+      control.wrap,
+    )
+
+    if (track) {
+      tracks.push(track)
+    }
+  }
+
+  if (tracks.length === 0) {
+    return null
+  }
+
+  return new THREE.AnimationClip(
+    `${control.name} Motion`,
+    times[times.length - 1],
+    tracks,
+  )
+}
+
+function createControlAnimationKeyframes(
+  control: JointPreviewControl,
+): ControlAnimationKeyframe[] {
+  if (control.wrap) {
+    const min = control.range.min
+    const span = control.range.max - control.range.min
+    const wrappedSpan = Number.isFinite(span) && span > 0 ? span : Math.PI * 2
+    const duration = 2.4
+
+    return [0, 0.25, 0.5, 0.75, 1].map((phase) => ({
+      controlValue: min + wrappedSpan * phase,
+      time: duration * phase,
+    }))
+  }
+
+  const defaultValue = getDefaultJointControlValue(control)
+  const travelValues = uniqueFiniteValues([
+    normalizeJointControlValue(control, control.range.min),
+    normalizeJointControlValue(control, control.range.max),
+  ]).filter((value) => Math.abs(value - defaultValue) > 1e-8)
+  const values = [defaultValue, ...travelValues, defaultValue]
+
+  if (values.length < 3) {
+    return []
+  }
+
+  const segmentDuration = 1.2
+
+  return values.map((controlValue, index) => ({
+    controlValue,
+    time: segmentDuration * index,
+  }))
+}
+
+function resolveAnimationControlPoseValues(
+  control: JointPreviewControl,
+  value: number,
+) {
+  if (!control.wrap) {
+    return resolveJointControlPoseValues(control, value)
+  }
+
+  const poseValues: Record<string, number> = {}
+
+  for (const binding of control.bindings) {
+    poseValues[binding.joint.id] = binding.offset + binding.scale * value
+  }
+
+  return poseValues
+}
+
+function createJointAnimationTrack(
+  joint: ManifestJoint,
+  exportJointGroup: THREE.Object3D,
+  times: readonly number[],
+  poseValues: readonly (number | undefined)[],
+  useRawContinuousPose: boolean,
+) {
+  if (joint.type === 'prismatic') {
+    const values = createJointPositionTrackValues(
+      joint,
+      poseValues,
+      useRawContinuousPose,
+    )
+
+    return hasTrackMotion(values, 3)
+      ? new THREE.VectorKeyframeTrack(
+          `${exportJointGroup.uuid}.position`,
+          times,
+          values,
+        )
+      : null
+  }
+
+  if (joint.type === 'revolute' || joint.type === 'continuous') {
+    const values = createJointQuaternionTrackValues(
+      joint,
+      poseValues,
+      useRawContinuousPose,
+    )
+
+    return hasTrackMotion(values, 4)
+      ? new THREE.QuaternionKeyframeTrack(
+          `${exportJointGroup.uuid}.quaternion`,
+          times,
+          values,
+        )
+      : null
+  }
+
+  return null
+}
+
+function createJointPositionTrackValues(
+  joint: ManifestJoint,
+  poseValues: readonly (number | undefined)[],
+  useRawContinuousPose: boolean,
+) {
+  return poseValues.flatMap((poseValue) => {
+    const transform = createJointTransformAtPose(
+      joint,
+      poseValue,
+      useRawContinuousPose,
+    )
+
+    return transform ? transform.position.toArray() : []
+  })
+}
+
+function createJointQuaternionTrackValues(
+  joint: ManifestJoint,
+  poseValues: readonly (number | undefined)[],
+  useRawContinuousPose: boolean,
+) {
+  let previousQuaternion: THREE.Quaternion | null = null
+
+  return poseValues.flatMap((poseValue) => {
+    const transform = createJointTransformAtPose(
+      joint,
+      poseValue,
+      useRawContinuousPose,
+    )
+
+    if (!transform) {
+      return []
+    }
+
+    if (
+      previousQuaternion &&
+      previousQuaternion.dot(transform.quaternion) < 0
+    ) {
+      transform.quaternion.set(
+        -transform.quaternion.x,
+        -transform.quaternion.y,
+        -transform.quaternion.z,
+        -transform.quaternion.w,
+      )
+    }
+
+    previousQuaternion = transform.quaternion.clone()
+
+    return transform.quaternion.toArray()
+  })
+}
+
+function createJointTransformAtPose(
+  joint: ManifestJoint,
+  poseValue: number | undefined,
+  useRawContinuousPose: boolean,
+) {
+  const object = new THREE.Object3D()
+
+  applyManifestTransform(object, joint.origin)
+
+  if (joint.type === 'fixed') {
+    return object
+  }
+
+  const axis = getNormalizedJointAxis(joint)
+
+  if (!axis) {
+    return null
+  }
+
+  const value =
+    useRawContinuousPose && joint.type === 'continuous'
+      ? getFinitePoseValue(poseValue, 0)
+      : normalizeJointPoseValue(joint, poseValue)
+
+  if (joint.type === 'prismatic') {
+    object.translateOnAxis(axis, value)
+  } else {
+    object.rotateOnAxis(axis, value)
+  }
+
+  object.updateMatrix()
+
+  return object
+}
+
+function getFinitePoseValue(value: number | undefined, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function hasTrackMotion(values: readonly number[], itemSize: number) {
+  if (values.length <= itemSize) {
+    return false
+  }
+
+  for (let index = itemSize; index < values.length; index += itemSize) {
+    for (let component = 0; component < itemSize; component += 1) {
+      if (Math.abs(values[index + component] - values[component]) > 1e-8) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function uniqueFiniteValues(values: readonly number[]) {
+  const seenValues = new Set<string>()
+  const uniqueValues: number[] = []
+
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      continue
+    }
+
+    const key = value.toFixed(8)
+
+    if (seenValues.has(key)) {
+      continue
+    }
+
+    seenValues.add(key)
+    uniqueValues.push(value)
+  }
+
+  return uniqueValues
+}
+
+function mapClonedObjects(
+  source: THREE.Object3D,
+  clone: THREE.Object3D,
+  clonedObjects: Map<THREE.Object3D, THREE.Object3D>,
+) {
+  clonedObjects.set(source, clone)
+
+  for (let index = 0; index < source.children.length; index += 1) {
+    const sourceChild = source.children[index]
+    const cloneChild = clone.children[index]
+
+    if (sourceChild && cloneChild) {
+      mapClonedObjects(sourceChild, cloneChild, clonedObjects)
+    }
+  }
 }
 
 function pruneNonExportableChildren(object: THREE.Object3D) {

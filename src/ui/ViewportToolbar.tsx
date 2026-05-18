@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -6,6 +7,11 @@ import {
   Redo2,
   Undo2,
 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  canExportManifestAssetAnimation,
+  type GlbExportMode,
+} from '../engine/scene/exportGlb'
 import type { ManifestAsset } from '../engine/schema/manifestTypes'
 
 type ViewportToolbarProps = {
@@ -18,7 +24,7 @@ type ViewportToolbarProps = {
   hasSessionApiKey: boolean
   versionLabel: string | null
   onApiKeyRequested: () => void
-  onExportGlb: () => void
+  onExportGlb: (mode: GlbExportMode) => void
   onRedoCompose: () => void
   onUndoCompose: () => void
   onNavigateNextVersion: () => void
@@ -41,6 +47,64 @@ export function ViewportToolbar({
   onNavigateNextVersion,
   onNavigatePreviousVersion,
 }: ViewportToolbarProps) {
+  const [openExportMenuAssetId, setOpenExportMenuAssetId] = useState<
+    string | null
+  >(null)
+  const exportMenuRef = useRef<HTMLDivElement | null>(null)
+  const canExportAnimation = exportAsset
+    ? canExportManifestAssetAnimation(exportAsset)
+    : false
+  const isExportMenuOpen =
+    Boolean(exportAsset) &&
+    canExportAnimation &&
+    openExportMenuAssetId === exportAsset?.id
+
+  useEffect(() => {
+    if (!isExportMenuOpen) {
+      return undefined
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setOpenExportMenuAssetId(null)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenExportMenuAssetId(null)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isExportMenuOpen])
+
+  const handleExportButtonClick = () => {
+    if (!exportAsset) {
+      return
+    }
+
+    if (canExportAnimation) {
+      setOpenExportMenuAssetId((openAssetId) =>
+        openAssetId === exportAsset.id ? null : exportAsset.id,
+      )
+      return
+    }
+
+    onExportGlb('static')
+  }
+
+  const handleExportChoice = (mode: GlbExportMode) => {
+    setOpenExportMenuAssetId(null)
+    onExportGlb(mode)
+  }
+
   return (
     <div className="viewport-toolbar">
       <div className="compose-history-toolbar" aria-label="Compose history">
@@ -86,20 +150,58 @@ export function ViewportToolbar({
           <ChevronRight aria-hidden="true" />
         </button>
       </div>
-      <button
-        aria-label={
-          exportAsset
-            ? `Export ${exportAsset.name} as GLB`
-            : 'Select an asset in Create to export GLB'
-        }
-        className="viewport-toolbar__button"
-        disabled={!exportAsset}
-        type="button"
-        onClick={onExportGlb}
-      >
-        <Download aria-hidden="true" />
-        <span>Export GLB</span>
-      </button>
+      <div className="viewport-toolbar__export" ref={exportMenuRef}>
+        <button
+          aria-expanded={canExportAnimation ? isExportMenuOpen : undefined}
+          aria-haspopup={canExportAnimation ? 'menu' : undefined}
+          aria-label={
+            exportAsset
+              ? canExportAnimation
+                ? `Choose static or dynamic GLB export for ${exportAsset.name}`
+                : `Export ${exportAsset.name} as GLB`
+              : 'Select an asset in Create to export GLB'
+          }
+          className={
+            canExportAnimation
+              ? 'viewport-toolbar__button viewport-toolbar__button--export-menu'
+              : 'viewport-toolbar__button'
+          }
+          disabled={!exportAsset}
+          type="button"
+          onClick={handleExportButtonClick}
+        >
+          <Download aria-hidden="true" />
+          <span>Export GLB</span>
+          {canExportAnimation && (
+            <ChevronDown
+              aria-hidden="true"
+              className="viewport-toolbar__chevron"
+            />
+          )}
+        </button>
+        {canExportAnimation && isExportMenuOpen && (
+          <div
+            aria-label="GLB export type"
+            className="viewport-toolbar__export-menu"
+            role="menu"
+          >
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => handleExportChoice('static')}
+            >
+              Static
+            </button>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => handleExportChoice('dynamic')}
+            >
+              Dynamic
+            </button>
+          </div>
+        )}
+      </div>
       <button
         aria-label={
           apiKeyButtonDisabled

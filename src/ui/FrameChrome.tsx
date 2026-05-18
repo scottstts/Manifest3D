@@ -1,4 +1,5 @@
 import type { ManifestAsset } from '../engine/schema/manifestTypes'
+import type { GlbExportMode } from '../engine/scene/exportGlb'
 import type { WorkspaceMode } from '../engine/scene/sceneStore'
 import { ViewportToolbar } from './ViewportToolbar'
 
@@ -13,7 +14,7 @@ type FrameChromeProps = {
   hasSessionApiKey: boolean
   versionLabel: string | null
   onApiKeyRequested: () => void
-  onExportGlb: () => void
+  onExportGlb: (mode: GlbExportMode) => void
   onRedoCompose: () => void
   onUndoCompose: () => void
   onNavigateNextVersion: () => void

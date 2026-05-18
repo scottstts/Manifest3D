@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import * as THREE from 'three/webgpu'
 import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
 import {
+  canExportManifestAssetAnimation,
   cloneExportableObject,
   countExportableMeshes,
   createGlbFileName,
@@ -52,6 +53,41 @@ describe('GLB export', () => {
       ]),
     )
     expect(gltf.meshes?.every((mesh) => typeof mesh.primitives[0].material === 'number')).toBe(true)
+  })
+
+  it('includes joint animation clips when exporting a movable asset as dynamic GLB', async () => {
+    const result = await exportManifestAssetGlb(createValidValidationFixtureAsset(), {
+      mode: 'dynamic',
+    })
+    const gltf = readGlbJson(result.arrayBuffer)
+    const animation = gltf.animations?.[0]
+    const target = animation?.channels[0].target
+
+    expect(animation?.name).toBe('Lid Motion')
+    expect(animation?.channels).toEqual([
+      expect.objectContaining({
+        target: expect.objectContaining({
+          path: 'rotation',
+        }),
+      }),
+    ])
+    expect(typeof target?.node).toBe('number')
+    expect(gltf.nodes?.[target?.node ?? -1]?.name).toBe('Lid Hinge')
+  })
+
+  it('detects export animation capability from movable joints', () => {
+    const movableAsset = createValidValidationFixtureAsset()
+    const staticAsset = createValidValidationFixtureAsset()
+
+    staticAsset.joints = staticAsset.joints.map((joint) => ({
+      ...joint,
+      limits: undefined,
+      type: 'fixed',
+    }))
+    staticAsset.controls = []
+
+    expect(canExportManifestAssetAnimation(movableAsset)).toBe(true)
+    expect(canExportManifestAssetAnimation(staticAsset)).toBe(false)
   })
 
   it('strips helpers, non-exportable objects, and userData from cloned export objects', () => {
@@ -142,6 +178,15 @@ function readGlbMagic(arrayBuffer: ArrayBuffer) {
 }
 
 type GltfJson = {
+  animations?: Array<{
+    channels: Array<{
+      target: {
+        node?: number
+        path: string
+      }
+    }>
+    name?: string
+  }>
   materials?: Array<{
     pbrMetallicRoughness?: {
       baseColorFactor?: number[]
@@ -153,6 +198,9 @@ type GltfJson = {
     primitives: Array<{
       material?: number
     }>
+  }>
+  nodes?: Array<{
+    name?: string
   }>
 }
 
