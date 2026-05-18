@@ -128,6 +128,24 @@ export type ManifestJointPose = {
   value: number
 }
 
+export type ManifestJointControlBinding = {
+  jointId: string
+  scale: number
+  offset: number
+}
+
+export type ManifestJointControlLimits = {
+  lower: number
+  upper: number
+}
+
+export type ManifestJointControl = {
+  id: string
+  name: string
+  joints: ManifestJointControlBinding[]
+  limits: ManifestJointControlLimits
+}
+
 export type ManifestPoseSpec = {
   name?: string
   joints: readonly ManifestJointPose[]
@@ -208,6 +226,7 @@ export type ManifestAsset = {
   units: 'meters'
   parts: ManifestPart[]
   joints: ManifestJoint[]
+  controls: ManifestJointControl[]
   materials: ManifestMaterial[]
   checks: ManifestCheck[]
   allowances: ManifestAllowance[]

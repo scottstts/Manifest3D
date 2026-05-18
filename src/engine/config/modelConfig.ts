@@ -4,6 +4,7 @@ export const modelConfig = {
   reasoningEffort: 'high',
   temperature: 1.0,
   maxOutputTokens: 64_000,
+  agentRunTimeoutMs: 3_600_000,
 } as const
 
 export type ModelConfig = typeof modelConfig

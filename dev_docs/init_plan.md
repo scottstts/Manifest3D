@@ -443,6 +443,7 @@ type ManifestAsset = {
   units: "meters"
   parts: ManifestPart[]
   joints: ManifestJoint[]
+  controls: ManifestJointControl[]
   materials: ManifestMaterial[]
   checks: ManifestCheck[]
   allowances: ManifestAllowance[]
@@ -989,15 +990,15 @@ Acceptance:
 
 Tasks:
 
-- Add joint preview controls.
-- Animate or scrub revolute/prismatic/continuous joints.
+- Add joint preview controls, including manifest-declared grouped controls and per-joint fallback controls.
+- Animate or scrub revolute/prismatic/continuous controls.
 - Add sampled-pose validation for prompt-critical mechanisms.
 - Improve overlap/contact checks from bounds-level to mesh-level if needed.
 - Add additional procedural geometry only where validation or prompt quality demands it.
 
 Acceptance:
 
-- Generated joints can be inspected.
+- Generated joints and grouped controls can be inspected.
 - Pose-specific exact checks can run deterministically.
 - The validation report can distinguish rest-pose and sampled-pose findings.
 

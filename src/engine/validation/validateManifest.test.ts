@@ -140,6 +140,7 @@ describe('validateManifestAssetCandidate', () => {
       },
     ]
     asset.joints = []
+    asset.controls = []
     asset.checks = []
 
     const result = validateManifestAssetCandidate(asset)
@@ -246,6 +247,41 @@ describe('validateManifestAssetCandidate', () => {
     expect(
       result.report.steps.find((step) => step.stage === 'build')?.status,
     ).toBe('skipped')
+  })
+
+  it('rejects controls that reference missing, fixed, or duplicated joints', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.joints.push({
+      childPartId: 'crate-lid',
+      id: 'crate-lid-fixed-helper',
+      name: 'Fixed helper',
+      origin: {},
+      parentPartId: 'crate-base',
+      type: 'fixed',
+    })
+    asset.controls = [
+      {
+        id: 'bad-control',
+        name: 'Bad control',
+        joints: [
+          { jointId: 'missing-joint', offset: 0, scale: 1 },
+          { jointId: 'crate-lid-fixed-helper', offset: 0, scale: 1 },
+          { jointId: 'crate-lid-hinge', offset: 0, scale: 1 },
+          { jointId: 'crate-lid-hinge', offset: 0, scale: 1 },
+        ],
+        limits: { lower: 1, upper: 0 },
+      },
+    ]
+
+    const result = validateManifestAssetCandidate(asset)
+    const signalCodes = result.report.bundle.signals.map((signal) => signal.code)
+
+    expect(result.report.valid).toBe(false)
+    expect(signalCodes).toContain('control_limits_order')
+    expect(signalCodes).toContain('control_missing_joint')
+    expect(signalCodes).toContain('control_fixed_joint')
+    expect(signalCodes).toContain('control_duplicate_joint')
   })
 
   it('flags physically disconnected part groups', () => {

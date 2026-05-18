@@ -63,6 +63,14 @@
       "limits": { "lower": -1.8, "upper": 0, "effort": 8, "velocity": 2 }
     }
   ],
+  "controls": [
+    {
+      "id": "lid-control",
+      "name": "Lid",
+      "joints": [{ "jointId": "box-lid-hinge", "scale": 1, "offset": 0 }],
+      "limits": { "lower": -1.8, "upper": 0 }
+    }
+  ],
   "materials": [
     {
       "id": "mat-body",

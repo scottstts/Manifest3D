@@ -24,6 +24,7 @@ JSON rules:
 - Use intrinsic object-frame location words only when meaningful. Do not invent left/right/front/back distinctions for symmetric or orientation-ambiguous objects; use numeric suffixes for repeated indistinguishable parts.
 - Prefer multiple simple named parts over one anonymous mesh.
 - Assemble parts through joints. Use fixed joints for rigid mounts and movable joints for visible mechanisms.
+- Add controls for movable mechanisms: group joints under one control only when the real object should move them together; keep independent mechanisms separately controllable.
 - Keep parts physically supported in the current pose.
 - Avoid unintentional overlaps.
 - Use allowances only for intentional exceptions, scoped as narrowly as possible, with concrete reasons.

@@ -12,9 +12,10 @@ const maxPrismaticTravelMeters = 10
 
 export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   const signals: ValidationSignal[] = []
+  const controls = asset.controls ?? []
 
-  signals.push(...validateUniqueIds(asset))
-  signals.push(...validateRefs(asset))
+  signals.push(...validateUniqueIds(asset, controls))
+  signals.push(...validateRefs(asset, controls))
   signals.push(...validateAllowanceRefs(asset))
   signals.push(...validateJointTree(asset))
   signals.push(...validateJointSemantics(asset))
@@ -22,7 +23,10 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   return signals
 }
 
-function validateUniqueIds(asset: ManifestAsset): ValidationSignal[] {
+function validateUniqueIds(
+  asset: ManifestAsset,
+  controls: ManifestAsset['controls'],
+): ValidationSignal[] {
   return [
     ...findDuplicateSignals(
       asset.parts.map((part) => part.id),
@@ -41,6 +45,12 @@ function validateUniqueIds(asset: ManifestAsset): ValidationSignal[] {
       'duplicate_joint_id',
       '/joints',
       'Joint ids must be unique.',
+    ),
+    ...findDuplicateSignals(
+      controls.map((control) => control.id),
+      'duplicate_control_id',
+      '/controls',
+      'Control ids must be unique.',
     ),
     ...findDuplicateSignals(
       asset.parts.flatMap((part) => part.visuals.map((visual) => visual.id)),
@@ -83,10 +93,14 @@ function findDuplicateSignals(
   return signals
 }
 
-function validateRefs(asset: ManifestAsset): ValidationSignal[] {
+function validateRefs(
+  asset: ManifestAsset,
+  controls: ManifestAsset['controls'],
+): ValidationSignal[] {
   const signals: ValidationSignal[] = []
   const partIds = new Set(asset.parts.map((part) => part.id))
   const materialIds = new Set(asset.materials.map((material) => material.id))
+  const jointsById = new Map(asset.joints.map((joint) => [joint.id, joint]))
 
   for (const [partIndex, part] of asset.parts.entries()) {
     for (const [visualIndex, visual] of part.visuals.entries()) {
@@ -151,6 +165,78 @@ function validateRefs(asset: ManifestAsset): ValidationSignal[] {
           },
         ),
       )
+    }
+  }
+
+  for (const [controlIndex, control] of controls.entries()) {
+    if (control.limits.lower >= control.limits.upper) {
+      signals.push(
+        createValidationSignal(
+          'model_validity',
+          'control_limits_order',
+          `Control "${control.id}" lower limit must be less than upper limit.`,
+          {
+            path: `/controls/${controlIndex}/limits`,
+            refs: { controlId: control.id },
+            stage: 'structure',
+          },
+        ),
+      )
+    }
+
+    const seenJointIds = new Set<string>()
+
+    for (const [bindingIndex, binding] of control.joints.entries()) {
+      const bindingPath = `/controls/${controlIndex}/joints/${bindingIndex}`
+      const joint = jointsById.get(binding.jointId)
+
+      if (seenJointIds.has(binding.jointId)) {
+        signals.push(
+          createValidationSignal(
+            'model_validity',
+            'control_duplicate_joint',
+            `Control "${control.id}" binds joint "${binding.jointId}" more than once.`,
+            {
+              path: bindingPath,
+              refs: { controlId: control.id, jointId: binding.jointId },
+              stage: 'structure',
+            },
+          ),
+        )
+      }
+
+      seenJointIds.add(binding.jointId)
+
+      if (!joint) {
+        signals.push(
+          createValidationSignal(
+            'model_validity',
+            'control_missing_joint',
+            `Control "${control.id}" references missing joint "${binding.jointId}".`,
+            {
+              path: `${bindingPath}/jointId`,
+              refs: { controlId: control.id, jointId: binding.jointId },
+              stage: 'structure',
+            },
+          ),
+        )
+        continue
+      }
+
+      if (joint.type === 'fixed') {
+        signals.push(
+          createValidationSignal(
+            'model_validity',
+            'control_fixed_joint',
+            `Control "${control.id}" references fixed joint "${binding.jointId}".`,
+            {
+              path: `${bindingPath}/jointId`,
+              refs: { controlId: control.id, jointId: binding.jointId },
+              stage: 'structure',
+            },
+          ),
+        )
+      }
     }
   }
 

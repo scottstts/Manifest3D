@@ -230,6 +230,33 @@ const jointSchema = {
   ],
 }
 
+const jointControlBindingSchema = objectSchema(
+  {
+    jointId: stringSchema('Existing movable joint id controlled by this dial.'),
+    scale: numberSchema(
+      'Multiplier from dial value to joint value; use 1 for same direction and -1 for mirrored motion.',
+    ),
+    offset: numberSchema('Offset added after scale; use 0 unless a joint needs a phase shift.'),
+  },
+  ['jointId', 'scale', 'offset'],
+)
+
+const jointControlSchema = objectSchema(
+  {
+    id: stringSchema('Stable control id.'),
+    name: stringSchema('Human-readable control dial name.'),
+    joints: arraySchema(jointControlBindingSchema, { minItems: 1 }),
+    limits: objectSchema(
+      {
+        lower: numberSchema('Lower dial value.'),
+        upper: numberSchema('Upper dial value.'),
+      },
+      ['lower', 'upper'],
+    ),
+  },
+  ['id', 'name', 'joints', 'limits'],
+)
+
 const poseSpecSchema = objectSchema(
   {
     name: stringSchema('Short pose name, for example open or extended.'),
@@ -396,6 +423,7 @@ export const manifestAssetResponseJsonSchema = objectSchema(
     },
     parts: arraySchema(partSchema, { minItems: 1 }),
     joints: arraySchema(jointSchema),
+    controls: arraySchema(jointControlSchema),
     materials: arraySchema(materialSchema, { minItems: 1 }),
     checks: arraySchema(checkSchema),
     allowances: arraySchema(allowanceSchema),
@@ -420,6 +448,7 @@ export const manifestAssetResponseJsonSchema = objectSchema(
     'units',
     'parts',
     'joints',
+    'controls',
     'materials',
     'checks',
     'allowances',

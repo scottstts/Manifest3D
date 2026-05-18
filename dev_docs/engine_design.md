@@ -11,9 +11,10 @@ Stable ids are the contract surface:
 - parts: `partId`
 - visuals: `visualId`
 - joints: `jointId`
+- controls: `controlId`
 - materials: `materialId`
 
-Names remain display labels. Checks and allowances should reference ids so repairs do not accidentally break exact relationships by renaming visible text.
+Names remain display labels. Checks, controls, and allowances should reference ids so repairs do not accidentally break exact relationships or UI articulation controls by renaming visible text.
 
 ## Joint-Driven Assembly
 
@@ -22,7 +23,7 @@ Names remain display labels. Checks and allowances should reference ids so repai
 - exactly one part has no parent joint and becomes the root
 - every non-root part is attached through one parent joint
 - `fixed` joints are the correct way to describe rigid mounts
-- movable joints currently establish the rest hierarchy; pose preview is a later phase
+- movable joints establish the rest hierarchy and can be scrubbed through runtime preview controls
 
 Visual transforms are local to their owning part. Joint origins are treated as rest transforms from the parent part to the child part's local frame.
 

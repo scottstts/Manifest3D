@@ -11,10 +11,11 @@ Return one object with this shape:
   "units": "meters",
   "parts": [],
   "joints": [],
+  "controls": [],
   "materials": [],
   "checks": [],
   "allowances": [],
-    "metadata": {
+  "metadata": {
     "createdAt": "ISO-8601 datetime",
     "updatedAt": "ISO-8601 datetime",
     "sourceImageIds": [],
@@ -45,6 +46,15 @@ Joints are the assembly source of truth:
 - `revolute`: nonzero axis plus lower and upper limits.
 - `prismatic`: nonzero axis plus lower and upper limits.
 - `continuous`: nonzero axis, positive effort and velocity, no lower or upper limits.
+
+Controls define the preview dials exposed by the app:
+
+- Use `controls: []` for static assets or when each movable joint can use its own fallback dial.
+- Add a control when one UI dial should drive one or more movable joints.
+- Each control has `{ "id", "name", "joints", "limits" }`.
+- Each control joint binding has `{ "jointId", "scale", "offset" }` and maps dial value to joint value as `offset + scale * dialValue`.
+- Use one grouped control for linked motion such as four spinning wheels or paired steering knuckles; use separate controls when mechanisms should move independently, such as two separate window hinges.
+- Use `scale: -1` for mirrored motion and `offset` only for intentional phase shifts.
 
 Authored checks should prove prompt-critical exact relationships:
 

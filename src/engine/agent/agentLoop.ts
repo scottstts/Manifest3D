@@ -351,8 +351,10 @@ export async function runManifestAgentLoop(
 
 function renderRepairFeedback(attempt: CandidateAttempt) {
   return renderValidationSignals(attempt.report.bundle, {
+    candidateFingerprint: attempt.candidateFingerprint,
     failureStreak: attempt.failureStreak,
     repeated: attempt.repeatedFailure,
+    revision: attempt.revision,
   })
 }
 

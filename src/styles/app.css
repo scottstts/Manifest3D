@@ -787,6 +787,7 @@
   z-index: 5;
   display: grid;
   gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr);
   width: min(330px, calc(100vw - 56px));
   max-height: min(340px, 42svh);
   padding: 12px;
@@ -850,6 +851,7 @@
 .joint-preview-list {
   display: grid;
   gap: 10px;
+  min-height: 0;
   padding: 0 2px 2px;
   margin: 0;
   overflow: auto;

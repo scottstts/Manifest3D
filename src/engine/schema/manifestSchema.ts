@@ -174,6 +174,28 @@ export const manifestJointSchema = z
   })
   .strict()
 
+export const manifestJointControlBindingSchema = z
+  .object({
+    jointId: nonEmptyId,
+    scale: finiteNumber,
+    offset: finiteNumber,
+  })
+  .strict()
+
+export const manifestJointControlSchema = z
+  .object({
+    id: nonEmptyId,
+    name: z.string().trim().min(1),
+    joints: z.array(manifestJointControlBindingSchema).min(1),
+    limits: z
+      .object({
+        lower: finiteNumber,
+        upper: finiteNumber,
+      })
+      .strict(),
+  })
+  .strict()
+
 const manifestAxesSchema = z.enum(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'])
 
 export const manifestPoseSpecSchema = z
@@ -288,6 +310,7 @@ export const manifestAssetSchema = z
     units: z.literal('meters'),
     parts: z.array(manifestPartSchema).min(1),
     joints: z.array(manifestJointSchema),
+    controls: z.array(manifestJointControlSchema).default([]),
     materials: z.array(manifestMaterialSchema).min(1),
     checks: z.array(manifestCheckSchema),
     allowances: z.array(manifestAllowanceSchema),

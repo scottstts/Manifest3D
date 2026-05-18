@@ -47,6 +47,14 @@ export const rendererMockAssets: readonly ManifestAsset[] = [
         type: 'revolute',
       },
     ],
+    controls: [
+      {
+        id: 'box-lid-control',
+        name: 'Lid',
+        joints: [{ jointId: 'box-lid-hinge', offset: 0, scale: 1 }],
+        limits: { lower: 0, upper: 1.7 },
+      },
+    ],
     materials: [
       {
         color: '#8ea4ff',
@@ -116,6 +124,14 @@ export const rendererMockAssets: readonly ManifestAsset[] = [
         origin: { position: [0, 0.08, 0] },
         parentPartId: 'slider-rail',
         type: 'prismatic',
+      },
+    ],
+    controls: [
+      {
+        id: 'slider-control',
+        name: 'Carriage',
+        joints: [{ jointId: 'slider-prismatic', offset: 0, scale: 1 }],
+        limits: { lower: -0.35, upper: 0.35 },
       },
     ],
     materials: [

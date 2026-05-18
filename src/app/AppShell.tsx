@@ -67,11 +67,15 @@ import {
   exportManifestAssetGlb,
 } from '../engine/scene/exportGlb'
 import {
-  getDefaultJointPoseValue,
-  getJointPreviewRange,
-  normalizeJointPoseValue,
+  getDefaultJointControlValue,
+  getJointControlPreviewValue,
+  getJointPreviewControls,
+  normalizeJointControlValue,
+  resolveJointControlPoseValues,
+  type JointPreviewControl,
   type JointPoseValues,
 } from '../engine/geometry/jointPoses'
+import { modelConfig } from '../engine/config/modelConfig'
 
 type ComposeHistoryEntry = {
   instances: readonly SceneAssetInstance[]
@@ -81,8 +85,8 @@ type ComposeHistoryEntry = {
 type JointPreviewByInstance = Record<string, JointPoseValues>
 
 type PlayingJointPreview = {
+  controlId: string
   instanceId: string
-  jointId: string
 }
 
 const composeHistoryLimit = 40
@@ -152,7 +156,7 @@ export function AppShell() {
     playingJointPreview &&
     selectedInstance &&
     playingJointPreview.instanceId === selectedInstance.instanceId
-      ? playingJointPreview.jointId
+      ? playingJointPreview.controlId
       : null
   const exportableCreateAsset =
     sceneSnapshot.activeWorkspace === 'create' &&
@@ -312,21 +316,25 @@ export function AppShell() {
   ])
 
   const handleJointPoseChange = useCallback(
-    (instanceId: string, jointId: string, value: number) => {
+    (instanceId: string, controlId: string, value: number) => {
       const instance = sceneStore.getInstance(instanceId)
-      const joint = instance?.asset.joints.find((candidate) => candidate.id === jointId)
+      const control = instance
+        ? getJointPreviewControls(instance.asset).find(
+            (candidate) => candidate.id === controlId,
+          )
+        : null
 
-      if (!joint) {
+      if (!control) {
         return
       }
 
-      const normalizedValue = normalizeJointPoseValue(joint, value)
+      const poseValues = resolveJointControlPoseValues(control, value)
 
       setJointPreviewByInstance((currentPreview) => ({
         ...currentPreview,
         [instanceId]: {
           ...(currentPreview[instanceId] ?? {}),
-          [jointId]: normalizedValue,
+          ...poseValues,
         },
       }))
     },
@@ -334,19 +342,28 @@ export function AppShell() {
   )
 
   const handleJointReset = useCallback(
-    (instanceId: string, jointId: string) => {
+    (instanceId: string, controlId: string) => {
       const instance = sceneStore.getInstance(instanceId)
-      const joint = instance?.asset.joints.find((candidate) => candidate.id === jointId)
+      const control = instance
+        ? getJointPreviewControls(instance.asset).find(
+            (candidate) => candidate.id === controlId,
+          )
+        : null
 
-      if (!joint) {
+      if (!control) {
         return
       }
+
+      const poseValues = resolveJointControlPoseValues(
+        control,
+        getDefaultJointControlValue(control),
+      )
 
       setJointPreviewByInstance((currentPreview) => ({
         ...currentPreview,
         [instanceId]: {
           ...(currentPreview[instanceId] ?? {}),
-          [jointId]: getDefaultJointPoseValue(joint),
+          ...poseValues,
         },
       }))
     },
@@ -366,12 +383,12 @@ export function AppShell() {
   }, [])
 
   const handleJointTogglePlayback = useCallback(
-    (instanceId: string, jointId: string) => {
+    (instanceId: string, controlId: string) => {
       setPlayingJointPreview((currentPlaying) =>
         currentPlaying?.instanceId === instanceId &&
-        currentPlaying.jointId === jointId
+        currentPlaying.controlId === controlId
           ? null
-          : { instanceId, jointId },
+          : { controlId, instanceId },
       )
     },
     [],
@@ -407,6 +424,12 @@ export function AppShell() {
         : 'Creating asset'
       const assistantMessageId = `${runId}:assistant`
       const abortController = new AbortController()
+      let didTimeOut = false
+      const runTimeout = window.setTimeout(() => {
+        didTimeOut = true
+        abortController.abort()
+        setAgentStatus(formatAgentRunTimeoutStatus(modelConfig.agentRunTimeoutMs))
+      }, modelConfig.agentRunTimeoutMs)
 
       if (mode === 'create') {
         sceneStore.clearCreateAsset()
@@ -482,10 +505,14 @@ export function AppShell() {
           setCandidateTimelineItems(createCandidateHistoryTimeline(result.history))
 
           if (result.status !== 'ready') {
-            setAgentStatus(result.message)
+            const statusMessage = didTimeOut
+              ? formatAgentRunTimeoutStatus(modelConfig.agentRunTimeoutMs)
+              : result.message
+
+            setAgentStatus(statusMessage)
             setChatTranscriptItems((currentItems) =>
               updateAgentTranscriptItem(currentItems, assistantMessageId, {
-                status: result.message,
+                status: statusMessage,
                 timelineItems: resultTimelineItems,
               }),
             )
@@ -525,6 +552,8 @@ export function AppShell() {
           )
         })
         .finally(() => {
+          window.clearTimeout(runTimeout)
+
           if (agentRunAbortControllerRef.current === abortController) {
             agentRunAbortControllerRef.current = null
           }
@@ -869,16 +898,18 @@ export function AppShell() {
     }
 
     const instance = sceneStore.getInstance(playingJointPreview.instanceId)
-    const joint = instance?.asset.joints.find(
-      (candidate) => candidate.id === playingJointPreview.jointId,
-    )
+    const control = instance
+      ? getJointPreviewControls(instance.asset).find(
+          (candidate) => candidate.id === playingJointPreview.controlId,
+        )
+      : null
 
-    if (!instance || !joint || joint.type === 'fixed') {
+    if (!instance || !control) {
       return undefined
     }
 
     const activeInstance = instance
-    const activeJoint = joint
+    const activeControl = control
     let animationFrame = 0
     let previousTime = performance.now()
 
@@ -889,17 +920,17 @@ export function AppShell() {
 
       previousTime = time
       setJointPreviewByInstance((currentPreview) => {
-        const range = getJointPreviewRange(activeJoint)
-        const currentValue = normalizeJointPoseValue(
-          activeJoint,
-          currentPreview[activeInstance.instanceId]?.[activeJoint.id],
+        const range = activeControl.range
+        const currentValue = getJointControlPreviewValue(
+          activeControl,
+          currentPreview[activeInstance.instanceId] ?? {},
         )
-        const speed = getJointAnimationSpeed(activeJoint.type, range.max - range.min)
+        const speed = getJointAnimationSpeed(range.unit, range.max - range.min)
         let nextValue =
           currentValue + speed * deltaSeconds * jointAnimationDirectionRef.current
 
-        if (activeJoint.type === 'continuous') {
-          nextValue = normalizeJointPoseValue(activeJoint, nextValue)
+        if (activeControl.wrap) {
+          nextValue = normalizeJointControlValue(activeControl, nextValue)
         } else if (nextValue >= range.max) {
           nextValue = range.max
           jointAnimationDirectionRef.current = -1
@@ -908,11 +939,13 @@ export function AppShell() {
           jointAnimationDirectionRef.current = 1
         }
 
+        const poseValues = resolveJointControlPoseValues(activeControl, nextValue)
+
         return {
           ...currentPreview,
           [activeInstance.instanceId]: {
             ...(currentPreview[activeInstance.instanceId] ?? {}),
-            [activeJoint.id]: nextValue,
+            ...poseValues,
           },
         }
       })
@@ -1209,12 +1242,16 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
   )
 }
 
-function getJointAnimationSpeed(jointType: string, rangeSpan: number) {
-  if (jointType === 'prismatic') {
+function getJointAnimationSpeed(unit: JointPreviewControl['range']['unit'], rangeSpan: number) {
+  if (unit === 'meters') {
     return Math.max(0.08, Math.abs(rangeSpan) / 2)
   }
 
   return Math.PI / 2
+}
+
+function formatAgentRunTimeoutStatus(timeoutMs: number) {
+  return `Agent run timed out after ${Math.round(timeoutMs / 60_000)} minutes.`
 }
 
 function formatAttemptContext(version: AssetLibraryVersion) {

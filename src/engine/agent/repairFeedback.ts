@@ -5,8 +5,10 @@ import type {
 } from '../schema/validationTypes'
 
 export type RenderValidationFeedbackOptions = {
+  candidateFingerprint?: string
   failureStreak?: number
   repeated?: boolean
+  revision?: number
 }
 
 const stagePriority: Record<ValidationStage, number> = {
@@ -57,6 +59,11 @@ export function renderValidationSignals(
     repeated,
   })
   const parts = ['<validation_signals>', '<summary>', summary, '</summary>']
+  const repairContext = renderRepairContext(options)
+
+  if (repairContext) {
+    parts.push('', '<repair_context>', repairContext, '</repair_context>')
+  }
 
   if (failures.length > 0) {
     parts.push(
@@ -130,6 +137,22 @@ function renderSummary(
   }
 
   return lines.join('\n')
+}
+
+function renderRepairContext(options: RenderValidationFeedbackOptions) {
+  const lines = [
+    options.revision !== undefined
+      ? `candidateRevision=${options.revision}`
+      : null,
+    options.candidateFingerprint
+      ? `candidateFingerprint=${options.candidateFingerprint}`
+      : null,
+    '- The validation signals correspond to this exact candidate revision; any candidate change requires fresh validation before it can be accepted.',
+    '- Return one complete replacement asset JSON, but keep the edit focused on the failed contract and preserve unrelated stable ids.',
+    '- Use the compact candidate JSON as the current source of truth; do not infer stale geometry from earlier attempts.',
+  ].filter((line): line is string => Boolean(line))
+
+  return lines.length > 0 ? lines.join('\n') : null
 }
 
 function renderSignalSection(
@@ -339,7 +362,7 @@ function responseRulesForFailures(
     rules = [
       '- Fix ids, references, roots, cycles, and joint semantics before tuning local geometry.',
       '- Keep the joint graph as the assembly source of truth: exactly one root part and one parent joint for every non-root part.',
-      '- Preserve stable part, visual, joint, and material ids unless you also update every dependent check and allowance.',
+      '- Preserve stable part, visual, joint, control, and material ids unless you also update every dependent check and allowance.',
     ]
   } else if (primary.stage === 'build' || primary.kind === 'compile_runtime') {
     rules = [

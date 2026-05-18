@@ -66,6 +66,14 @@ export function createValidValidationFixtureAsset(): ManifestAsset {
         type: 'revolute',
       },
     ],
+    controls: [
+      {
+        id: 'crate-lid-control',
+        name: 'Lid',
+        joints: [{ jointId: 'crate-lid-hinge', offset: 0, scale: 1 }],
+        limits: { lower: -1.9, upper: 0 },
+      },
+    ],
     materials: [
       {
         color: '#a8a0ff',

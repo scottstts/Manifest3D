@@ -28,12 +28,12 @@ Do not port Articraft's Python/tool instructions into these prompts. Manifest3D 
 - mode-specific create, edit, or repair instructions
 - current scene summary
 - selected asset JSON for edit mode
-- candidate JSON for repair mode
+- compact/minified candidate JSON for repair mode
 - image attachment metadata
 - prior validation feedback
 - compact examples
 
-Edit mode requires a selected asset and returns the full revised asset JSON, not a patch. Repair mode includes the failed candidate and `<validation_signals>` feedback.
+Edit mode requires a selected asset and returns the full revised asset JSON, not a patch. Repair mode includes the failed candidate and `<validation_signals>` feedback. The failed candidate is still complete, but it is minified in repair turns because real headless runs showed pretty-printed candidate JSON was the dominant context cost after signal compaction.
 
 ## Candidate History And Freshness
 
@@ -56,6 +56,7 @@ Fingerprints use stable serialization so object key order does not change candid
 ```text
 <validation_signals>
 <summary>...</summary>
+<repair_context>...</repair_context>
 <failures>...</failures>
 <warnings>...</warnings>
 <notes>...</notes>
@@ -79,6 +80,8 @@ This keeps the model from tuning local geometry before JSON shape, ids, refs, ro
 Repair rules are chosen from the primary failure kind. Schema failures tell the model to fix JSON first. Structural failures emphasize stable ids, refs, roots, and joint graph validity. Floating and overlap failures require either a physical fix or scoped allowances with concrete reasons. Missing exact geometry is treated as a stable-id contract failure.
 
 Repeated failures and failure streaks are included in the feedback summary so Phase 5 can feed them back into repair turns.
+
+Repair feedback also injects the candidate revision and fingerprint. This mirrors the Articraft freshness invariant: the validation evidence belongs to exactly one candidate revision, any mutation requires fresh validation, and the model should make the smallest focused repair while preserving unrelated stable ids.
 
 ## Timeline Projection
 

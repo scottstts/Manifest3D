@@ -158,4 +158,29 @@ describe('renderValidationSignals', () => {
     )
     expect(rendered).toContain('Repair the repeated pattern globally')
   })
+
+  it('injects revision freshness guidance into repair feedback', () => {
+    const bundle: ValidationSignalBundle = {
+      signals: [
+        createValidationSignal(
+          'model_validity',
+          'missing_material_reference',
+          'Visual references a missing material.',
+          { stage: 'structure' },
+        ),
+      ],
+      status: 'failure',
+      summary: 'status=failure failures=1 warnings=0 notes=0',
+    }
+
+    const rendered = renderValidationSignals(bundle, {
+      candidateFingerprint: 'fnv1a:test',
+      revision: 2,
+    })
+
+    expect(rendered).toContain('<repair_context>')
+    expect(rendered).toContain('candidateRevision=2')
+    expect(rendered).toContain('candidateFingerprint=fnv1a:test')
+    expect(rendered).toContain('requires fresh validation')
+  })
 })

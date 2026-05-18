@@ -12,5 +12,6 @@ Requirements:
 - Model the object's real construction logic. Use visible walls, rims, lips, rails, bosses, shafts, brackets, panels, and controls instead of one generic placeholder mass.
 - Use real-world dimensions and plausible materials.
 - If the prompt describes a primary mechanism or visible control, represent it as a separate part with an appropriate joint and realistic limits.
+- Add manifest `controls` for mechanical assets: group joints under one control when they should move together, and leave independent joints as separate controls or fallback joint dials.
 - For primary mechanisms, include at least one pose-specific authored check with `check.pose` so validation can inspect the open, extended, rotated, or retained state.
 - Do not duplicate baseline QC as checks. Use authored checks for exact prompt-critical relationships only.

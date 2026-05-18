@@ -10,9 +10,10 @@ The difference is how the existing joint fields are used:
 
 - static assets use `fixed` joints to assemble a rigid part tree
 - articulated assets use `revolute`, `prismatic`, or `continuous` joints with axis and limit data
+- `controls` may group one or more movable joints under a single preview dial
 - pose-specific authored checks may add `check.pose` when a mechanism needs validation away from rest pose
 
-This keeps the renderer, validator, export path, and repair loop on one contract surface. A static chair and a hinged box are both Manifest3D assets; the hinged box simply has movable joints and pose-aware checks.
+This keeps the renderer, validator, export path, and repair loop on one contract surface. A static chair and a hinged box are both Manifest3D assets; the hinged box simply has movable joints, optional control grouping, and pose-aware checks.
 
 ## Joint Pose Semantics
 
@@ -24,6 +25,7 @@ This keeps the renderer, validator, export path, and repair loop on one contract
 - normalized joint axes
 - applying revolute, prismatic, and continuous pose transforms
 - generated sampled poses for validation
+- manifest-level preview controls and fallback per-joint controls
 
 The asset builder now accepts optional `jointPoses`. This keeps rest-pose building as the default path while allowing validation and preview to build or update the same hierarchy at specific poses.
 
@@ -42,7 +44,7 @@ This means:
 - export still uses the canonical asset unless a future phase explicitly adds pose export
 - resetting the preview simply removes per-instance pose state
 
-The preview panel appears only for selected instances that have movable joints. Limited revolute/prismatic joints ping-pong during playback; continuous joints wrap through a full turn.
+The preview panel appears only for selected instances that have movable joints. If the asset declares `controls`, those controls define the dials; uncovered movable joints still get fallback individual dials. This supports linked controls such as all wheel-spin joints under one dial while keeping independent hinges separate. Limited revolute/prismatic controls ping-pong during playback; continuous controls wrap through a full turn.
 
 ## Demand-Driven Rendering
 
@@ -111,7 +113,7 @@ Timeline copy also distinguishes sampled-pose failures from rest-pose validation
 
 Prompt docs now ask the model to include pose-specific checks for primary mechanisms: lids, drawers, wheels, hinges, sleeves, retainers, handles, and controls.
 
-This is a prompt-quality requirement, not a new schema mode. If the prompt asks for a static object, the model should not invent pose checks. If the prompt asks for a mechanism, the model should express the mechanism with movable joints and targeted pose checks.
+This is a prompt-quality requirement, not a new schema mode. If the prompt asks for a static object, the model should not invent pose checks or controls. If the prompt asks for a mechanism, the model should express the mechanism with movable joints, appropriate control grouping, and targeted pose checks.
 
 ## Tests
 
@@ -121,6 +123,7 @@ Phase 7 added coverage for:
 - pose-specific authored checks running in `sampled_poses`
 - generated sampled-pose overlaps being reported separately from rest-pose overlaps
 - validation timeline/stage ordering including sampled poses
+- grouped preview controls and per-joint fallback controls
 - OpenAI strict structured-output compatibility for the response schema
 
 The strict structured-output test is important because OpenAI can reject an invalid response schema before any candidate is generated. That failure does not exercise normal candidate parsing or validation, so it needs its own contract guard.
@@ -134,6 +137,5 @@ The system does not yet provide:
 - mesh-level collision/contact
 - persisted preview poses
 - export of a chosen animated pose
-- multi-joint coordinated animation beyond sampled values and per-joint preview
 
 Those are future extensions. The Phase 7 boundary is deterministic articulation preview plus sampled-pose validation inside the existing Manifest3D pipeline.

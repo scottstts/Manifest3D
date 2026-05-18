@@ -66,7 +66,12 @@ export function compileManifestPrompt(
         )
       : '',
     input.candidateJson
-      ? tag('candidate_json', stringifyJson(input.candidateJson))
+      ? tag(
+          'candidate_json',
+          stringifyJson(input.candidateJson, {
+            pretty: input.mode !== 'repair',
+          }),
+        )
       : '',
     tag(
       'image_attachments',
@@ -138,8 +143,13 @@ function normalizeUserPrompt(userPrompt: string) {
   return trimmed.length > 0 ? trimmed : '(empty user prompt)'
 }
 
-function stringifyJson(value: unknown) {
-  return JSON.stringify(value, null, 2)
+function stringifyJson(
+  value: unknown,
+  options: {
+    pretty?: boolean
+  } = {},
+) {
+  return JSON.stringify(value, null, options.pretty === false ? 0 : 2)
 }
 
 function tag(name: string, content: string) {

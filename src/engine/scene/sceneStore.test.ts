@@ -162,6 +162,7 @@ function createTestAsset(assetId = 'test-asset'): ManifestAsset {
       },
     ],
     joints: [],
+    controls: [],
     materials: [
       {
         color: '#ffffff',

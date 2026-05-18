@@ -30,6 +30,16 @@ describe('manifestSchema', () => {
 
     expect(safeParseManifestScene(invalidScene).success).toBe(false)
   })
+
+  it('defaults missing controls to preserve existing saved assets', () => {
+    const legacyScene = createValidScene() as unknown as {
+      assets: Array<Record<string, unknown>>
+    }
+
+    delete legacyScene.assets[0].controls
+
+    expect(parseManifestScene(legacyScene).assets[0].controls).toEqual([])
+  })
 })
 
 function createValidScene(): ManifestScene {
@@ -64,6 +74,7 @@ function createValidScene(): ManifestScene {
           },
         ],
         joints: [],
+        controls: [],
         materials: [
           {
             color: '#88aaff',

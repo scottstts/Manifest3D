@@ -1,8 +1,7 @@
 import { Pause, Play, RotateCcw } from 'lucide-react'
 import {
-  getJointPreviewRange,
-  getMovableJoints,
-  normalizeJointPoseValue,
+  getJointControlPreviewValue,
+  getJointPreviewControls,
   type JointPoseValues,
 } from '../engine/geometry/jointPoses'
 import type { SceneAssetInstance } from '../engine/scene/sceneStore'
@@ -14,12 +13,12 @@ type JointPreviewPanelProps = {
   rightOffset: number
   onJointPoseChange: (
     instanceId: string,
-    jointId: string,
+    controlId: string,
     value: number,
   ) => void
-  onJointReset: (instanceId: string, jointId: string) => void
+  onJointReset: (instanceId: string, controlId: string) => void
   onResetAll: (instanceId: string) => void
-  onTogglePlayback: (instanceId: string, jointId: string) => void
+  onTogglePlayback: (instanceId: string, controlId: string) => void
 }
 
 export function JointPreviewPanel({
@@ -36,9 +35,9 @@ export function JointPreviewPanel({
     return null
   }
 
-  const movableJoints = getMovableJoints(instance.asset)
+  const controls = getJointPreviewControls(instance.asset)
 
-  if (movableJoints.length === 0) {
+  if (controls.length === 0) {
     return null
   }
 
@@ -60,28 +59,28 @@ export function JointPreviewPanel({
         </button>
       </div>
       <ol className="joint-preview-list">
-        {movableJoints.map((joint) => {
-          const range = getJointPreviewRange(joint)
-          const value = normalizeJointPoseValue(joint, jointPoses[joint.id])
-          const isPlaying = playingJointId === joint.id
+        {controls.map((control) => {
+          const range = control.range
+          const value = getJointControlPreviewValue(control, jointPoses)
+          const isPlaying = playingJointId === control.id
 
           return (
-            <li key={joint.id}>
+            <li key={control.id}>
               <div className="joint-preview-list__label">
-                <span>{joint.name}</span>
+                <span>{control.name}</span>
                 <small>{formatJointValue(value, range.unit)}</small>
               </div>
               <div className="joint-preview-list__controls">
                 <button
-                  aria-label={`${isPlaying ? 'Pause' : 'Play'} ${joint.name}`}
+                  aria-label={`${isPlaying ? 'Pause' : 'Play'} ${control.name}`}
                   title={isPlaying ? 'Pause' : 'Play'}
                   type="button"
-                  onClick={() => onTogglePlayback(instance.instanceId, joint.id)}
+                  onClick={() => onTogglePlayback(instance.instanceId, control.id)}
                 >
                   {isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                 </button>
                 <input
-                  aria-label={`${joint.name} preview value`}
+                  aria-label={`${control.name} preview value`}
                   max={range.max}
                   min={range.min}
                   step={range.step}
@@ -90,16 +89,16 @@ export function JointPreviewPanel({
                   onChange={(event) =>
                     onJointPoseChange(
                       instance.instanceId,
-                      joint.id,
+                      control.id,
                       Number(event.currentTarget.value),
                     )
                   }
                 />
                 <button
-                  aria-label={`Reset ${joint.name}`}
+                  aria-label={`Reset ${control.name}`}
                   title="Reset"
                   type="button"
-                  onClick={() => onJointReset(instance.instanceId, joint.id)}
+                  onClick={() => onJointReset(instance.instanceId, control.id)}
                 >
                   <RotateCcw aria-hidden="true" />
                 </button>
