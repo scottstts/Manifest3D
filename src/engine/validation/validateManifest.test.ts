@@ -217,6 +217,37 @@ describe('validateManifestAssetCandidate', () => {
     )
   })
 
+  it('rejects allowances that reference missing or mismatched ids', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.allowances = [
+      {
+        partAId: 'crate-base',
+        partBId: 'missing-lid',
+        reason: 'This allowance intentionally references a missing part.',
+        type: 'allow_overlap',
+        visualAId: 'crate-lid-panel',
+        visualBId: 'missing-visual',
+      },
+      {
+        partId: 'missing-fastener',
+        reason: 'This isolation allowance intentionally references a missing part.',
+        type: 'allow_isolated_part',
+      },
+    ]
+
+    const result = validateManifestAssetCandidate(asset)
+    const signalCodes = result.report.bundle.signals.map((signal) => signal.code)
+
+    expect(result.report.valid).toBe(false)
+    expect(signalCodes).toContain('allowance_missing_part')
+    expect(signalCodes).toContain('allowance_missing_visual')
+    expect(signalCodes).toContain('allowance_visual_wrong_part')
+    expect(
+      result.report.steps.find((step) => step.stage === 'build')?.status,
+    ).toBe('skipped')
+  })
+
   it('flags physically disconnected part groups', () => {
     const asset = createValidValidationFixtureAsset()
 
@@ -237,6 +268,28 @@ describe('validateManifestAssetCandidate', () => {
           refs: expect.objectContaining({
             partId: 'crate-lid',
           }),
+        }),
+      ]),
+    )
+  })
+
+  it('warns when a joint origin is close to only one connected part', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts[1].visuals[0] = {
+      ...asset.parts[1].visuals[0],
+      transform: {
+        position: [0, 0.04, 0.7],
+      },
+    }
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'joint_origin_far_from_geometry',
+          severity: 'warning',
         }),
       ]),
     )

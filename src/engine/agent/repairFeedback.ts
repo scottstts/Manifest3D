@@ -34,6 +34,11 @@ const kindPriority: Record<string, number> = {
   authored_check: 10,
 }
 
+const maxRenderedFailures = 32
+const maxRenderedWarnings = 16
+const maxRenderedNotes = 16
+const maxRenderedSignalsPerGroup = 2
+
 export function renderValidationSignals(
   bundle: ValidationSignalBundle,
   options: RenderValidationFeedbackOptions = {},
@@ -57,7 +62,9 @@ export function renderValidationSignals(
     parts.push(
       '',
       '<failures>',
-      renderSignalSection('Failures (blocking):', failures),
+      renderSignalSection('Failures (blocking):', failures, {
+        maxSignals: maxRenderedFailures,
+      }),
       '</failures>',
     )
   }
@@ -66,7 +73,9 @@ export function renderValidationSignals(
     parts.push(
       '',
       '<warnings>',
-      renderSignalSection('Warnings (non-blocking):', warnings),
+      renderSignalSection('Warnings (non-blocking):', warnings, {
+        maxSignals: maxRenderedWarnings,
+      }),
       '</warnings>',
     )
   }
@@ -75,7 +84,9 @@ export function renderValidationSignals(
     parts.push(
       '',
       '<notes>',
-      renderSignalSection('Notes (informational):', notes),
+      renderSignalSection('Notes (informational):', notes, {
+        maxSignals: maxRenderedNotes,
+      }),
       '</notes>',
     )
   }
@@ -124,8 +135,18 @@ function renderSummary(
 function renderSignalSection(
   heading: string,
   signals: readonly ValidationSignal[],
+  options: {
+    maxSignals: number
+  },
 ) {
-  return `${heading}\n${signals.map(renderSignalLine).join('\n')}`
+  const compacted = compactSignalSection(signals, options.maxSignals)
+  const renderedLines = compacted.signals.map(renderSignalLine)
+
+  if (compacted.omittedCount > 0) {
+    renderedLines.push(renderOmittedSignalSummary(compacted))
+  }
+
+  return `${heading}\n${renderedLines.join('\n')}`
 }
 
 function renderSignalLine(signal: ValidationSignal) {
@@ -169,6 +190,93 @@ function orderFailureSignals(signals: readonly ValidationSignal[]) {
 
     return left.code.localeCompare(right.code)
   })
+}
+
+function compactSignalSection(
+  signals: readonly ValidationSignal[],
+  maxSignals: number,
+) {
+  const groupCounts = new Map<string, number>()
+  const groupLabels = new Map<string, string>()
+  const renderedGroupCounts = new Map<string, number>()
+  const compactedSignals: ValidationSignal[] = []
+  let omittedCount = 0
+
+  for (const signal of signals) {
+    const key = compactSignalKey(signal)
+
+    groupCounts.set(key, (groupCounts.get(key) ?? 0) + 1)
+    groupLabels.set(key, compactSignalLabel(signal))
+  }
+
+  for (const signal of signals) {
+    const key = compactSignalKey(signal)
+    const renderedGroupCount = renderedGroupCounts.get(key) ?? 0
+    const canRender =
+      compactedSignals.length < maxSignals &&
+      renderedGroupCount < maxRenderedSignalsPerGroup
+
+    if (!canRender) {
+      omittedCount += 1
+      continue
+    }
+
+    compactedSignals.push(signal)
+    renderedGroupCounts.set(key, renderedGroupCount + 1)
+  }
+
+  const omittedGroups = [...groupCounts.entries()]
+    .map(([key, count]) => ({
+      count,
+      key,
+      label: groupLabels.get(key) ?? key,
+      omitted: count - (renderedGroupCounts.get(key) ?? 0),
+    }))
+    .filter((group) => group.omitted > 0)
+    .sort((left, right) => right.omitted - left.omitted)
+
+  return {
+    omittedCount,
+    omittedGroups,
+    signals: compactedSignals,
+    totalCount: signals.length,
+  }
+}
+
+function renderOmittedSignalSummary({
+  omittedCount,
+  omittedGroups,
+  totalCount,
+}: ReturnType<typeof compactSignalSection>) {
+  const groups = omittedGroups
+    .slice(0, 8)
+    .map((group) => `${group.label} x${group.omitted}`)
+    .join('; ')
+  const suffix = omittedGroups.length > 8
+    ? `; ${omittedGroups.length - 8} more groups`
+    : ''
+
+  return [
+    `- Omitted ${omittedCount} of ${totalCount} similar signals to keep repair feedback compact.`,
+    groups ? `  omittedGroups=${groups}${suffix}` : null,
+    '  Repair the repeated pattern globally; the listed signals are representative examples with concrete refs.',
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n')
+}
+
+function compactSignalKey(signal: ValidationSignal) {
+  return [
+    signal.severity,
+    signal.stage,
+    signal.kind,
+    signal.code,
+    signal.summary,
+  ].join('|')
+}
+
+function compactSignalLabel(signal: ValidationSignal) {
+  return `[${signal.stage}/${signal.code}] ${signal.summary}`
 }
 
 function dedupeSignals(signals: readonly ValidationSignal[]) {

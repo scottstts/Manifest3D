@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
+import { parseManifestAsset } from '../schema/manifestSchema'
 import type { ManifestScene } from '../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
+import examplesPrompt from './prompts/examples.md?raw'
 
 const emptyScene: ManifestScene = {
   assets: [],
@@ -94,4 +96,26 @@ describe('compileManifestPrompt', () => {
     expect(compiled.user).toContain('<validation_feedback>')
     expect(compiled.user).toContain('<validation_signals>')
   })
+
+  it('keeps the compact example parseable as Contract V2 JSON', () => {
+    const exampleJson = extractFirstJsonCodeBlock(examplesPrompt)
+
+    expect(parseManifestAsset(JSON.parse(exampleJson))).toMatchObject({
+      id: 'example-hinged-box',
+      metadata: {
+        generationStatus: 'ready',
+      },
+      schemaVersion: 2,
+    })
+  })
 })
+
+function extractFirstJsonCodeBlock(markdown: string) {
+  const match = markdown.match(/```json\s*([\s\S]*?)```/)
+
+  if (!match) {
+    throw new Error('Expected examples prompt to contain a JSON code block.')
+  }
+
+  return match[1]
+}

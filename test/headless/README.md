@@ -26,9 +26,12 @@ HEADLESS_AGENT_PROMPT='a hinged toolbox with opening lid' npm run test:headless
 HEADLESS_AGENT_EXPECT_READY=0 npm run test:headless
 HEADLESS_AGENT_MAX_REPAIR_TURNS=6 npm run test:headless
 HEADLESS_AGENT_RUN_TIMEOUT_MS=900000 npm run test:headless
+HEADLESS_AGENT_FETCH_TIMEOUT_MS=930000 npm run test:headless
 HEADLESS_AGENT_ARTIFACT_DIR=/tmp/manifest3d-headless npm run test:headless
 ```
 
 `HEADLESS_AGENT_RUN_TIMEOUT_MS` aborts the agent run through the same signal path
 used by the UI. `HEADLESS_AGENT_TIMEOUT_MS` controls the outer Vitest timeout
 and defaults to one minute longer than the agent-run timeout.
+`HEADLESS_AGENT_FETCH_TIMEOUT_MS` controls the headless-only HTTPS request
+timeout and defaults to 30 seconds longer than the agent-run timeout.

@@ -15,6 +15,7 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
 
   signals.push(...validateUniqueIds(asset))
   signals.push(...validateRefs(asset))
+  signals.push(...validateAllowanceRefs(asset))
   signals.push(...validateJointTree(asset))
   signals.push(...validateJointSemantics(asset))
 
@@ -154,6 +155,163 @@ function validateRefs(asset: ManifestAsset): ValidationSignal[] {
   }
 
   return signals
+}
+
+function validateAllowanceRefs(asset: ManifestAsset): ValidationSignal[] {
+  const signals: ValidationSignal[] = []
+  const partIds = new Set(asset.parts.map((part) => part.id))
+  const visualPartIds = new Map<string, string>()
+
+  for (const part of asset.parts) {
+    for (const visual of part.visuals) {
+      visualPartIds.set(visual.id, part.id)
+    }
+  }
+
+  for (const [allowanceIndex, allowance] of asset.allowances.entries()) {
+    const allowancePath = `/allowances/${allowanceIndex}`
+
+    switch (allowance.type) {
+      case 'allow_overlap': {
+        if (allowance.partAId === allowance.partBId) {
+          signals.push(
+            createValidationSignal(
+              'model_validity',
+              'allowance_overlap_same_part',
+              `Overlap allowance cannot target the same part "${allowance.partAId}" on both sides.`,
+              {
+                path: allowancePath,
+                refs: { partId: allowance.partAId },
+                stage: 'structure',
+              },
+            ),
+          )
+        }
+
+        if (!partIds.has(allowance.partAId)) {
+          signals.push(
+            createValidationSignal(
+              'model_validity',
+              'allowance_missing_part',
+              `Overlap allowance references missing part "${allowance.partAId}".`,
+              {
+                path: `${allowancePath}/partAId`,
+                refs: { partId: allowance.partAId },
+                stage: 'structure',
+              },
+            ),
+          )
+        }
+
+        if (!partIds.has(allowance.partBId)) {
+          signals.push(
+            createValidationSignal(
+              'model_validity',
+              'allowance_missing_part',
+              `Overlap allowance references missing part "${allowance.partBId}".`,
+              {
+                path: `${allowancePath}/partBId`,
+                refs: { partId: allowance.partBId },
+                stage: 'structure',
+              },
+            ),
+          )
+        }
+
+        if (allowance.visualAId) {
+          signals.push(
+            ...validateAllowanceVisualRef({
+              expectedPartId: allowance.partAId,
+              path: `${allowancePath}/visualAId`,
+              side: 'A',
+              visualId: allowance.visualAId,
+              visualPartIds,
+            }),
+          )
+        }
+
+        if (allowance.visualBId) {
+          signals.push(
+            ...validateAllowanceVisualRef({
+              expectedPartId: allowance.partBId,
+              path: `${allowancePath}/visualBId`,
+              side: 'B',
+              visualId: allowance.visualBId,
+              visualPartIds,
+            }),
+          )
+        }
+
+        break
+      }
+      case 'allow_isolated_part':
+        if (!partIds.has(allowance.partId)) {
+          signals.push(
+            createValidationSignal(
+              'model_validity',
+              'allowance_missing_part',
+              `Isolation allowance references missing part "${allowance.partId}".`,
+              {
+                path: `${allowancePath}/partId`,
+                refs: { partId: allowance.partId },
+                stage: 'structure',
+              },
+            ),
+          )
+        }
+        break
+    }
+  }
+
+  return signals
+}
+
+function validateAllowanceVisualRef({
+  expectedPartId,
+  path,
+  side,
+  visualId,
+  visualPartIds,
+}: {
+  expectedPartId: string
+  path: string
+  side: 'A' | 'B'
+  visualId: string
+  visualPartIds: ReadonlyMap<string, string>
+}) {
+  const actualPartId = visualPartIds.get(visualId)
+
+  if (!actualPartId) {
+    return [
+      createValidationSignal(
+        'model_validity',
+        'allowance_missing_visual',
+        `Overlap allowance side ${side} references missing visual "${visualId}".`,
+        {
+          path,
+          refs: { visualId },
+          stage: 'structure',
+        },
+      ),
+    ]
+  }
+
+  if (actualPartId !== expectedPartId) {
+    return [
+      createValidationSignal(
+        'model_validity',
+        'allowance_visual_wrong_part',
+        `Overlap allowance side ${side} references visual "${visualId}" on part "${actualPartId}", not "${expectedPartId}".`,
+        {
+          path,
+          refs: { expectedPartId, visualId },
+          stage: 'structure',
+        },
+      ),
+    ]
+  }
+
+  return []
 }
 
 function validateJointTree(asset: ManifestAsset): ValidationSignal[] {

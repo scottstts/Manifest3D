@@ -62,6 +62,34 @@ describe('buildOpenAIResponsesRequestBody', () => {
   it('uses strict-compatible object schemas for the response format', () => {
     expect(findStrictRequiredMismatches(manifestAssetResponseJsonSchema)).toEqual([])
   })
+
+  it('constrains generated vectors, geometry arrays, and bounded numbers', () => {
+    const assetSchema = manifestAssetResponseJsonSchema
+    const partSchema = getArrayItem(getProperty(assetSchema, 'parts'))
+    const visualSchema = getArrayItem(getProperty(partSchema, 'visuals'))
+    const geometrySchema = getProperty(visualSchema, 'geometry')
+    const materialSchema = getArrayItem(getProperty(assetSchema, 'materials'))
+    const boxSchema = getAnyOfVariant(geometrySchema, 'box')
+    const boxSizeSchema = getProperty(boxSchema, 'size')
+    const latheSchema = getAnyOfVariant(geometrySchema, 'lathe')
+
+    expect(getProperty(assetSchema, 'parts')).toMatchObject({ minItems: 1 })
+    expect(getProperty(assetSchema, 'materials')).toMatchObject({ minItems: 1 })
+    expect(getProperty(partSchema, 'visuals')).toMatchObject({ minItems: 1 })
+    expect(boxSizeSchema).toMatchObject({
+      maxItems: 3,
+      minItems: 3,
+    })
+    expect(getArrayItem(boxSizeSchema)).toMatchObject({
+      exclusiveMinimum: 0,
+      type: 'number',
+    })
+    expect(getProperty(latheSchema, 'points')).toMatchObject({ minItems: 2 })
+    expect(getProperty(materialSchema, 'opacity')).toMatchObject({
+      maximum: 1,
+      minimum: 0,
+    })
+  })
 })
 
 describe('createOpenAIManifestClient', () => {
@@ -125,6 +153,49 @@ describe('createOpenAIManifestClient', () => {
     })
   })
 })
+
+function getProperty(schema: unknown, key: string) {
+  if (!isRecord(schema) || !isRecord(schema.properties)) {
+    throw new Error(`Schema has no properties for key "${key}".`)
+  }
+
+  const property = schema.properties[key]
+
+  if (!property) {
+    throw new Error(`Missing schema property "${key}".`)
+  }
+
+  return property
+}
+
+function getArrayItem(schema: unknown) {
+  if (!isRecord(schema) || !schema.items) {
+    throw new Error('Schema is not an array schema.')
+  }
+
+  return schema.items
+}
+
+function getAnyOfVariant(schema: unknown, type: string) {
+  if (!isRecord(schema) || !Array.isArray(schema.anyOf)) {
+    throw new Error('Schema has no anyOf variants.')
+  }
+
+  const variant = schema.anyOf.find(
+    (entry) =>
+      isRecord(entry) &&
+      isRecord(entry.properties) &&
+      isRecord(entry.properties.type) &&
+      Array.isArray(entry.properties.type.enum) &&
+      entry.properties.type.enum.includes(type),
+  )
+
+  if (!variant) {
+    throw new Error(`Missing schema variant "${type}".`)
+  }
+
+  return variant
+}
 
 function findStrictRequiredMismatches(
   schema: unknown,

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { request as httpsRequest } from 'node:https'
 import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { runManifestAgentLoop, type AgentLoopEvent } from '../../src/engine/agent/agentLoop'
@@ -24,8 +25,24 @@ type CapturedExchange = {
   }
   index: number
   metadata: AgentRequest['prompt']['metadata']
+  request: {
+    approximateInputTokens: number
+    imageAttachmentCount: number
+    promptChars: {
+      system: number
+      total: number
+      user: number
+    }
+    userSectionChars: Record<string, number>
+  }
   response: {
+    approximateOutputTokens?: number
+    candidateJsonChars?: number
+    completedAt: string
+    durationMs: number
+    rawTextChars?: number
     responseId: string | null
+    startedAt: string
     status: AgentResponse['status']
     statusCode?: number
   }
@@ -49,6 +66,10 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const runId = `headless:${safeTimestamp()}`
       const artifactRoot = createArtifactRoot(runId)
       const runTimeoutMs = readNumberEnv('HEADLESS_AGENT_RUN_TIMEOUT_MS', 540_000)
+      const fetchTimeoutMs = readNumberEnv(
+        'HEADLESS_AGENT_FETCH_TIMEOUT_MS',
+        runTimeoutMs + 30_000,
+      )
       const abortController = new AbortController()
       const runTimeout = setTimeout(() => {
         abortController.abort()
@@ -62,7 +83,9 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const { client, exchanges } = createCapturedClient({
         apiKey,
         artifactRoot,
+        fetchTimeoutMs,
       })
+      const runStartedAt = new Date()
 
       await assetLibraryStore.load()
 
@@ -94,6 +117,9 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
           exchanges,
           prompt,
           runId,
+          runStartedAt,
+          runCompletedAt: new Date(),
+          fetchTimeoutMs,
           runTimeoutMs,
         })
         throw error
@@ -122,6 +148,9 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         prompt,
         result,
         runId,
+        runStartedAt,
+        runCompletedAt: new Date(),
+        fetchTimeoutMs,
         runTimeoutMs,
         savedVersionId,
         scene: sceneStore.getSnapshot().scene,
@@ -144,26 +173,29 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 function createCapturedClient({
   apiKey,
   artifactRoot,
+  fetchTimeoutMs,
 }: {
   apiKey: string
   artifactRoot: string
+  fetchTimeoutMs: number
 }) {
-  const realClient = createOpenAIManifestClient({ apiKey })
+  const realClient = createOpenAIManifestClient({
+    apiKey,
+    fetcher: createHeadlessHttpsFetcher(fetchTimeoutMs),
+  })
   const exchanges: CapturedExchange[] = []
   const client: OpenAIManifestClient = {
     async generateAsset(request) {
       const index = exchanges.length + 1
       const exchangeDir = `exchanges/${String(index).padStart(2, '0')}`
+      const startedAt = new Date()
+      const requestMetrics = createRequestMetrics(request)
       const requestJson = writeJsonArtifact(
         artifactRoot,
         `${exchangeDir}/request.json`,
         {
-          imageAttachmentCount: request.imageAttachments?.length ?? 0,
           metadata: request.prompt.metadata,
-          promptChars: {
-            system: request.prompt.system.length,
-            user: request.prompt.user.length,
-          },
+          ...requestMetrics,
         },
       )
       const systemPrompt = writeTextArtifact(
@@ -177,6 +209,7 @@ function createCapturedClient({
         request.prompt.user,
       )
       const response = await realClient.generateAsset(request)
+      const completedAt = new Date()
       const captured: CapturedExchange = {
         artifacts: {
           requestJson,
@@ -185,8 +218,12 @@ function createCapturedClient({
         },
         index,
         metadata: request.prompt.metadata,
+        request: requestMetrics,
         response: {
+          completedAt: completedAt.toISOString(),
+          durationMs: completedAt.getTime() - startedAt.getTime(),
           responseId: 'responseId' in response ? response.responseId : null,
+          startedAt: startedAt.toISOString(),
           status: response.status,
           ...('statusCode' in response && response.statusCode
             ? { statusCode: response.statusCode }
@@ -195,6 +232,8 @@ function createCapturedClient({
       }
 
       if (response.status === 'ok') {
+        const candidateJson = `${JSON.stringify(response.candidate, null, 2)}\n`
+
         captured.artifacts.rawText = writeTextArtifact(
           artifactRoot,
           `${exchangeDir}/raw-response.json`,
@@ -204,6 +243,11 @@ function createCapturedClient({
           artifactRoot,
           `${exchangeDir}/candidate.json`,
           response.candidate,
+        )
+        captured.response.rawTextChars = response.rawText.length
+        captured.response.candidateJsonChars = candidateJson.length
+        captured.response.approximateOutputTokens = estimateTokensFromChars(
+          response.rawText.length,
         )
       } else {
         captured.artifacts.errorJson = writeJsonArtifact(
@@ -225,6 +269,36 @@ function createCapturedClient({
   }
 }
 
+function createRequestMetrics(request: AgentRequest) {
+  const promptChars = {
+    system: request.prompt.system.length,
+    total: request.prompt.system.length + request.prompt.user.length,
+    user: request.prompt.user.length,
+  }
+
+  return {
+    approximateInputTokens: estimateTokensFromChars(promptChars.total),
+    imageAttachmentCount: request.imageAttachments?.length ?? 0,
+    promptChars,
+    userSectionChars: extractTopLevelTaggedSectionChars(request.prompt.user),
+  }
+}
+
+function extractTopLevelTaggedSectionChars(value: string) {
+  const sectionChars: Record<string, number> = {}
+  const sectionPattern = /^<([a-z_]+)>\n([\s\S]*?)\n<\/\1>$/gm
+
+  for (const match of value.matchAll(sectionPattern)) {
+    sectionChars[match[1]] = match[2].length
+  }
+
+  return sectionChars
+}
+
+function estimateTokensFromChars(chars: number) {
+  return Math.ceil(chars / 4)
+}
+
 function writeHeadlessArtifacts({
   artifactRoot,
   events,
@@ -232,6 +306,9 @@ function writeHeadlessArtifacts({
   prompt,
   result,
   runId,
+  runStartedAt,
+  runCompletedAt,
+  fetchTimeoutMs,
   runTimeoutMs,
   savedVersionId,
   scene,
@@ -243,6 +320,9 @@ function writeHeadlessArtifacts({
   prompt: string
   result: Awaited<ReturnType<typeof runManifestAgentLoop>>
   runId: string
+  runStartedAt: Date
+  runCompletedAt: Date
+  fetchTimeoutMs: number
   runTimeoutMs: number
   savedVersionId: string | null
   scene: ManifestScene
@@ -267,11 +347,17 @@ function writeHeadlessArtifacts({
 
   writeJsonArtifact(artifactRoot, 'summary.json', {
     artifactRoot,
+    attemptCount: result.history.attempts.length,
     createdAt: new Date().toISOString(),
+    exchangeCount: exchanges.length,
     exchanges,
     prompt,
+    runCompletedAt: runCompletedAt.toISOString(),
+    runDurationMs: runCompletedAt.getTime() - runStartedAt.getTime(),
     resultStatus: result.status,
     runId,
+    runStartedAt: runStartedAt.toISOString(),
+    fetchTimeoutMs,
     runTimeoutMs,
     savedVersionId,
     sceneAssetIds: scene.assets.map((asset) => asset.id),
@@ -295,6 +381,9 @@ function writeCrashArtifacts({
   exchanges,
   prompt,
   runId,
+  runStartedAt,
+  runCompletedAt,
+  fetchTimeoutMs,
   runTimeoutMs,
 }: {
   artifactRoot: string
@@ -303,6 +392,9 @@ function writeCrashArtifacts({
   exchanges: readonly CapturedExchange[]
   prompt: string
   runId: string
+  runStartedAt: Date
+  runCompletedAt: Date
+  fetchTimeoutMs: number
   runTimeoutMs: number
 }) {
   writeJsonArtifact(artifactRoot, 'events.json', events)
@@ -310,12 +402,119 @@ function writeCrashArtifacts({
     artifactRoot,
     createdAt: new Date().toISOString(),
     error: error instanceof Error ? error.message : String(error),
+    exchangeCount: exchanges.length,
     exchanges,
     prompt,
     resultStatus: 'crashed',
+    runCompletedAt: runCompletedAt.toISOString(),
+    runDurationMs: runCompletedAt.getTime() - runStartedAt.getTime(),
     runId,
+    runStartedAt: runStartedAt.toISOString(),
+    fetchTimeoutMs,
     runTimeoutMs,
   })
+}
+
+function createHeadlessHttpsFetcher(timeoutMs: number) {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+    new Promise((resolve, reject) => {
+      const url = new URL(String(input))
+      const body = normalizeRequestBody(init?.body)
+      const request = httpsRequest(
+        url,
+        {
+          headers: headersToObject(init?.headers),
+          method: init?.method ?? 'GET',
+        },
+        (response) => {
+          const chunks: Buffer[] = []
+
+          response.on('data', (chunk: Buffer) => {
+            chunks.push(chunk)
+          })
+          response.on('end', () => {
+            resolve(
+              new Response(Buffer.concat(chunks), {
+                headers: responseHeadersToHeaders(response.headers),
+                status: response.statusCode ?? 500,
+                statusText: response.statusMessage,
+              }),
+            )
+          })
+        },
+      )
+
+      request.setTimeout(timeoutMs, () => {
+        request.destroy(new Error(`Headless OpenAI request timed out after ${timeoutMs}ms.`))
+      })
+
+      request.on('error', reject)
+
+      if (init?.signal) {
+        if (init.signal.aborted) {
+          request.destroy(new Error('This operation was aborted'))
+          return
+        }
+
+        init.signal.addEventListener(
+          'abort',
+          () => {
+            request.destroy(new Error('This operation was aborted'))
+          },
+          { once: true },
+        )
+      }
+
+      if (body) {
+        request.write(body)
+      }
+
+      request.end()
+    })
+}
+
+function normalizeRequestBody(body: BodyInit | null | undefined) {
+  if (body === undefined || body === null) {
+    return null
+  }
+
+  if (typeof body === 'string' || Buffer.isBuffer(body)) {
+    return body
+  }
+
+  throw new Error('Headless fetcher only supports string or Buffer request bodies.')
+}
+
+function headersToObject(headers: HeadersInit | undefined) {
+  if (!headers) {
+    return undefined
+  }
+
+  if (headers instanceof Headers) {
+    return Object.fromEntries(headers.entries())
+  }
+
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers)
+  }
+
+  return headers
+}
+
+function responseHeadersToHeaders(headers: import('node:http').IncomingHttpHeaders) {
+  const responseHeaders = new Headers()
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        responseHeaders.append(key, entry)
+      }
+    } else if (value !== undefined) {
+      responseHeaders.set(key, value)
+    }
+  }
+
+  return responseHeaders
 }
 
 function logHeadlessSummary(

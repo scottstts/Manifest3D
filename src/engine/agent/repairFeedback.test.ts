@@ -121,4 +121,41 @@ describe('renderValidationSignals', () => {
     )
     expect(rendered).toContain('Keep the joint graph as the assembly source of truth')
   })
+
+  it('compacts repeated failure groups while preserving representative refs', () => {
+    const repeatedOverlapSignals = Array.from({ length: 40 }, (_, index) =>
+      createValidationSignal(
+        'sampled_pose_overlap',
+        'part_overlap_sampled_pose',
+        'Sampled-pose overlap detected between "front-axle" and "front-wheel-1".',
+        {
+          details: `depth=0.${index} pose=steer-left`,
+          refs: {
+            partAId: 'front-axle',
+            partBId: 'front-wheel-1',
+            visualAId: `axle-visual-${index}`,
+            visualBId: `wheel-visual-${index}`,
+          },
+          source: 'baseline_qc',
+          stage: 'sampled_poses',
+        },
+      ),
+    )
+    const bundle: ValidationSignalBundle = {
+      signals: repeatedOverlapSignals,
+      status: 'failure',
+      summary: 'status=failure failures=40 warnings=0 notes=0',
+    }
+
+    const rendered = renderValidationSignals(bundle)
+
+    expect(rendered).toContain('visualAId=axle-visual-0')
+    expect(rendered).toContain('visualAId=axle-visual-1')
+    expect(rendered).not.toContain('visualAId=axle-visual-2')
+    expect(rendered).toContain('Omitted 38 of 40 similar signals')
+    expect(rendered).toContain(
+      '[sampled_poses/part_overlap_sampled_pose] Sampled-pose overlap detected between "front-axle" and "front-wheel-1". x38',
+    )
+    expect(rendered).toContain('Repair the repeated pattern globally')
+  })
 })

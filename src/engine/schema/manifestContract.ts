@@ -18,9 +18,13 @@ const materialSchema = objectSchema(
     id: stringSchema('Stable material id.'),
     name: stringSchema('Human-readable material name.'),
     color: stringSchema('Hex color, for example #a8a0ff.'),
-    metalness: numberSchema('Number from 0 to 1.'),
-    roughness: numberSchema('Number from 0 to 1.'),
-    opacity: numberSchema('Number from 0 to 1. Use 1 for opaque materials.'),
+    metalness: boundedNumberSchema('Number from 0 to 1.', 0, 1),
+    roughness: boundedNumberSchema('Number from 0 to 1.', 0, 1),
+    opacity: boundedNumberSchema(
+      'Number from 0 to 1. Use 1 for opaque materials.',
+      0,
+      1,
+    ),
   },
   ['id', 'name', 'color', 'metalness', 'roughness', 'opacity'],
 )
@@ -34,67 +38,74 @@ const visualSchema = objectSchema(
         objectSchema(
           {
             type: literalSchema('box'),
-            size: vector3Schema('Box dimensions [width, height, depth].'),
+            size: positiveVector3Schema('Box dimensions [width, height, depth].'),
           },
           ['type', 'size'],
         ),
         objectSchema(
           {
             type: literalSchema('cylinder'),
-            radiusTop: numberSchema('Positive top radius.'),
-            radiusBottom: numberSchema('Positive bottom radius.'),
-            height: numberSchema('Positive height.'),
-            radialSegments: integerSchema('Integer segment count from 3 to 192.'),
+            radiusTop: positiveNumberSchema('Positive top radius.'),
+            radiusBottom: positiveNumberSchema('Positive bottom radius.'),
+            height: positiveNumberSchema('Positive height.'),
+            radialSegments: segmentCountSchema(),
           },
           ['type', 'radiusTop', 'radiusBottom', 'height', 'radialSegments'],
         ),
         objectSchema(
           {
             type: literalSchema('sphere'),
-            radius: numberSchema('Positive radius.'),
-            widthSegments: integerSchema('Integer segment count from 3 to 192.'),
-            heightSegments: integerSchema('Integer segment count from 3 to 192.'),
+            radius: positiveNumberSchema('Positive radius.'),
+            widthSegments: segmentCountSchema(),
+            heightSegments: segmentCountSchema(),
           },
           ['type', 'radius', 'widthSegments', 'heightSegments'],
         ),
         objectSchema(
           {
             type: literalSchema('cone'),
-            radius: numberSchema('Positive base radius.'),
-            height: numberSchema('Positive height.'),
-            radialSegments: integerSchema('Integer segment count from 3 to 192.'),
+            radius: positiveNumberSchema('Positive base radius.'),
+            height: positiveNumberSchema('Positive height.'),
+            radialSegments: segmentCountSchema(),
           },
           ['type', 'radius', 'height', 'radialSegments'],
         ),
         objectSchema(
           {
             type: literalSchema('torus'),
-            radius: numberSchema('Positive major radius.'),
-            tube: numberSchema('Positive tube radius.'),
-            radialSegments: integerSchema('Integer segment count from 3 to 192.'),
-            tubularSegments: integerSchema('Integer segment count from 3 to 192.'),
+            radius: positiveNumberSchema('Positive major radius.'),
+            tube: positiveNumberSchema('Positive tube radius.'),
+            radialSegments: segmentCountSchema(),
+            tubularSegments: segmentCountSchema(),
           },
           ['type', 'radius', 'tube', 'radialSegments', 'tubularSegments'],
         ),
         objectSchema(
           {
             type: literalSchema('lathe'),
-            points: arraySchema(vector2Schema('Lathe profile point [x, y].')),
-            segments: integerSchema('Integer segment count from 3 to 192.'),
+            points: arraySchema(vector2Schema('Lathe profile point [x, y].'), {
+              minItems: 2,
+            }),
+            segments: segmentCountSchema(),
             phiStart: numberSchema('Start angle in radians. Use 0 by default.'),
-            phiLength: numberSchema('Positive sweep angle in radians.'),
+            phiLength: positiveNumberSchema('Positive sweep angle in radians.'),
           },
           ['type', 'points', 'segments', 'phiStart', 'phiLength'],
         ),
         objectSchema(
           {
             type: literalSchema('extrude'),
-            shape: arraySchema(vector2Schema('Closed 2D shape point [x, y].')),
-            depth: numberSchema('Positive extrusion depth.'),
+            shape: arraySchema(vector2Schema('Closed 2D shape point [x, y].'), {
+              minItems: 3,
+            }),
+            depth: positiveNumberSchema('Positive extrusion depth.'),
             bevelEnabled: booleanSchema('Whether beveling is enabled.'),
-            bevelSize: numberSchema('Positive bevel size. Use 0.001 for nearly sharp edges.'),
-            bevelThickness: numberSchema('Positive bevel thickness. Use 0.001 for nearly sharp edges.'),
-            bevelSegments: integerSchema('Integer bevel segment count from 0 to 24.'),
+            bevelSize: positiveNumberSchema('Positive bevel size. Use 0.001 for nearly sharp edges.'),
+            bevelThickness: positiveNumberSchema('Positive bevel thickness. Use 0.001 for nearly sharp edges.'),
+            bevelSegments: integerSchema('Integer bevel segment count from 0 to 24.', {
+              maximum: 24,
+              minimum: 0,
+            }),
           },
           [
             'type',
@@ -109,10 +120,12 @@ const visualSchema = objectSchema(
         objectSchema(
           {
             type: literalSchema('tube'),
-            points: arraySchema(vector3Schema('Tube path point [x, y, z].')),
-            radius: numberSchema('Positive tube radius.'),
-            tubularSegments: integerSchema('Integer segment count from 3 to 192.'),
-            radialSegments: integerSchema('Integer segment count from 3 to 192.'),
+            points: arraySchema(vector3Schema('Tube path point [x, y, z].'), {
+              minItems: 2,
+            }),
+            radius: positiveNumberSchema('Positive tube radius.'),
+            tubularSegments: segmentCountSchema(),
+            radialSegments: segmentCountSchema(),
             closed: booleanSchema('Whether the tube path is closed.'),
           },
           [
@@ -149,7 +162,7 @@ const partSchema = objectSchema(
       'mechanism',
     ]),
     description: stringSchema('Concise description of this part.'),
-    visuals: arraySchema(visualSchema),
+    visuals: arraySchema(visualSchema, { minItems: 1 }),
   },
   ['id', 'name', 'role', 'description', 'visuals'],
 )
@@ -170,8 +183,8 @@ const limitedJointLimitsSchema = objectSchema(
   {
     lower: numberSchema('Lower joint limit.'),
     upper: numberSchema('Upper joint limit.'),
-    effort: numberSchema('Positive effort value.'),
-    velocity: numberSchema('Positive velocity value.'),
+    effort: positiveNumberSchema('Positive effort value.'),
+    velocity: positiveNumberSchema('Positive velocity value.'),
   },
   ['lower', 'upper', 'effort', 'velocity'],
 )
@@ -190,8 +203,8 @@ const continuousJointSchema = objectSchema(
     axis: vector3Schema('Nonzero finite axis.'),
     limits: objectSchema(
       {
-        effort: numberSchema('Positive effort value.'),
-        velocity: numberSchema('Positive velocity value.'),
+        effort: positiveNumberSchema('Positive effort value.'),
+        velocity: positiveNumberSchema('Positive velocity value.'),
       },
       ['effort', 'velocity'],
     ),
@@ -230,6 +243,7 @@ const poseSpecSchema = objectSchema(
         },
         ['jointId', 'value'],
       ),
+      { minItems: 1 },
     ),
   },
   ['name', 'joints'],
@@ -259,7 +273,9 @@ const checkSchema = {
         partBId: stringSchema('Existing part id.'),
         visualAId: stringSchema('Existing visual id on part A.'),
         visualBId: stringSchema('Existing visual id on part B.'),
-        contactTolerance: numberSchema('Nonnegative contact tolerance in meters.'),
+        contactTolerance: nonNegativeNumberSchema(
+          'Nonnegative contact tolerance in meters.',
+        ),
       },
       [
         'type',
@@ -278,7 +294,9 @@ const checkSchema = {
         axis: enumSchema(['x', 'y', 'z']),
         minGap: numberSchema('Minimum expected gap in meters.'),
         maxGap: numberSchema('Maximum expected gap in meters.'),
-        maxPenetration: numberSchema('Maximum allowed penetration in meters.'),
+        maxPenetration: nonNegativeNumberSchema(
+          'Maximum allowed penetration in meters.',
+        ),
         positiveVisualId: stringSchema('Existing visual id on positive part.'),
         negativeVisualId: stringSchema('Existing visual id on negative part.'),
       },
@@ -300,7 +318,7 @@ const checkSchema = {
         partAId: stringSchema('Existing part id.'),
         partBId: stringSchema('Existing part id.'),
         axes: enumSchema(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz']),
-        minOverlap: numberSchema('Minimum projected overlap in meters.'),
+        minOverlap: nonNegativeNumberSchema('Minimum projected overlap in meters.'),
         visualAId: stringSchema('Existing visual id on part A.'),
         visualBId: stringSchema('Existing visual id on part B.'),
       },
@@ -320,7 +338,7 @@ const checkSchema = {
         innerPartId: stringSchema('Existing inner part id.'),
         outerPartId: stringSchema('Existing outer part id.'),
         axes: enumSchema(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz']),
-        margin: numberSchema('Containment margin in meters.'),
+        margin: nonNegativeNumberSchema('Containment margin in meters.'),
         innerVisualId: stringSchema('Existing visual id on inner part.'),
         outerVisualId: stringSchema('Existing visual id on outer part.'),
       },
@@ -376,15 +394,15 @@ export const manifestAssetResponseJsonSchema = objectSchema(
       type: 'string',
       enum: ['meters'],
     },
-    parts: arraySchema(partSchema),
+    parts: arraySchema(partSchema, { minItems: 1 }),
     joints: arraySchema(jointSchema),
-    materials: arraySchema(materialSchema),
+    materials: arraySchema(materialSchema, { minItems: 1 }),
     checks: arraySchema(checkSchema),
     allowances: arraySchema(allowanceSchema),
     metadata: objectSchema(
       {
-        createdAt: stringSchema('ISO-8601 datetime.'),
-        updatedAt: stringSchema('ISO-8601 datetime.'),
+        createdAt: dateTimeStringSchema('ISO-8601 datetime.'),
+        updatedAt: dateTimeStringSchema('ISO-8601 datetime.'),
         sourceImageIds: arraySchema(stringSchema('Reference image id.')),
         generationStatus: {
           type: 'string',
@@ -421,10 +439,18 @@ function objectSchema(
   }
 }
 
-function arraySchema(items: JsonSchema): JsonSchema {
+function arraySchema(
+  items: JsonSchema,
+  options: {
+    maxItems?: number
+    minItems?: number
+  } = {},
+): JsonSchema {
   return {
     type: 'array',
     items,
+    ...(options.maxItems !== undefined ? { maxItems: options.maxItems } : {}),
+    ...(options.minItems !== undefined ? { minItems: options.minItems } : {}),
   }
 }
 
@@ -445,11 +471,18 @@ function checkSchemaVariants(
 }
 
 function vector2Schema(description: string): JsonSchema {
-  return arraySchema(numberSchema(description))
+  return arraySchema(numberSchema(description), { maxItems: 2, minItems: 2 })
 }
 
 function vector3Schema(description: string): JsonSchema {
-  return arraySchema(numberSchema(description))
+  return arraySchema(numberSchema(description), { maxItems: 3, minItems: 3 })
+}
+
+function positiveVector3Schema(description: string): JsonSchema {
+  return arraySchema(positiveNumberSchema(description), {
+    maxItems: 3,
+    minItems: 3,
+  })
 }
 
 function literalSchema(value: string): JsonSchema {
@@ -473,6 +506,13 @@ function stringSchema(description: string): JsonSchema {
   }
 }
 
+function dateTimeStringSchema(description: string): JsonSchema {
+  return {
+    ...stringSchema(description),
+    format: 'date-time',
+  }
+}
+
 function numberSchema(description: string): JsonSchema {
   return {
     type: 'number',
@@ -480,11 +520,52 @@ function numberSchema(description: string): JsonSchema {
   }
 }
 
-function integerSchema(description: string): JsonSchema {
+function boundedNumberSchema(
+  description: string,
+  minimum: number,
+  maximum: number,
+): JsonSchema {
+  return {
+    ...numberSchema(description),
+    maximum,
+    minimum,
+  }
+}
+
+function nonNegativeNumberSchema(description: string): JsonSchema {
+  return {
+    ...numberSchema(description),
+    minimum: 0,
+  }
+}
+
+function positiveNumberSchema(description: string): JsonSchema {
+  return {
+    ...numberSchema(description),
+    exclusiveMinimum: 0,
+  }
+}
+
+function integerSchema(
+  description: string,
+  options: {
+    maximum?: number
+    minimum?: number
+  } = {},
+): JsonSchema {
   return {
     type: 'integer',
     description,
+    ...(options.maximum !== undefined ? { maximum: options.maximum } : {}),
+    ...(options.minimum !== undefined ? { minimum: options.minimum } : {}),
   }
+}
+
+function segmentCountSchema(): JsonSchema {
+  return integerSchema('Integer segment count from 3 to 192.', {
+    maximum: 192,
+    minimum: 3,
+  })
 }
 
 function booleanSchema(description: string): JsonSchema {

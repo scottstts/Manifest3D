@@ -386,17 +386,22 @@ function validateJointOrigins(
     const childDistance = pointToBoxDistance(jointOrigin, childBounds)
 
     if (
-      parentDistance <= jointOriginWarningDistanceMeters ||
+      parentDistance <= jointOriginWarningDistanceMeters &&
       childDistance <= jointOriginWarningDistanceMeters
     ) {
       continue
     }
 
+    const distantSides = [
+      parentDistance > jointOriginWarningDistanceMeters ? 'parent' : null,
+      childDistance > jointOriginWarningDistanceMeters ? 'child' : null,
+    ].filter((side): side is string => Boolean(side))
+
     signals.push(
       createValidationSignal(
         'joint_origin_distance',
         'joint_origin_far_from_geometry',
-        `Joint "${joint.id}" origin is far from both parent and child geometry.`,
+        `Joint "${joint.id}" origin is far from ${formatDistantSides(distantSides)} geometry.`,
         {
           details: `parentDistance=${parentDistance.toFixed(4)} childDistance=${childDistance.toFixed(4)} tolerance=${jointOriginWarningDistanceMeters}`,
           refs: {
@@ -413,6 +418,14 @@ function validateJointOrigins(
   }
 
   return signals
+}
+
+function formatDistantSides(sides: readonly string[]) {
+  if (sides.length === 1) {
+    return sides[0]
+  }
+
+  return sides.join(' and ')
 }
 
 function validateAllowanceNotes(asset: ManifestAsset) {
