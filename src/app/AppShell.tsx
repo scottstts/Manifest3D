@@ -52,10 +52,11 @@ import type {
   AssetLibraryVersion,
   PersistedCandidateAttempt,
 } from '../engine/persistence/assetLibraryTypes'
-import type {
-  SceneAssetInstance,
-  SceneTransform,
-  WorkspaceMode,
+import {
+  createSceneStore,
+  type SceneAssetInstance,
+  type SceneTransform,
+  type WorkspaceMode,
 } from '../engine/scene/sceneStore'
 import {
   createAgentEventTimelineItem,
@@ -90,6 +91,20 @@ type PlayingJointPreview = {
   instanceId: string
 }
 
+type PendingCreateRunView = {
+  agentEvents: readonly AgentLoopEvent[]
+  assistantMessageId: string
+  candidateTimelineItems: readonly AgentTimelineItem[]
+  chatTranscriptItems: readonly ChatPanelTranscriptItem[]
+  completedAsset: {
+    assetId: string
+    name: string
+    versionNumber: number
+  } | null
+  runId: string
+  status: string | null
+}
+
 const composeHistoryLimit = 40
 
 export function AppShell() {
@@ -117,6 +132,8 @@ export function AppShell() {
     ChatPanelTranscriptItem[]
   >([])
   const [isAgentRunning, setIsAgentRunning] = useState(false)
+  const [pendingCreateRun, setPendingCreateRun] =
+    useState<PendingCreateRunView | null>(null)
   const [activeTransformTool, setActiveTransformTool] =
     useState<TransformTool>(null)
   const [assetPendingDelete, setAssetPendingDelete] =
@@ -137,6 +154,8 @@ export function AppShell() {
   const pendingTransformHistoryRef = useRef<ComposeHistoryEntry | null>(null)
   const exportToastTimeoutRef = useRef<number | null>(null)
   const agentRunAbortControllerRef = useRef<AbortController | null>(null)
+  const pendingCreateRunRef = useRef<PendingCreateRunView | null>(null)
+  const isPendingCreateRunSelectedRef = useRef(false)
   const jointAnimationDirectionRef = useRef(1)
   const agentHistoryRef = useRef(createCandidateHistory())
   const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
@@ -395,6 +414,57 @@ export function AppShell() {
     [],
   )
 
+  const showPendingCreateRunView = useCallback((run: PendingCreateRunView) => {
+    setAgentEvents([...run.agentEvents])
+    setAgentStatus(run.status)
+    setCandidateTimelineItems([...run.candidateTimelineItems])
+    setChatTranscriptItems([...run.chatTranscriptItems])
+  }, [])
+
+  const updatePendingCreateRunView = useCallback(
+    (
+      runId: string,
+      update: (run: PendingCreateRunView) => PendingCreateRunView,
+    ) => {
+      const currentRun = pendingCreateRunRef.current
+
+      if (!currentRun || currentRun.runId !== runId) {
+        return
+      }
+
+      const nextRun = update(currentRun)
+
+      pendingCreateRunRef.current = nextRun
+      setPendingCreateRun(nextRun)
+
+      if (isPendingCreateRunSelectedRef.current) {
+        showPendingCreateRunView(nextRun)
+      }
+    },
+    [showPendingCreateRunView],
+  )
+
+  const handlePendingCreateRunOpen = useCallback(() => {
+    const run = pendingCreateRunRef.current
+
+    if (!run) {
+      return
+    }
+
+    isPendingCreateRunSelectedRef.current = true
+    sceneStore.setWorkspace('create')
+    sceneStore.clearCreateAsset()
+    selectionStore.clearSelection()
+    setActiveTransformTool(null)
+    showPendingCreateRunView(run)
+  }, [sceneStore, selectionStore, showPendingCreateRunView])
+
+  const markPendingCreateRunBackgrounded = useCallback(() => {
+    if (pendingCreateRunRef.current) {
+      isPendingCreateRunSelectedRef.current = false
+    }
+  }, [])
+
   const handlePromptSubmit = useCallback(
     (
       userPrompt: string,
@@ -429,8 +499,38 @@ export function AppShell() {
       const runTimeout = window.setTimeout(() => {
         didTimeOut = true
         abortController.abort()
-        setAgentStatus(formatAgentRunTimeoutStatus(modelConfig.agentRunTimeoutMs))
+        const timeoutStatus = formatAgentRunTimeoutStatus(
+          modelConfig.agentRunTimeoutMs,
+        )
+
+        if (mode === 'create') {
+          updatePendingCreateRunView(runId, (currentRun) => ({
+            ...currentRun,
+            chatTranscriptItems: updateAgentTranscriptItem(
+              currentRun.chatTranscriptItems,
+              assistantMessageId,
+              { status: timeoutStatus },
+            ),
+            status: timeoutStatus,
+          }))
+        } else {
+          setAgentStatus(timeoutStatus)
+        }
       }, modelConfig.agentRunTimeoutMs)
+      const runItems: ChatPanelTranscriptItem[] = [
+        {
+          id: `${runId}:user`,
+          imageAttachments,
+          role: 'user',
+          text: userPrompt,
+        },
+        {
+          id: assistantMessageId,
+          role: 'agent',
+          status: runStatus,
+          timelineItems: [],
+        },
+      ]
 
       if (mode === 'create') {
         sceneStore.clearCreateAsset()
@@ -439,28 +539,31 @@ export function AppShell() {
       }
 
       const runScene = sceneStore.getSnapshot().scene
+      const runSceneStore = createSceneStore(runScene)
 
       setAgentEvents([])
       setCandidateTimelineItems([])
       setAgentStatus(runStatus)
-      setChatTranscriptItems((currentItems) => {
-        const runItems: ChatPanelTranscriptItem[] = [
-          {
-            id: `${runId}:user`,
-            imageAttachments,
-            role: 'user',
-            text: userPrompt,
-          },
-          {
-            id: assistantMessageId,
-            role: 'agent',
-            status: runStatus,
-            timelineItems: [],
-          },
-        ]
 
-        return mode === 'create' ? runItems : [...currentItems, ...runItems]
-      })
+      if (mode === 'create') {
+        const pendingRun: PendingCreateRunView = {
+          agentEvents: [],
+          assistantMessageId,
+          candidateTimelineItems: [],
+          chatTranscriptItems: runItems,
+          completedAsset: null,
+          runId,
+          status: runStatus,
+        }
+
+        pendingCreateRunRef.current = pendingRun
+        isPendingCreateRunSelectedRef.current = true
+        setPendingCreateRun(pendingRun)
+        setChatTranscriptItems(runItems)
+      } else {
+        setChatTranscriptItems((currentItems) => [...currentItems, ...runItems])
+      }
+
       setIsAgentRunning(true)
       agentRunAbortControllerRef.current = abortController
 
@@ -487,37 +590,91 @@ export function AppShell() {
 
             const currentTimeline = runEvents.map(createAgentEventTimelineItem)
 
-            setAgentEvents(runEvents)
-            setChatTranscriptItems((currentItems) =>
-              updateAgentTranscriptItem(currentItems, assistantMessageId, {
-                timelineItems: currentTimeline,
-              }),
-            )
+            if (mode === 'create') {
+              updatePendingCreateRunView(runId, (currentRun) => ({
+                ...currentRun,
+                agentEvents: runEvents,
+                chatTranscriptItems: updateAgentTranscriptItem(
+                  currentRun.chatTranscriptItems,
+                  assistantMessageId,
+                  { timelineItems: currentTimeline },
+                ),
+              }))
+            } else {
+              setAgentEvents(runEvents)
+              setChatTranscriptItems((currentItems) =>
+                updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                  timelineItems: currentTimeline,
+                }),
+              )
+            }
           },
-          sceneStore,
+          sceneStore: runSceneStore,
         },
       )
         .then(async (result) => {
+          const candidateHistoryTimelineItems = createCandidateHistoryTimeline(
+            result.history,
+          )
           const resultTimelineItems = [
             ...runEvents.map(createAgentEventTimelineItem),
-            ...createCandidateHistoryTimeline(result.history),
+            ...candidateHistoryTimelineItems,
           ]
 
-          setCandidateTimelineItems(createCandidateHistoryTimeline(result.history))
+          if (mode === 'create') {
+            updatePendingCreateRunView(runId, (currentRun) => ({
+              ...currentRun,
+              candidateTimelineItems: candidateHistoryTimelineItems,
+            }))
+          } else {
+            setCandidateTimelineItems(candidateHistoryTimelineItems)
+          }
 
           if (result.status !== 'ready') {
             const statusMessage = didTimeOut
               ? formatAgentRunTimeoutStatus(modelConfig.agentRunTimeoutMs)
               : result.message
 
-            setAgentStatus(statusMessage)
-            setChatTranscriptItems((currentItems) =>
-              updateAgentTranscriptItem(currentItems, assistantMessageId, {
+            if (mode === 'create') {
+              updatePendingCreateRunView(runId, (currentRun) => ({
+                ...currentRun,
+                candidateTimelineItems: candidateHistoryTimelineItems,
+                chatTranscriptItems: updateAgentTranscriptItem(
+                  currentRun.chatTranscriptItems,
+                  assistantMessageId,
+                  {
+                    status: statusMessage,
+                    timelineItems: resultTimelineItems,
+                  },
+                ),
                 status: statusMessage,
-                timelineItems: resultTimelineItems,
-              }),
-            )
+              }))
+            } else {
+              setAgentStatus(statusMessage)
+              setChatTranscriptItems((currentItems) =>
+                updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                  status: statusMessage,
+                  timelineItems: resultTimelineItems,
+                }),
+              )
+            }
             return
+          }
+
+          const predictedVersionNumber = getNextAssetVersionNumber(
+            assetLibraryStore.getSnapshot().library.assets,
+            result.asset.id,
+          )
+
+          if (mode === 'create') {
+            updatePendingCreateRunView(runId, (currentRun) => ({
+              ...currentRun,
+              completedAsset: {
+                assetId: result.asset.id,
+                name: result.asset.name,
+                versionNumber: predictedVersionNumber,
+              },
+            }))
           }
 
           const savedVersion = await assetLibraryStore.saveValidatedVersion({
@@ -528,15 +685,41 @@ export function AppShell() {
             validationReport: result.report,
           })
 
-          sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
-          selectionStore.selectAsset('create', result.asset.id)
-          setAgentStatus(`Ready: ${result.asset.name}`)
-          setChatTranscriptItems((currentItems) =>
-            updateAgentTranscriptItem(currentItems, assistantMessageId, {
-              status: `Ready: ${result.asset.name}`,
-              timelineItems: resultTimelineItems,
-            }),
-          )
+          const readyStatus = `Ready: ${result.asset.name}`
+
+          if (mode === 'create') {
+            updatePendingCreateRunView(runId, (currentRun) => ({
+              ...currentRun,
+              completedAsset: {
+                assetId: result.asset.id,
+                name: result.asset.name,
+                versionNumber: savedVersion.versionNumber,
+              },
+            }))
+
+            if (isPendingCreateRunSelectedRef.current) {
+              sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
+              selectionStore.selectAsset('create', result.asset.id)
+              setAgentStatus(readyStatus)
+              setCandidateTimelineItems(candidateHistoryTimelineItems)
+              setChatTranscriptItems((currentItems) =>
+                updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                  status: readyStatus,
+                  timelineItems: resultTimelineItems,
+                }),
+              )
+            }
+          } else {
+            sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
+            selectionStore.selectAsset('create', result.asset.id)
+            setAgentStatus(readyStatus)
+            setChatTranscriptItems((currentItems) =>
+              updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                status: readyStatus,
+                timelineItems: resultTimelineItems,
+              }),
+            )
+          }
         })
         .catch((error: unknown) => {
           const message =
@@ -544,19 +727,40 @@ export function AppShell() {
               ? error.message
               : 'The agent run failed unexpectedly.'
 
-          setAgentStatus(message)
-          setChatTranscriptItems((currentItems) =>
-            updateAgentTranscriptItem(currentItems, assistantMessageId, {
+          if (mode === 'create') {
+            updatePendingCreateRunView(runId, (currentRun) => ({
+              ...currentRun,
+              chatTranscriptItems: updateAgentTranscriptItem(
+                currentRun.chatTranscriptItems,
+                assistantMessageId,
+                {
+                  status: message,
+                  timelineItems: runEvents.map(createAgentEventTimelineItem),
+                },
+              ),
               status: message,
-              timelineItems: runEvents.map(createAgentEventTimelineItem),
-            }),
-          )
+            }))
+          } else {
+            setAgentStatus(message)
+            setChatTranscriptItems((currentItems) =>
+              updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                status: message,
+                timelineItems: runEvents.map(createAgentEventTimelineItem),
+              }),
+            )
+          }
         })
         .finally(() => {
           window.clearTimeout(runTimeout)
 
           if (agentRunAbortControllerRef.current === abortController) {
             agentRunAbortControllerRef.current = null
+          }
+
+          if (mode === 'create' && pendingCreateRunRef.current?.runId === runId) {
+            pendingCreateRunRef.current = null
+            isPendingCreateRunSelectedRef.current = false
+            setPendingCreateRun(null)
           }
 
           setIsAgentRunning(false)
@@ -572,6 +776,7 @@ export function AppShell() {
       sceneStore,
       selectedInstance,
       selectionStore,
+      updatePendingCreateRunView,
     ],
   )
 
@@ -638,15 +843,17 @@ export function AppShell() {
 
   const handleWorkspaceChange = useCallback(
     (workspace: WorkspaceMode) => {
+      markPendingCreateRunBackgrounded()
       sceneStore.setWorkspace(workspace)
       selectionStore.clearSelection()
       setActiveTransformTool(null)
     },
-    [sceneStore, selectionStore],
+    [markPendingCreateRunBackgrounded, sceneStore, selectionStore],
   )
 
   const handleHistoryAssetOpen = useCallback(
     (asset: AssetLibraryAsset) => {
+      markPendingCreateRunBackgrounded()
       const version = getLastSelectedAssetVersion(asset)
 
       void assetLibraryStore.setLastSelectedVersion(
@@ -676,6 +883,7 @@ export function AppShell() {
     [
       assetLibraryStore,
       clearComposeHistory,
+      markPendingCreateRunBackgrounded,
       sceneSnapshot.activeWorkspace,
       sceneStore,
       selectionStore,
@@ -715,6 +923,7 @@ export function AppShell() {
         return
       }
 
+      markPendingCreateRunBackgrounded()
       void assetLibraryStore.setLastSelectedVersion(
         version.assetId,
         version.versionId,
@@ -741,6 +950,7 @@ export function AppShell() {
     [
       assetLibraryStore,
       clearComposeHistory,
+      markPendingCreateRunBackgrounded,
       sceneStore,
       selectedInstance,
       selectionStore,
@@ -1047,7 +1257,15 @@ export function AppShell() {
           onAssetDeleteRequested={setAssetPendingDelete}
           onAssetOpen={handleHistoryAssetOpen}
           onCollapsedChange={setIsHistoryPanelCollapsed}
+          onPendingCreateRunOpen={handlePendingCreateRunOpen}
           panelRef={assetHistoryPanelRef}
+          pendingCreateRun={
+            pendingCreateRun
+              ? {
+                  asset: pendingCreateRun.completedAsset,
+                }
+              : null
+          }
         />
         {sceneSnapshot.activeWorkspace === 'compose' && (
           <ComposeToolbar
@@ -1175,6 +1393,15 @@ function updateAgentTranscriptItem(
           ...update,
         }
       : item,
+  )
+}
+
+function getNextAssetVersionNumber(
+  assets: readonly AssetLibraryAsset[],
+  assetId: string,
+) {
+  return (
+    (assets.find((asset) => asset.assetId === assetId)?.versions.length ?? 0) + 1
   )
 }
 

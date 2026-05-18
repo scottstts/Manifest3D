@@ -804,7 +804,9 @@ a.viewport-toolbar__button {
 
 .asset-history-list__asset {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
   min-width: 0;
   padding: 9px 10px;
   text-align: left;
@@ -814,12 +816,30 @@ a.viewport-toolbar__button {
   border-radius: 10px;
 }
 
+.asset-history-list li.asset-history-list__pending .asset-history-list__asset {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) 34px;
+}
+
+.asset-history-list li.asset-history-list__pending .asset-history-list__asset:hover {
+  color: #30377d;
+  background: rgb(255 255 255 / 0.46);
+  box-shadow: none;
+  transform: none;
+}
+
 .asset-history-list li.is-active .asset-history-list__asset,
 .asset-history-list__asset:hover {
   color: #fff;
   background: #7772ea;
   box-shadow: 0 12px 24px rgb(85 80 220 / 0.2);
   transform: translateY(-1px);
+}
+
+.asset-history-list__copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .asset-history-list__name {
@@ -840,6 +860,13 @@ a.viewport-toolbar__button {
   opacity: 0.72;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.asset-history-list__spinner {
+  width: 17px;
+  height: 17px;
+  justify-self: center;
+  animation: asset-history-spin 900ms linear infinite;
 }
 
 .asset-history-list__delete {
@@ -863,6 +890,12 @@ a.viewport-toolbar__button {
 .asset-history-list__delete svg {
   width: 16px;
   height: 16px;
+}
+
+@keyframes asset-history-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .joint-preview-panel {

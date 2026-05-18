@@ -1,6 +1,19 @@
-import { type Ref } from 'react'
-import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react'
+import { type ReactNode, type Ref } from 'react'
+import {
+  LoaderCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Trash2,
+} from 'lucide-react'
 import type { AssetLibraryAsset } from '../engine/persistence/assetLibraryTypes'
+
+type PendingCreateRunMenuItem = {
+  asset: {
+    assetId: string
+    name: string
+    versionNumber: number
+  } | null
+}
 
 type AssetHistoryPanelProps = {
   activeAssetId: string | null
@@ -10,7 +23,9 @@ type AssetHistoryPanelProps = {
   onAssetDeleteRequested: (asset: AssetLibraryAsset) => void
   onAssetOpen: (asset: AssetLibraryAsset) => void
   onCollapsedChange: (collapsed: boolean) => void
+  onPendingCreateRunOpen: () => void
   panelRef?: Ref<HTMLElement>
+  pendingCreateRun?: PendingCreateRunMenuItem | null
 }
 
 export function AssetHistoryPanel({
@@ -21,8 +36,16 @@ export function AssetHistoryPanel({
   onAssetDeleteRequested,
   onAssetOpen,
   onCollapsedChange,
+  onPendingCreateRunOpen,
   panelRef,
+  pendingCreateRun = null,
 }: AssetHistoryPanelProps) {
+  const visibleAssets = pendingCreateRun?.asset
+    ? assets.filter((asset) => asset.assetId !== pendingCreateRun.asset?.assetId)
+    : assets
+  const hasMenuItems = visibleAssets.length > 0 || Boolean(pendingCreateRun)
+  const menuItemCount = visibleAssets.length + (pendingCreateRun ? 1 : 0)
+
   return (
     <aside
       className={`asset-history-panel${isCollapsed ? ' is-collapsed' : ''}`}
@@ -46,13 +69,37 @@ export function AssetHistoryPanel({
         <div className="asset-history-panel__body">
           <div className="asset-history-panel__header">
             <h2>Assets</h2>
-            <span>{assets.length}</span>
+            <span>{menuItemCount}</span>
           </div>
-          {assets.length === 0 ? (
+          {!hasMenuItems ? (
             <p className="asset-history-panel__empty">No saved assets yet.</p>
           ) : (
             <ol className="asset-history-list">
-              {assets.map((asset) => {
+              {pendingCreateRun && (
+                <li
+                  className="asset-history-list__pending"
+                  key="pending-create-run"
+                >
+                  <AssetHistoryItemButton
+                    meta={
+                      pendingCreateRun.asset
+                        ? `${modeLabel} latest chosen · v${pendingCreateRun.asset.versionNumber}`
+                        : 'Agent running...'
+                    }
+                    name={pendingCreateRun.asset?.name ?? 'Creating'}
+                    trailing={
+                      pendingCreateRun.asset ? null : (
+                        <LoaderCircle
+                          aria-hidden="true"
+                          className="asset-history-list__spinner"
+                        />
+                      )
+                    }
+                    onClick={onPendingCreateRunOpen}
+                  />
+                </li>
+              )}
+              {visibleAssets.map((asset) => {
                 const versionCount = asset.versions.length
                 const isActive = asset.assetId === activeAssetId
 
@@ -61,18 +108,11 @@ export function AssetHistoryPanel({
                     className={isActive ? 'is-active' : ''}
                     key={asset.assetId}
                   >
-                    <button
-                      className="asset-history-list__asset"
-                      type="button"
+                    <AssetHistoryItemButton
+                      meta={`${modeLabel} latest chosen · v${versionCount}`}
+                      name={asset.name}
                       onClick={() => onAssetOpen(asset)}
-                    >
-                      <span className="asset-history-list__name">
-                        {asset.name}
-                      </span>
-                      <span className="asset-history-list__meta">
-                        {modeLabel} latest chosen · v{versionCount}
-                      </span>
-                    </button>
+                    />
                     <button
                       aria-label={`Delete ${asset.name}`}
                       className="asset-history-list__delete"
@@ -89,5 +129,31 @@ export function AssetHistoryPanel({
         </div>
       )}
     </aside>
+  )
+}
+
+function AssetHistoryItemButton({
+  meta,
+  name,
+  onClick,
+  trailing = null,
+}: {
+  meta: string | null
+  name: string
+  onClick: () => void
+  trailing?: ReactNode
+}) {
+  return (
+    <button
+      className="asset-history-list__asset"
+      type="button"
+      onClick={onClick}
+    >
+      <span className="asset-history-list__copy">
+        <span className="asset-history-list__name">{name}</span>
+        {meta && <span className="asset-history-list__meta">{meta}</span>}
+      </span>
+      {trailing}
+    </button>
   )
 }
