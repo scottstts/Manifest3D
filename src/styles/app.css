@@ -144,8 +144,29 @@ a.viewport-toolbar__button {
   transform: none;
 }
 
-.viewport-toolbar__button--api-key:disabled {
-  filter: saturate(0.45);
+.viewport-toolbar__button--api-key[aria-disabled='true'] {
+  cursor: default;
+}
+
+.viewport-toolbar__api-key-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-left: -2px;
+  background: #ef4444;
+  border: 1px solid rgb(255 255 255 / 0.82);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 2px rgb(239 68 68 / 0.14),
+    0 2px 5px rgb(129 25 25 / 0.22);
+}
+
+.viewport-toolbar__api-key-dot.is-loaded {
+  background: #22c55e;
+  box-shadow:
+    0 0 0 2px rgb(34 197 94 / 0.15),
+    0 2px 5px rgb(22 101 52 / 0.2);
 }
 
 .viewport-toolbar__button--github {
@@ -1624,6 +1645,10 @@ a.viewport-toolbar__button {
   .viewport-toolbar__button span,
   .version-toolbar__label {
     display: none;
+  }
+
+  .viewport-toolbar__button .viewport-toolbar__api-key-dot {
+    display: inline-block;
   }
 
   .viewport-toolbar__button {

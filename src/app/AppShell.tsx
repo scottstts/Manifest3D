@@ -37,6 +37,8 @@ import {
 } from '../engine/agent/agentLoop'
 import { createCandidateHistory } from '../engine/agent/candidateHistory'
 import {
+  canUseInAppOpenAIApiKeyModal,
+  isOpenAIApiKeyLoaded,
   loadStartupOpenAIApiKeyStatus,
   resolveStartupOpenAIApiKeyStatus,
 } from '../engine/agent/openAiApiKey'
@@ -264,7 +266,13 @@ export function AppShell() {
     sceneSnapshot.activeWorkspace === 'compose' && composeUndoStack.length > 0
   const canRedoCompose =
     sceneSnapshot.activeWorkspace === 'compose' && composeRedoStack.length > 0
-  const isLocalEnvApiKeyLoaded = startupOpenAIApiKeyStatus.source === 'local_env'
+  const canOpenInAppApiKeyModal = canUseInAppOpenAIApiKeyModal(
+    typeof window === 'undefined' ? '' : window.location.hostname,
+  )
+  const isApiKeyLoaded = isOpenAIApiKeyLoaded(
+    startupOpenAIApiKeyStatus,
+    hasSessionApiKey,
+  )
 
   useEffect(() => {
     void assetLibraryStore.load()
@@ -1262,7 +1270,8 @@ export function AppShell() {
       />
       <FrameChrome
         activeWorkspace={sceneSnapshot.activeWorkspace}
-        apiKeyButtonDisabled={isLocalEnvApiKeyLoaded}
+        apiKeyButtonDisabled={!canOpenInAppApiKeyModal}
+        isApiKeyLoaded={isApiKeyLoaded}
         canRedoCompose={canRedoCompose}
         canUndoCompose={canUndoCompose}
         canNavigateNextVersion={Boolean(adjacentVersions.next)}
@@ -1270,7 +1279,11 @@ export function AppShell() {
         exportAsset={exportableCreateAsset}
         hasSessionApiKey={hasSessionApiKey}
         versionLabel={versionLabel}
-        onApiKeyRequested={() => setIsApiKeyModalOpen(true)}
+        onApiKeyRequested={() => {
+          if (canOpenInAppApiKeyModal) {
+            setIsApiKeyModalOpen(true)
+          }
+        }}
         onExportGlb={handleExportGlb}
         onRedoCompose={handleRedoCompose}
         onUndoCompose={handleUndoCompose}

@@ -54,6 +54,17 @@ export function resolveStartupOpenAIApiKeyStatus(
   }
 }
 
+export function isOpenAIApiKeyLoaded(
+  startupStatus: OpenAIApiKeyStatus,
+  hasSessionApiKey: boolean,
+) {
+  return startupStatus.source === 'local_env' || hasSessionApiKey
+}
+
+export function canUseInAppOpenAIApiKeyModal(hostname: string) {
+  return !shouldUseLocalEnvApiKey(hostname)
+}
+
 export function shouldUseLocalEnvApiKey(hostname: string) {
   const normalizedHostname = hostname.trim().toLowerCase()
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canUseInAppOpenAIApiKeyModal,
+  isOpenAIApiKeyLoaded,
   loadStartupOpenAIApiKeyStatus,
   resolveStartupOpenAIApiKeyStatus,
   shouldUseLocalEnvApiKey,
@@ -16,6 +18,20 @@ describe('shouldUseLocalEnvApiKey', () => {
   it('rejects deployed and LAN hostnames', () => {
     expect(shouldUseLocalEnvApiKey('manifest3d.example')).toBe(false)
     expect(shouldUseLocalEnvApiKey('192.168.1.20')).toBe(false)
+  })
+})
+
+
+describe('canUseInAppOpenAIApiKeyModal', () => {
+  it('blocks the in-app API key modal on localhost even when no startup key is loaded', () => {
+    expect(canUseInAppOpenAIApiKeyModal('localhost')).toBe(false)
+    expect(canUseInAppOpenAIApiKeyModal('127.0.0.1')).toBe(false)
+    expect(canUseInAppOpenAIApiKeyModal('[::1]')).toBe(false)
+  })
+
+  it('allows the in-app API key modal on deployed origins', () => {
+    expect(canUseInAppOpenAIApiKeyModal('manifest3d.example')).toBe(true)
+    expect(canUseInAppOpenAIApiKeyModal('192.168.1.20')).toBe(true)
   })
 })
 
@@ -87,5 +103,28 @@ describe('resolveStartupOpenAIApiKeyStatus', () => {
       apiKey: '',
       source: 'none',
     })
+  })
+})
+
+describe('isOpenAIApiKeyLoaded', () => {
+  it('is ready when a local startup env key was actually loaded', () => {
+    expect(
+      isOpenAIApiKeyLoaded(
+        { apiKey: 'sk-local-test', source: 'local_env' },
+        false,
+      ),
+    ).toBe(true)
+  })
+
+  it('stays missing on localhost when no local startup env key was loaded', () => {
+    expect(isOpenAIApiKeyLoaded({ apiKey: '', source: 'none' }, false)).toBe(
+      false,
+    )
+  })
+
+  it('is ready after an in-app session key is provided', () => {
+    expect(isOpenAIApiKeyLoaded({ apiKey: '', source: 'none' }, true)).toBe(
+      true,
+    )
   })
 })
