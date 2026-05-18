@@ -604,13 +604,13 @@ a.viewport-toolbar__button {
 
 .chat-panel__mode-pill.is-create,
 .chat-panel__mode-pill.is-creating {
-  background: #2f6f9f;
+  background: #2f80b7;
   box-shadow: 0 9px 20px rgb(47 111 159 / 0.18);
 }
 
 .chat-panel__mode-pill.is-edit,
 .chat-panel__mode-pill.is-editing {
-  background: #a65f2f;
+  background: #d95f7a;
   box-shadow: 0 9px 20px rgb(166 95 47 / 0.18);
 }
 
