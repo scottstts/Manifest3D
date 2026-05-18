@@ -64,6 +64,24 @@ export function saveValidatedAssetVersion(
   }
 }
 
+export function saveAssetLibraryAsset(
+  snapshot: AssetLibrarySnapshot,
+  nextAsset: AssetLibraryAsset,
+): AssetLibrarySnapshot {
+  const existingAsset = snapshot.assets.find(
+    (asset) => asset.assetId === nextAsset.assetId,
+  )
+  const nextAssets = existingAsset
+    ? snapshot.assets.map((asset) =>
+        asset.assetId === nextAsset.assetId ? nextAsset : asset,
+      )
+    : [...snapshot.assets, nextAsset]
+
+  return sortLibrarySnapshot({
+    assets: nextAssets,
+  })
+}
+
 export function setLastSelectedAssetVersion(
   snapshot: AssetLibrarySnapshot,
   assetId: string,

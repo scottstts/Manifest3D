@@ -1,5 +1,7 @@
 import {
   createEmptyAssetLibrarySnapshot,
+  deleteAssetLibraryAsset,
+  saveAssetLibraryAsset,
   sortLibrarySnapshot,
 } from './assetLibraryModel'
 import type {
@@ -10,8 +12,9 @@ import type {
 } from './assetLibraryTypes'
 
 export type AssetLibraryRepository = {
+  deleteAsset: (assetId: string) => Promise<void>
   loadSnapshot: () => Promise<AssetLibrarySnapshot>
-  saveSnapshot: (snapshot: AssetLibrarySnapshot) => Promise<void>
+  saveAsset: (asset: AssetLibraryAsset) => Promise<void>
 }
 
 type AssetRecordRow = Omit<AssetLibraryAsset, 'versions'> & {
@@ -34,6 +37,15 @@ export function createIndexedDbAssetLibraryRepository(): AssetLibraryRepository 
   }
 
   return {
+    async deleteAsset(assetId) {
+      const database = await openAssetLibraryDatabase()
+
+      try {
+        await deleteAssetRows(database, assetId)
+      } finally {
+        database.close()
+      }
+    },
     async loadSnapshot() {
       const database = await openAssetLibraryDatabase()
 
@@ -49,11 +61,11 @@ export function createIndexedDbAssetLibraryRepository(): AssetLibraryRepository 
         database.close()
       }
     },
-    async saveSnapshot(snapshot) {
+    async saveAsset(asset) {
       const database = await openAssetLibraryDatabase()
 
       try {
-        await writeSnapshot(database, snapshot)
+        await writeAsset(database, asset)
       } finally {
         database.close()
       }
@@ -67,11 +79,14 @@ export function createMemoryAssetLibraryRepository(
   let snapshot = initialSnapshot
 
   return {
+    async deleteAsset(assetId) {
+      snapshot = deleteAssetLibraryAsset(snapshot, assetId)
+    },
     async loadSnapshot() {
       return snapshot
     },
-    async saveSnapshot(nextSnapshot) {
-      snapshot = nextSnapshot
+    async saveAsset(asset) {
+      snapshot = saveAssetLibraryAsset(snapshot, asset)
     },
   }
 }
@@ -129,9 +144,9 @@ function getAllRows<T>(
   })
 }
 
-function writeSnapshot(
+function writeAsset(
   database: IDBDatabase,
-  snapshot: AssetLibrarySnapshot,
+  asset: AssetLibraryAsset,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(
@@ -141,37 +156,72 @@ function writeSnapshot(
     const assetStore = transaction.objectStore(assetStoreName)
     const versionStore = transaction.objectStore(versionStoreName)
     const attemptStore = transaction.objectStore(attemptStoreName)
+    const { versions, ...assetRecord } = asset
 
-    assetStore.clear()
-    versionStore.clear()
-    attemptStore.clear()
+    assetStore.put({
+      ...assetRecord,
+      versionIds: versions.map((version) => version.versionId),
+    } satisfies AssetRecordRow)
 
-    for (const asset of snapshot.assets) {
-      const { versions, ...assetRecord } = asset
+    for (const version of versions) {
+      const { attempts, ...versionRecord } = version
 
-      assetStore.put({
-        ...assetRecord,
-        versionIds: versions.map((version) => version.versionId),
-      } satisfies AssetRecordRow)
+      versionStore.put({
+        ...versionRecord,
+        attemptIds: attempts.map((attempt) => attempt.id),
+      } satisfies VersionRow)
 
-      for (const version of versions) {
-        const { attempts, ...versionRecord } = version
-
-        versionStore.put({
-          ...versionRecord,
-          attemptIds: attempts.map((attempt) => attempt.id),
-        } satisfies VersionRow)
-
-        for (const attempt of attempts) {
-          attemptStore.put(attempt)
-        }
+      for (const attempt of attempts) {
+        attemptStore.put(attempt)
       }
     }
 
     transaction.addEventListener('complete', () => resolve())
     transaction.addEventListener('error', () => {
       reject(
-        transaction.error ?? new Error('Asset library snapshot failed to save.'),
+        transaction.error ?? new Error('Asset library asset failed to save.'),
+      )
+    })
+  })
+}
+
+function deleteAssetRows(
+  database: IDBDatabase,
+  assetId: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(
+      [assetStoreName, versionStoreName, attemptStoreName],
+      'readwrite',
+    )
+    const assetStore = transaction.objectStore(assetStoreName)
+    const versionStore = transaction.objectStore(versionStoreName)
+    const attemptStore = transaction.objectStore(attemptStoreName)
+    const versionAssetIndex = versionStore.index('assetId')
+    const attemptAssetIndex = attemptStore.index('assetId')
+
+    assetStore.delete(assetId)
+
+    const versionKeysRequest = versionAssetIndex.getAllKeys(assetId)
+
+    versionKeysRequest.addEventListener('success', () => {
+      for (const versionKey of versionKeysRequest.result) {
+        versionStore.delete(versionKey)
+      }
+    })
+
+    const attemptKeysRequest = attemptAssetIndex.getAllKeys(assetId)
+
+    attemptKeysRequest.addEventListener('success', () => {
+      for (const attemptKey of attemptKeysRequest.result) {
+        attemptStore.delete(attemptKey)
+      }
+    })
+
+    transaction.addEventListener('complete', () => resolve())
+    transaction.addEventListener('error', () => {
+      reject(
+        transaction.error ?? new Error('Asset library asset failed to delete.'),
       )
     })
   })

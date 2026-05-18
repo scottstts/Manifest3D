@@ -138,7 +138,6 @@ export function ChatPanel({
           <button
             aria-label="Start new asset"
             className="chat-panel__new-asset"
-            disabled={isRunning}
             title="Start new asset"
             type="button"
             onClick={onNewAsset}

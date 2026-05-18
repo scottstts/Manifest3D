@@ -2,6 +2,7 @@ import {
   createEmptyAssetLibrarySnapshot,
   deleteAssetLibraryAsset,
   findAssetLibraryVersion,
+  saveAssetLibraryAsset,
   saveValidatedAssetVersion,
   setLastSelectedAssetVersion,
 } from './assetLibraryModel'
@@ -10,6 +11,7 @@ import {
   type AssetLibraryRepository,
 } from './assetLibraryRepository'
 import type {
+  AssetLibraryAsset,
   AssetLibrarySnapshot,
   AssetLibraryVersion,
   SaveValidatedAssetVersionInput,
@@ -55,26 +57,41 @@ export function createAssetLibraryStore(
     }
   }
 
-  async function persist(nextLibrary: AssetLibrarySnapshot) {
+  function setReadyLibrary(library: AssetLibrarySnapshot) {
     snapshot = {
       error: null,
-      library: nextLibrary,
+      library,
       status: 'ready',
     }
     emit()
+  }
+
+  function setPersistError(error: unknown, fallbackMessage: string) {
+    snapshot = {
+      ...snapshot,
+      error: error instanceof Error ? error.message : fallbackMessage,
+      status: 'error',
+    }
+    emit()
+  }
+
+  async function persistAsset(asset: AssetLibraryAsset) {
+    setReadyLibrary(saveAssetLibraryAsset(snapshot.library, asset))
 
     try {
-      await repository.saveSnapshot(nextLibrary)
+      await repository.saveAsset(asset)
     } catch (error) {
-      snapshot = {
-        ...snapshot,
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Asset library failed to save.',
-        status: 'error',
-      }
-      emit()
+      setPersistError(error, 'Asset library failed to save.')
+    }
+  }
+
+  async function persistDelete(assetId: string) {
+    setReadyLibrary(deleteAssetLibraryAsset(snapshot.library, assetId))
+
+    try {
+      await repository.deleteAsset(assetId)
+    } catch (error) {
+      setPersistError(error, 'Asset library failed to delete.')
     }
   }
 
@@ -83,7 +100,7 @@ export function createAssetLibraryStore(
       return snapshot
     },
     async deleteAsset(assetId) {
-      await persist(deleteAssetLibraryAsset(snapshot.library, assetId))
+      await persistDelete(assetId)
     },
     async load() {
       try {
@@ -108,9 +125,22 @@ export function createAssetLibraryStore(
       emit()
     },
     async saveValidatedVersion(input) {
-      const result = saveValidatedAssetVersion(snapshot.library, input)
+      let baseLibrary = snapshot.library
 
-      await persist(result.snapshot)
+      try {
+        baseLibrary = await repository.loadSnapshot()
+        snapshot = {
+          error: null,
+          library: baseLibrary,
+          status: 'ready',
+        }
+      } catch {
+        // Keep the optimistic in-memory library if the pre-save refresh fails.
+      }
+
+      const result = saveValidatedAssetVersion(baseLibrary, input)
+
+      await persistAsset(result.asset)
 
       return result.version
     },
@@ -121,12 +151,13 @@ export function createAssetLibraryStore(
         versionId,
       )
       const version = findAssetLibraryVersion(library, assetId, versionId)
+      const asset = library.assets.find((candidate) => candidate.assetId === assetId)
 
-      if (!version) {
+      if (!version || !asset) {
         return null
       }
 
-      await persist(library)
+      await persistAsset(asset)
 
       return version
     },

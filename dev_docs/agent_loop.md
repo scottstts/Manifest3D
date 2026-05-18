@@ -13,6 +13,7 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 ## Persistence
 
 - IndexedDB stores the asset library: asset records, ordered version records, and validation attempts per version.
+- Persistence writes are scoped to the touched logical asset, or to the deleted asset id. Do not clear and rewrite the full asset/version/attempt stores for normal saves because multiple tabs can create different assets concurrently.
 - Only validated assets are persisted. Invalid attempts are persisted only as context under a saved valid version, never as standalone library assets.
 - Asset list ordering is by original creation time descending. Later-created assets appear above older assets; editing an old asset should not reorder it by last update.
 - Each asset history item represents one logical asset with multiple versions. Opening an asset defaults to its last selected version, falling back to the latest version.
@@ -29,11 +30,12 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 ## Create And Edit UX
 
 - The right panel mode pill says `creating` when no Create asset is selected and `editing` when the Create asset is selected.
-- Starting a new Create asset clears the runtime transcript, candidate timeline, current Create viewport asset, and selection. It does not delete saved history.
+- Starting a new Create asset clears the active runtime transcript, candidate timeline, current Create viewport asset, and selection. It does not delete saved history and does not stop background agent runs.
 - Submitting a create prompt clears the previous Create viewport asset before the run. Submitting an edit prompt keeps the current selected asset as edit context.
+- Multiple create/edit runs may continue in the background. Running create jobs appear as top `Creating` rows in the asset history panel; running edit jobs stay attached to their source asset row. Opening one of those rows restores that run's prompt message and progress timeline until it finishes.
 - User prompt messages and agent timeline messages are interleaved in the right panel for the current runtime session only.
 - Image attachments can be selected from disk or pasted into the prompt textarea. Attached images show removable thumbnails before submission and thumbnail context in the runtime transcript.
-- While an agent run is active, the send button becomes a running stop button: spinner ring plus a square center. Clicking it aborts the run through `AbortSignal`.
+- The send/stop control follows the currently selected run. It becomes a running stop button only when the active right-panel view is a running create/edit task; selected saved assets keep the normal send button even when other runs continue in the background.
 
 ## Validation Trace
 

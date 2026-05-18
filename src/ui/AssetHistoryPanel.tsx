@@ -8,11 +8,14 @@ import {
 import type { AssetLibraryAsset } from '../engine/persistence/assetLibraryTypes'
 
 type PendingCreateRunMenuItem = {
-  asset: {
-    assetId: string
-    name: string
-    versionNumber: number
-  } | null
+  runId: string
+  status: string | null
+}
+
+type RunningEditRunMenuItem = {
+  assetId: string
+  runId: string
+  status: string | null
 }
 
 type AssetHistoryPanelProps = {
@@ -20,12 +23,13 @@ type AssetHistoryPanelProps = {
   assets: readonly AssetLibraryAsset[]
   isCollapsed: boolean
   modeLabel: 'View' | 'Add'
+  onAgentRunOpen: (runId: string) => void
   onAssetDeleteRequested: (asset: AssetLibraryAsset) => void
   onAssetOpen: (asset: AssetLibraryAsset) => void
   onCollapsedChange: (collapsed: boolean) => void
-  onPendingCreateRunOpen: () => void
   panelRef?: Ref<HTMLElement>
-  pendingCreateRun?: PendingCreateRunMenuItem | null
+  pendingCreateRuns?: readonly PendingCreateRunMenuItem[]
+  runningEditRuns?: readonly RunningEditRunMenuItem[]
 }
 
 export function AssetHistoryPanel({
@@ -33,18 +37,16 @@ export function AssetHistoryPanel({
   assets,
   isCollapsed,
   modeLabel,
+  onAgentRunOpen,
   onAssetDeleteRequested,
   onAssetOpen,
   onCollapsedChange,
-  onPendingCreateRunOpen,
   panelRef,
-  pendingCreateRun = null,
+  pendingCreateRuns = [],
+  runningEditRuns = [],
 }: AssetHistoryPanelProps) {
-  const visibleAssets = pendingCreateRun?.asset
-    ? assets.filter((asset) => asset.assetId !== pendingCreateRun.asset?.assetId)
-    : assets
-  const hasMenuItems = visibleAssets.length > 0 || Boolean(pendingCreateRun)
-  const menuItemCount = visibleAssets.length + (pendingCreateRun ? 1 : 0)
+  const hasMenuItems = assets.length > 0 || pendingCreateRuns.length > 0
+  const menuItemCount = assets.length + pendingCreateRuns.length
 
   return (
     <aside
@@ -75,43 +77,61 @@ export function AssetHistoryPanel({
             <p className="asset-history-panel__empty">No saved assets yet.</p>
           ) : (
             <ol className="asset-history-list">
-              {pendingCreateRun && (
+              {pendingCreateRuns.map((run, index) => (
                 <li
                   className="asset-history-list__pending"
-                  key="pending-create-run"
+                  key={run.runId}
                 >
                   <AssetHistoryItemButton
-                    meta={
-                      pendingCreateRun.asset
-                        ? `${modeLabel} latest chosen · v${pendingCreateRun.asset.versionNumber}`
-                        : 'Agent running...'
+                    meta={run.status ?? 'Agent running...'}
+                    name={
+                      pendingCreateRuns.length > 1
+                        ? `Creating ${index + 1}`
+                        : 'Creating'
                     }
-                    name={pendingCreateRun.asset?.name ?? 'Creating'}
                     trailing={
-                      pendingCreateRun.asset ? null : (
-                        <LoaderCircle
-                          aria-hidden="true"
-                          className="asset-history-list__spinner"
-                        />
-                      )
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="asset-history-list__spinner"
+                      />
                     }
-                    onClick={onPendingCreateRunOpen}
+                    onClick={() => onAgentRunOpen(run.runId)}
                   />
                 </li>
-              )}
-              {visibleAssets.map((asset) => {
+              ))}
+              {assets.map((asset) => {
                 const versionCount = asset.versions.length
-                const isActive = asset.assetId === activeAssetId
+                const runningEditRun = runningEditRuns.find(
+                  (run) => run.assetId === asset.assetId,
+                )
+                const isRunningEdit = Boolean(runningEditRun)
+                const meta = isRunningEdit
+                  ? (runningEditRun?.status ?? 'Editing...')
+                  : `${modeLabel} latest chosen · ${versionCount} version${versionCount === 1 ? '' : 's'}`
 
                 return (
                   <li
-                    className={isActive ? 'is-active' : ''}
+                    className={
+                      activeAssetId === asset.assetId ? 'is-active' : undefined
+                    }
                     key={asset.assetId}
                   >
                     <AssetHistoryItemButton
-                      meta={`${modeLabel} latest chosen · v${versionCount}`}
+                      meta={meta}
                       name={asset.name}
-                      onClick={() => onAssetOpen(asset)}
+                      trailing={
+                        isRunningEdit ? (
+                          <LoaderCircle
+                            aria-hidden="true"
+                            className="asset-history-list__spinner"
+                          />
+                        ) : null
+                      }
+                      onClick={() =>
+                        runningEditRun
+                          ? onAgentRunOpen(runningEditRun.runId)
+                          : onAssetOpen(asset)
+                      }
                     />
                     <button
                       aria-label={`Delete ${asset.name}`}
