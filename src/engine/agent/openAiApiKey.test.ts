@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  loadStartupOpenAIApiKeyStatus,
   resolveStartupOpenAIApiKeyStatus,
   shouldUseLocalEnvApiKey,
 } from './openAiApiKey'
@@ -18,8 +19,41 @@ describe('shouldUseLocalEnvApiKey', () => {
   })
 })
 
+describe('loadStartupOpenAIApiKeyStatus', () => {
+  it('loads and trims the local dev server key on localhost', async () => {
+    await expect(
+      loadStartupOpenAIApiKeyStatus({
+        fetchLocalEnvApiKey: async () => '  sk-local-test  ',
+        hostname: 'localhost',
+      }),
+    ).resolves.toEqual({
+      apiKey: 'sk-local-test',
+      source: 'local_env',
+    })
+  })
+
+  it('does not fetch the local dev server key on non-localhost origins', async () => {
+    let didFetch = false
+
+    await expect(
+      loadStartupOpenAIApiKeyStatus({
+        fetchLocalEnvApiKey: async () => {
+          didFetch = true
+
+          return 'sk-should-not-load'
+        },
+        hostname: 'manifest3d.example',
+      }),
+    ).resolves.toEqual({
+      apiKey: '',
+      source: 'none',
+    })
+    expect(didFetch).toBe(false)
+  })
+})
+
 describe('resolveStartupOpenAIApiKeyStatus', () => {
-  it('loads and trims the Vite env key on localhost', () => {
+  it('loads and trims a provided local env key on localhost', () => {
     expect(
       resolveStartupOpenAIApiKeyStatus({
         envApiKey: '  sk-local-test  ',
@@ -31,7 +65,7 @@ describe('resolveStartupOpenAIApiKeyStatus', () => {
     })
   })
 
-  it('does not expose the Vite env key on non-localhost origins', () => {
+  it('does not expose a provided local env key on non-localhost origins', () => {
     expect(
       resolveStartupOpenAIApiKeyStatus({
         envApiKey: 'sk-should-not-load',

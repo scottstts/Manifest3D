@@ -80,8 +80,8 @@ export function ApiKeyModal({
           />
         </label>
         <p className="api-key-modal__notice">
-          This app is frontend-only, no backend, it does not store your API key. 
-          The app calls OpenAI API directly. 
+          This app is frontend-only, no backend, your API key is not stored.
+          The app calls OpenAI API directly, and is not sent to any other parties. 
           The key only stays in this browser tab&apos;s memory and is wiped when
           you refresh or reopen the site. If you prefer not to provide a key
           here, run the app from source locally:{' '}

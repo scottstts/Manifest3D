@@ -36,7 +36,10 @@ import {
   type AgentLoopEvent,
 } from '../engine/agent/agentLoop'
 import { createCandidateHistory } from '../engine/agent/candidateHistory'
-import { resolveStartupOpenAIApiKeyStatus } from '../engine/agent/openAiApiKey'
+import {
+  loadStartupOpenAIApiKeyStatus,
+  resolveStartupOpenAIApiKeyStatus,
+} from '../engine/agent/openAiApiKey'
 import { createOpenAIManifestClient } from '../engine/agent/openAiManifestClient'
 import type {
   AgentImageAttachment,
@@ -108,9 +111,8 @@ type PendingCreateRunView = {
 const composeHistoryLimit = 40
 
 export function AppShell() {
-  const startupOpenAIApiKeyStatus = useMemo(
+  const [startupOpenAIApiKeyStatus, setStartupOpenAIApiKeyStatus] = useState(
     () => resolveStartupOpenAIApiKeyStatus(),
-    [],
   )
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
   const [isHistoryPanelCollapsed, setIsHistoryPanelCollapsed] = useState(true)
@@ -228,6 +230,26 @@ export function AppShell() {
   useEffect(() => {
     void assetLibraryStore.load()
   }, [assetLibraryStore])
+
+  useEffect(() => {
+    let isMounted = true
+
+    void loadStartupOpenAIApiKeyStatus().then((status) => {
+      if (!isMounted) {
+        return
+      }
+
+      setStartupOpenAIApiKeyStatus(status)
+
+      if (status.source === 'local_env') {
+        setOpenAIClient(createOpenAIManifestClient({ apiKey: status.apiKey }))
+      }
+    })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   useEffect(
     () => () => {

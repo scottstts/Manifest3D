@@ -126,8 +126,7 @@ describe('runManifestAgentLoop', () => {
     const client: OpenAIManifestClient = {
       async generateAsset() {
         return {
-          message:
-            'Generation is unavailable because VITE_OPENAI_API_KEY is not set.',
+          message: 'Generation is unavailable because no OpenAI API key is loaded.',
           reason: 'missing_api_key',
           status: 'unavailable',
         }
