@@ -84,6 +84,12 @@ import {
   type JointPoseValues,
 } from '../engine/geometry/jointPoses'
 import { modelConfig } from '../engine/config/modelConfig'
+import {
+  resolveAssetPanelActiveState,
+  resolveCreatePromptMode,
+  resolveViewedAssetInstance,
+  type AgentRunMode,
+} from './assetViewState'
 
 type ComposeHistoryEntry = {
   instances: readonly SceneAssetInstance[]
@@ -97,7 +103,6 @@ type PlayingJointPreview = {
   instanceId: string
 }
 
-type AgentRunMode = 'create' | 'edit'
 
 type AgentRunView = {
   agentEvents: readonly AgentLoopEvent[]
@@ -178,7 +183,12 @@ export function AppShell() {
         (instance) => instance.instanceId === selection.targetId,
       )
     : undefined
-  const selectedAsset = selectedInstance?.asset
+  const viewedAssetInstance = resolveViewedAssetInstance({
+    activeWorkspace: sceneSnapshot.activeWorkspace,
+    createInstance: sceneSnapshot.createInstance,
+    selectedInstance,
+  })
+  const viewedAsset = viewedAssetInstance?.asset
   const selectedJointPreviewPoses =
     selectedInstance ? jointPreviewByInstance[selectedInstance.instanceId] ?? {} : {}
   const selectedPlayingJointId =
@@ -188,16 +198,15 @@ export function AppShell() {
       ? playingJointPreview.controlId
       : null
   const exportableCreateAsset =
-    sceneSnapshot.activeWorkspace === 'create' &&
-    selectedInstance?.instanceId === 'create'
-      ? selectedInstance.asset
+    sceneSnapshot.activeWorkspace === 'create' && sceneSnapshot.createInstance
+      ? sceneSnapshot.createInstance.asset
       : undefined
-  const selectedLibraryAsset = selectedAsset
+  const selectedLibraryAsset = viewedAsset
     ? librarySnapshot.library.assets.find(
-        (asset) => asset.assetId === selectedAsset.id,
+        (asset) => asset.assetId === viewedAsset.id,
       )
     : undefined
-  const selectedVersionId = selectedInstance?.versionId ?? null
+  const selectedVersionId = viewedAssetInstance?.versionId ?? null
   const adjacentVersions = getAdjacentAssetVersions(
     selectedLibraryAsset ?? null,
     selectedVersionId,
@@ -227,6 +236,12 @@ export function AppShell() {
     () => agentRuns.find((run) => run.runId === activeAgentRunId) ?? null,
     [activeAgentRunId, agentRuns],
   )
+  const assetPanelActiveState = resolveAssetPanelActiveState({
+    activeAgentRun,
+    activeWorkspace: sceneSnapshot.activeWorkspace,
+    createInstance: sceneSnapshot.createInstance,
+    selectedInstance,
+  })
   const isActiveAgentRunRunning = activeAgentRun?.isRunning ?? false
   const pendingCreateRuns = useMemo(
     () =>
@@ -254,14 +269,11 @@ export function AppShell() {
         })),
     [agentRuns],
   )
-  const promptMode: ChatPanelPromptMode = activeAgentRun
-    ? activeAgentRun.mode === 'edit'
-      ? 'editing'
-      : 'creating'
-    : sceneSnapshot.activeWorkspace === 'create' &&
-        selectedInstance?.instanceId === 'create'
-      ? 'editing'
-      : 'creating'
+  const promptMode: ChatPanelPromptMode = resolveCreatePromptMode({
+    activeAgentRun,
+    activeWorkspace: sceneSnapshot.activeWorkspace,
+    createInstance: sceneSnapshot.createInstance,
+  })
   const canUndoCompose =
     sceneSnapshot.activeWorkspace === 'compose' && composeUndoStack.length > 0
   const canRedoCompose =
@@ -587,9 +599,8 @@ export function AppShell() {
 
       const runId = `agent:${Date.now().toString(36)}`
       const runSelectedInstance =
-        sceneSnapshot.activeWorkspace === 'create' &&
-        selectedInstance?.instanceId === 'create'
-          ? selectedInstance
+        sceneSnapshot.activeWorkspace === 'create'
+          ? sceneStore.getSnapshot().createInstance
           : null
       const runSelectedAsset = runSelectedInstance?.asset ?? null
       const runSelectedVersion =
@@ -813,7 +824,6 @@ export function AppShell() {
       removeAgentRunView,
       sceneSnapshot.activeWorkspace,
       sceneStore,
-      selectedInstance,
       selectionStore,
       updateAgentRunView,
     ],
@@ -971,7 +981,24 @@ export function AppShell() {
 
   const handleNavigateVersion = useCallback(
     (version: AssetLibraryVersion | null) => {
-      if (!version || !selectedInstance) {
+      if (!version) {
+        return
+      }
+
+      const currentSceneSnapshot = sceneStore.getSnapshot()
+      const currentSelection = selectionStore.getSnapshot().selection
+      const currentSelectedInstance = currentSelection.targetId
+        ? currentSceneSnapshot.renderableAssets.find(
+            (instance) => instance.instanceId === currentSelection.targetId,
+          )
+        : undefined
+      const currentViewedInstance = resolveViewedAssetInstance({
+        activeWorkspace: currentSceneSnapshot.activeWorkspace,
+        createInstance: currentSceneSnapshot.createInstance,
+        selectedInstance: currentSelectedInstance,
+      })
+
+      if (!currentViewedInstance) {
         return
       }
 
@@ -985,7 +1012,7 @@ export function AppShell() {
       setCandidateTimelineItems(createVersionTimeline(version))
       setAgentStatus(`Loaded ${version.asset.name} v${version.versionNumber}`)
 
-      if (selectedInstance.instanceId === 'create') {
+      if (currentSceneSnapshot.activeWorkspace === 'create') {
         sceneStore.setCreateAsset(version.asset, version.versionId)
         selectionStore.selectAsset('create', version.assetId)
         return
@@ -993,18 +1020,17 @@ export function AppShell() {
 
       clearComposeHistory()
       sceneStore.setComposeInstanceVersion(
-        selectedInstance.instanceId,
+        currentViewedInstance.instanceId,
         version.asset,
         version.versionId,
       )
-      selectionStore.selectAsset(selectedInstance.instanceId, version.assetId)
+      selectionStore.selectAsset(currentViewedInstance.instanceId, version.assetId)
     },
     [
       assetLibraryStore,
       clearComposeHistory,
       clearActiveAgentRun,
       sceneStore,
-      selectedInstance,
       selectionStore,
     ],
   )
@@ -1305,7 +1331,8 @@ export function AppShell() {
           </div>
         )}
         <AssetHistoryPanel
-          activeAssetId={selectedAsset?.id ?? null}
+          activeAssetId={assetPanelActiveState.activeAssetId}
+          activeRunId={assetPanelActiveState.activeRunId}
           assets={librarySnapshot.library.assets}
           isCollapsed={isHistoryPanelCollapsed}
           modeLabel={

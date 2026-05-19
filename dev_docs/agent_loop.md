@@ -4,7 +4,7 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 
 ## Agent Context
 
-- The harness remains stateless from the LLM transcript perspective. Each create/edit run compiles a fresh prompt from the current scene, current selected asset when editing, optional image attachments, and compact attempt context for the selected saved version.
+- The harness remains stateless from the LLM transcript perspective. Each create/edit run compiles a fresh prompt from the current scene, the current Create viewport asset when editing, optional image attachments, and compact attempt context for the selected saved version.
 - Full LLM transcripts are intentionally not persisted. The visible chat transcript in the right panel is a runtime UI affordance only.
 - Candidate attempts are different from chat transcripts. Attempts are saved with the validated asset version that produced or repaired them, so future edits can include compact validation history without replaying the whole conversation.
 - The agent loop commits only a fresh valid candidate. Candidate freshness is still guarded by the candidate history fingerprint before the asset is saved or rendered.
@@ -25,13 +25,13 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 - Compose is a multi-asset workspace for arranging saved assets only. Prompting and editing are disabled there.
 - The left asset history panel overlays the viewport when expanded. It must not shift the effective viewport center.
 - The right agent panel affects Create viewport centering because it occludes the usable viewport area.
-- Version navigation applies to the selected asset instance. In Create this is the single create instance; in Compose it is the selected compose instance.
+- Version navigation applies to the viewed asset context. In Create this is the single Create viewport instance even if the object outline is cleared; in Compose it remains the selected compose instance.
 
 ## Create And Edit UX
 
-- The right panel mode pill says `creating` when no Create asset is selected and `editing` when the Create asset is selected.
+- The right panel mode pill says `creating` when no Create asset is loaded or a create run is the active view, and `editing` whenever the Create viewport is showing an asset, even if the asset object itself is not selected/outlined.
 - Starting a new Create asset clears the active runtime transcript, candidate timeline, current Create viewport asset, and selection. It does not delete saved history and does not stop background agent runs.
-- Submitting a create prompt clears the previous Create viewport asset before the run. Submitting an edit prompt keeps the current selected asset as edit context.
+- Submitting a create prompt clears the previous Create viewport asset before the run. Submitting an edit prompt uses the current Create viewport asset as edit context, not the transient renderer object-selection outline.
 - Multiple create/edit runs may continue in the background. Running create jobs appear as top `Creating` rows in the asset history panel; running edit jobs stay attached to their source asset row. Opening one of those rows restores that run's prompt message and progress timeline until it finishes.
 - User prompt messages and agent timeline messages are interleaved in the right panel for the current runtime session only.
 - Image attachments can be selected from disk or pasted into the prompt textarea. Attached images show removable thumbnails before submission and thumbnail context in the runtime transcript.

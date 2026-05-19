@@ -20,6 +20,7 @@ type RunningEditRunMenuItem = {
 
 type AssetHistoryPanelProps = {
   activeAssetId: string | null
+  activeRunId: string | null
   assets: readonly AssetLibraryAsset[]
   isCollapsed: boolean
   modeLabel: 'View' | 'Add'
@@ -34,6 +35,7 @@ type AssetHistoryPanelProps = {
 
 export function AssetHistoryPanel({
   activeAssetId,
+  activeRunId,
   assets,
   isCollapsed,
   modeLabel,
@@ -79,7 +81,11 @@ export function AssetHistoryPanel({
             <ol className="asset-history-list">
               {pendingCreateRuns.map((run, index) => (
                 <li
-                  className="asset-history-list__pending"
+                  className={
+                    activeRunId === run.runId
+                      ? 'asset-history-list__pending is-active'
+                      : 'asset-history-list__pending'
+                  }
                   key={run.runId}
                 >
                   <AssetHistoryItemButton

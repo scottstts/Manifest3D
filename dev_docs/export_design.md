@@ -1,8 +1,8 @@
 # Phase 6 Export Design Notes
 
-GLB export is a Create-workspace action. The top-chrome button remains visible globally, but it is enabled only when the active workspace is `create` and the selected instance is the Create viewport instance (`instanceId === "create"`). Compose selections intentionally do not export yet because Compose instances carry arrangement transforms and multi-asset context that need a separate export contract.
+GLB export is a Create-workspace action. The top-chrome button remains visible globally, but it is enabled only when the active workspace is `create` and the Create viewport has an asset loaded. It does not depend on the transient renderer object-selection outline. Compose selections intentionally do not export yet because Compose instances carry arrangement transforms and multi-asset context that need a separate export contract.
 
-Export starts from the selected Manifest3D asset JSON, not from the live React Three scene. `exportGlb.ts` rebuilds the asset into an isolated Three group, clones that group for export, and then disposes the intermediate build. This keeps selection state, transform controls, viewport helpers, lighting, the ground plane, and other renderer-only objects out of the exported file.
+Export starts from the viewed Create Manifest3D asset JSON, not from the live React Three scene. `exportGlb.ts` rebuilds the asset into an isolated Three group, clones that group for export, and then disposes the intermediate build. This keeps selection state, transform controls, viewport helpers, lighting, the ground plane, and other renderer-only objects out of the exported file.
 
 Assets with non-fixed joints expose two export choices in the top chrome: static and dynamic. Static export keeps the original rest-pose behavior. Dynamic export uses the same canonical asset JSON but adds glTF animation clips generated from `controls` or fallback per-joint controls; those clips target the exported joint groups with standard TRS animation tracks. Assets with only fixed joints skip the menu and export static directly.
 
