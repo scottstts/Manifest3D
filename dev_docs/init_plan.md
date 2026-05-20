@@ -537,10 +537,12 @@ Responsibilities:
 - Compute asset, part, and visual bounds.
 - Preserve enough metadata for selection, exact tests, and export filtering.
 
-Initial geometry types:
+Supported geometry types:
 
 - `box`
+- `roundedBox`
 - `cylinder`
+- `capsule`
 - `sphere`
 - `cone`
 - `torus`
@@ -548,7 +550,7 @@ Initial geometry types:
 - `extrude`
 - `tube`
 
-Use clean primitive composition first. Do not add arbitrary mesh-code generation. Add CSG or hollow-specific primitives only when repeated prompt failures show that additive primitives are inadequate.
+Use clean primitive composition first. Do not add arbitrary mesh-code generation. `roundedBox` and `capsule` are now part of Contract V2 because live pipeline runs showed they materially improve manufactured-object quality without introducing arbitrary mesh code. Add CSG or hollow-specific primitives only when repeated prompt failures show that additive primitives and existing path/lathe/extrude/tube composition are inadequate.
 
 ## Validation Harness
 
@@ -864,7 +866,7 @@ Rules:
 
 ## GLB Export
 
-Implement export after validation and agent loop foundations are in place.
+GLB export is implemented after validation and agent loop foundations.
 
 Requirements:
 
@@ -875,7 +877,7 @@ Requirements:
 - Name output from asset name.
 - Surface export failures in the agent/status panel.
 
-Validation should include an export-readiness smoke check before user export exists. User-facing export is a later feature, but exportability is part of core correctness.
+Validation includes export-readiness smoke checks. User-facing export is implemented for Create assets, and the headless stress harness now exports ready candidates as GLB artifacts for visual inspection.
 
 ## Revised Implementation Phases
 
@@ -903,7 +905,7 @@ Future renderer work should build on this joint-driven hierarchy rather than res
 Status:
 
 - Implemented for the local browser harness.
-- Phase 4 still needs repair feedback rendering, candidate history/freshness, prompt compilation, and the real OpenAI loop.
+- Later phases added repair feedback rendering, candidate history/freshness, prompt compilation, the real OpenAI loop, controls, dynamic export, and additional geometry fidelity improvements.
 
 Tasks:
 
@@ -913,6 +915,7 @@ Tasks:
 - Implement geometry descriptor validation.
 - Implement isolated candidate build from the joint graph.
 - Implement baseline QC: bounds, mesh readiness, export traversal, floating support graph, disconnected geometry island warnings, overlap checks, and joint-origin sanity.
+- Keep the targeted hollow `torus`/`tube` segment overlap proxy so grilles and ring guards are not treated as filled disks.
 - Implement allowance handling.
 - Implement exact prompt checks.
 - Add deterministic fixtures for valid, invalid, overlap, allowance, floating, disconnected-island, and exact-check cases.
@@ -982,6 +985,7 @@ Tasks:
 Acceptance:
 
 - Selected asset downloads as `.glb`.
+- Movable assets can export static and dynamic GLB variants.
 - Export excludes grid, axes, selection outlines, helper objects, and UI-only metadata.
 - Exported GLB contains expected geometry and materials.
 - Unit tests cover export filtering logic where possible.
@@ -993,12 +997,13 @@ Tasks:
 - Add joint preview controls, including manifest-declared grouped controls and per-joint fallback controls.
 - Animate or scrub revolute/prismatic/continuous controls.
 - Add sampled-pose validation for prompt-critical mechanisms.
-- Improve overlap/contact checks from bounds-level to mesh-level if needed.
+- Improve overlap/contact checks from bounds-level to targeted hollow-shape proxies or mesh-level checks if needed.
 - Add additional procedural geometry only where validation or prompt quality demands it.
 
 Acceptance:
 
 - Generated joints and grouped controls can be inspected.
+- Multi-joint movable assets declare controls that cover their movable joints.
 - Pose-specific exact checks can run deterministically.
 - The validation report can distinguish rest-pose and sampled-pose findings.
 

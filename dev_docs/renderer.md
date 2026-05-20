@@ -29,4 +29,4 @@ Any future animated renderer behavior must explicitly call Fiber `invalidate()` 
 
 ## UI Coupling
 
-The export control lives inside the top chrome on the right. It remains visible at all times and is disabled until an asset is selected. GLB export itself is still a later phase.
+The export control lives inside the top chrome on the right. It remains visible at all times and is enabled only when the active Create workspace has a viewed asset loaded. Static assets export directly as GLB; assets with movable joints expose static and dynamic GLB choices.

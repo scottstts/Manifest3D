@@ -44,7 +44,9 @@ This means:
 - export still uses the canonical asset; dynamic GLB export adds generated motion clips instead of exporting the current preview pose
 - resetting the preview simply removes per-instance pose state
 
-The preview panel appears only for selected instances that have movable joints. If the asset declares `controls`, those controls define the dials; uncovered movable joints still get fallback individual dials. This supports linked controls such as all wheel-spin joints under one dial while keeping independent hinges separate. Limited revolute/prismatic controls ping-pong during playback; continuous controls wrap through a full turn.
+The preview panel appears only for selected instances that have movable joints. If the asset declares `controls`, those controls define the dials; uncovered movable joints still get fallback individual dials at runtime. Validation is stricter for generated multi-joint assets: when more than one movable joint exists, the manifest must declare controls that cover those movable joints. This keeps the authored mechanism intentional for preview and dynamic GLB export instead of relying on accidental fallback dials.
+
+Limited revolute/prismatic controls ping-pong during playback; continuous controls wrap through a full turn.
 
 ## Demand-Driven Rendering
 
@@ -87,15 +89,18 @@ The local runtime parser remains more permissive where useful, so existing hand-
 
 ## Overlap Fidelity
 
-Phase 7 keeps the existing bounds-level overlap/contact implementation. It extends when checks run, not the geometric collision primitive itself.
+Overlap/contact validation is still based on bounds, projection intervals, and deterministic tolerances, not a full mesh collision library. Phase 7 originally extended when checks run rather than replacing the geometric collision primitive.
 
-That choice is intentional for this phase:
+The current implementation adds a targeted refinement for hollow protective shapes: `torus` and `tube` visuals are split into segment bounds before overlap testing. This prevents circular grilles, cages, rims, and ring guards from behaving like filled disks while still reporting real material intersections when another visual crosses the ring or tube body.
+
+That choice is intentional:
 
 - sampled-pose validation needed deterministic report shape first
 - bounds-level checks are already integrated with allowances and repair feedback
-- mesh-level collision can be added later behind the same signal/check surfaces
+- hollow ring/tube segment proxies solve a real generated-asset failure mode without adding a heavy collision dependency
+- mesh-level collision can still be added later behind the same signal/check surfaces
 
-The plan allowed mesh-level checks "if needed"; the implementation did not introduce that heavier path because the immediate failure mode was lack of pose sampling, not lack of a mesh collision library.
+The plan allowed mesh-level checks "if needed"; the implementation still avoids that heavier path because the immediate live failure modes were lack of pose sampling and overly broad hollow-shape bounds, not a general need for per-triangle collision.
 
 ## Allowances In Sampled Poses
 
@@ -122,6 +127,8 @@ Phase 7 added coverage for:
 - building an asset at a supplied joint pose
 - pose-specific authored checks running in `sampled_poses`
 - generated sampled-pose overlaps being reported separately from rest-pose overlaps
+- multi-joint movable assets requiring authored control coverage
+- hollow torus/tube overlap checks not filling the center void
 - validation timeline/stage ordering including sampled poses
 - grouped preview controls and per-joint fallback controls
 - OpenAI strict structured-output compatibility for the response schema
@@ -134,7 +141,7 @@ The system does not yet provide:
 
 - physics simulation
 - automatic motion planning
-- mesh-level collision/contact
+- general mesh-level collision/contact
 - persisted preview poses
 - export of a chosen animated pose
 

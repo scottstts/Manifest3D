@@ -6,6 +6,9 @@ const positiveNumber = finiteNumber.positive()
 const nonNegativeNumber = finiteNumber.min(0)
 const nonEmptyId = z.string().trim().min(1)
 const segmentCount = z.number().int().min(3).max(192)
+const roundedBoxSegmentCount = z.number().int().min(1).max(32)
+const capsuleCapSegmentCount = z.number().int().min(1).max(64)
+const capsuleHeightSegmentCount = z.number().int().min(1).max(64)
 const hexColor = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/)
 
 export const manifestVector2Schema = z.tuple([finiteNumber, finiteNumber])
@@ -33,6 +36,14 @@ export const manifestGeometrySchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('box'),
       size: manifestPositiveVector3Schema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('roundedBox'),
+      size: manifestPositiveVector3Schema,
+      radius: positiveNumber,
+      segments: roundedBoxSegmentCount.optional(),
     })
     .strict(),
   z
@@ -67,6 +78,16 @@ export const manifestGeometrySchema = z.discriminatedUnion('type', [
       radius: positiveNumber,
       height: positiveNumber,
       radialSegments: segmentCount.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('capsule'),
+      radius: positiveNumber,
+      height: positiveNumber,
+      capSegments: capsuleCapSegmentCount.optional(),
+      radialSegments: segmentCount.optional(),
+      heightSegments: capsuleHeightSegmentCount.optional(),
     })
     .strict(),
   z

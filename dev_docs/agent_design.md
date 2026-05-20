@@ -10,10 +10,13 @@ The prompt files are Manifest3D-specific, but they intentionally carry the relev
 
 - realistic geometry is the primary quality bar
 - use real-world scale and plausible materials
+- prefer `roundedBox` and `capsule` where manufactured objects need softened panels, handles, rails, padded supports, rounded pins, or grips
 - articulate primary visible mechanisms and controls
+- give multi-joint mechanisms clear `controls` coverage instead of leaving unrelated movable joints as orphan dials
 - avoid floating parts and unsupported visual islands
 - classify overlap as intentional or unintended before repairing it
 - pair intentional overlap allowances with exact proof checks
+- preserve real clearance for moving rotors, blades, wheels, hinges, and sliders inside stationary guards, grilles, cages, rails, and shrouds
 - treat validation output as sensor data, not as permission to simplify the requested object
 - use concise stable semantic ids and avoid state words like `open`, `closed`, or `extended`
 
@@ -34,6 +37,8 @@ Do not port Articraft's Python/tool instructions into these prompts. Manifest3D 
 - compact examples
 
 Edit mode requires a selected asset and returns the full revised asset JSON, not a patch. Repair mode includes the failed candidate and `<validation_signals>` feedback. The failed candidate is still complete, but it is minified in repair turns because real headless runs showed pretty-printed candidate JSON was the dominant context cost after signal compaction.
+
+Image attachments are passed through the same prompt compiler metadata and provider request path as the app. The headless harness can now load local reference image files for stress runs, but that support is contained in `test/headless/agentPipelineSmoke.test.ts`; the app-side agent client still receives ordinary image attachment payloads.
 
 ## Candidate History And Freshness
 
@@ -82,6 +87,20 @@ Repair rules are chosen from the primary failure kind. Schema failures tell the 
 Repeated failures and failure streaks are included in the feedback summary so Phase 5 can feed them back into repair turns.
 
 Repair feedback also injects the candidate revision and fingerprint. This mirrors the Articraft freshness invariant: the validation evidence belongs to exactly one candidate revision, any mutation requires fresh validation, and the model should make the smallest focused repair while preserving unrelated stable ids.
+
+## Headless Stress Harness
+
+`test/headless/agentPipelineSmoke.test.ts` is the practical pipeline stress harness. It exercises the same embedded engine and agent loop headlessly, then records candidate JSON, validation reports, request/response exchanges, and GLB artifacts for visual inspection.
+
+The headless harness deliberately bends around the app rather than the app bending around the test. Test-only conveniences such as Node file shims, local reference-image loading, artifact directory writing, and generated `glb-viewer.html` live in the test harness. App source should change only for real engine, validation, export, or prompt quality improvements that also matter to interactive runs.
+
+Current headless stress behavior:
+
+- the default run budget is one hour
+- ready candidates export static GLB artifacts
+- assets with movable joints also export dynamic GLB artifacts when animation export is supported
+- local reference images can be supplied through `HEADLESS_AGENT_IMAGE_PATH` or `HEADLESS_AGENT_IMAGE_PATHS`
+- summary JSON records exported GLB paths and the generated viewer HTML path
 
 ## Timeline Projection
 

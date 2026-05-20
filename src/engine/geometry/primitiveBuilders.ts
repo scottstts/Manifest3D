@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu'
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import type {
   ManifestGeometry,
   ManifestVector2,
@@ -11,6 +12,14 @@ export function buildPrimitiveGeometry(
   switch (geometry.type) {
     case 'box':
       return new THREE.BoxGeometry(...geometry.size)
+    case 'roundedBox':
+      return new RoundedBoxGeometry(
+        geometry.size[0],
+        geometry.size[1],
+        geometry.size[2],
+        geometry.segments ?? 4,
+        geometry.radius,
+      )
     case 'cylinder':
       return new THREE.CylinderGeometry(
         geometry.radiusTop,
@@ -36,6 +45,14 @@ export function buildPrimitiveGeometry(
         geometry.radius,
         geometry.height,
         geometry.radialSegments ?? 32,
+      )
+    case 'capsule':
+      return new THREE.CapsuleGeometry(
+        geometry.radius,
+        geometry.height,
+        geometry.capSegments ?? 8,
+        geometry.radialSegments ?? 24,
+        geometry.heightSegments ?? 1,
       )
     case 'lathe':
       return new THREE.LatheGeometry(

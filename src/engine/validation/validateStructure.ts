@@ -17,6 +17,7 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   signals.push(...validateUniqueIds(asset, controls))
   signals.push(...validateRefs(asset, controls))
   signals.push(...validateAllowanceRefs(asset))
+  signals.push(...validateMovableControlCoverage(asset, controls))
   signals.push(...validateJointTree(asset))
   signals.push(...validateJointSemantics(asset))
 
@@ -241,6 +242,64 @@ function validateRefs(
   }
 
   return signals
+}
+
+function validateMovableControlCoverage(
+  asset: ManifestAsset,
+  controls: ManifestAsset['controls'],
+): ValidationSignal[] {
+  const movableJoints = asset.joints.filter((joint) => joint.type !== 'fixed')
+
+  if (movableJoints.length <= 1) {
+    return []
+  }
+
+  if (controls.length === 0) {
+    return [
+      createValidationSignal(
+        'model_validity',
+        'movable_joints_missing_controls',
+        `Asset has ${movableJoints.length} movable joints but no manifest controls.`,
+        {
+          details:
+            'Group linked mechanisms into controls, and give independent moving mechanisms their own control instead of relying on fallback joint dials.',
+          path: '/controls',
+          refs: { jointIds: movableJoints.map((joint) => joint.id).join(', ') },
+          stage: 'structure',
+        },
+      ),
+    ]
+  }
+
+  const controlledJointIds = new Set(
+    controls.flatMap((control) =>
+      control.joints.map((binding) => binding.jointId),
+    ),
+  )
+  const missingControlJoints = movableJoints.filter(
+    (joint) => !controlledJointIds.has(joint.id),
+  )
+
+  if (missingControlJoints.length === 0) {
+    return []
+  }
+
+  return [
+    createValidationSignal(
+      'model_validity',
+      'movable_joint_missing_control',
+      `Movable joints need manifest controls: ${missingControlJoints.map((joint) => joint.id).join(', ')}.`,
+      {
+        details:
+          'Controls are the authored mechanism contract used by preview and dynamic GLB export; avoid leaving multi-joint assets to fallback one-joint dials.',
+        path: '/controls',
+        refs: {
+          jointIds: missingControlJoints.map((joint) => joint.id).join(', '),
+        },
+        stage: 'structure',
+      },
+    ),
+  ]
 }
 
 function validateAllowanceRefs(asset: ManifestAsset): ValidationSignal[] {

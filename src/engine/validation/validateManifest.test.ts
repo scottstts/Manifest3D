@@ -122,6 +122,29 @@ describe('validateManifestAssetCandidate', () => {
     )
   })
 
+  it('rejects rounded boxes whose radius exceeds their shortest half extent', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts[0].visuals[0].geometry = {
+      radius: 0.3,
+      size: [0.4, 0.2, 0.5],
+      type: 'roundedBox',
+    }
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(false)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'rounded_box_radius_too_large',
+          path: '/parts/0/visuals/0/geometry/radius',
+          stage: 'structure',
+        }),
+      ]),
+    )
+  })
+
   it('flags candidates with implausibly tiny built bounds', () => {
     const asset = createValidValidationFixtureAsset()
 
@@ -282,6 +305,117 @@ describe('validateManifestAssetCandidate', () => {
     expect(signalCodes).toContain('control_missing_joint')
     expect(signalCodes).toContain('control_fixed_joint')
     expect(signalCodes).toContain('control_duplicate_joint')
+  })
+
+  it('requires manifest controls for multi-joint articulated assets', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts.push({
+      id: 'crate-latch',
+      name: 'Latch',
+      role: 'control',
+      visuals: [
+        {
+          id: 'crate-latch-tab',
+          geometry: {
+            size: [0.12, 0.05, 0.02],
+            type: 'box',
+          },
+          materialId: 'mat-white',
+          transform: {
+            position: [0, 0.03, 0],
+          },
+        },
+      ],
+    })
+    asset.joints.push({
+      axis: [1, 0, 0],
+      childPartId: 'crate-latch',
+      id: 'crate-latch-hinge',
+      limits: {
+        effort: 2,
+        lower: -1,
+        upper: 0,
+        velocity: 2,
+      },
+      name: 'Latch Hinge',
+      origin: {
+        position: [0, 0.34, 0.28],
+      },
+      parentPartId: 'crate-base',
+      type: 'revolute',
+    })
+    asset.controls = []
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(false)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'movable_joints_missing_controls',
+          path: '/controls',
+          stage: 'structure',
+        }),
+      ]),
+    )
+  })
+
+  it('requires controls to cover every movable joint when controls are authored', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts.push({
+      id: 'crate-latch',
+      name: 'Latch',
+      role: 'control',
+      visuals: [
+        {
+          id: 'crate-latch-tab',
+          geometry: {
+            radius: 0.02,
+            height: 0.12,
+            type: 'capsule',
+          },
+          materialId: 'mat-white',
+          transform: {
+            position: [0, 0.03, 0],
+            rotation: [0, 0, Math.PI / 2],
+          },
+        },
+      ],
+    })
+    asset.joints.push({
+      axis: [1, 0, 0],
+      childPartId: 'crate-latch',
+      id: 'crate-latch-hinge',
+      limits: {
+        effort: 2,
+        lower: -1,
+        upper: 0,
+        velocity: 2,
+      },
+      name: 'Latch Hinge',
+      origin: {
+        position: [0, 0.34, 0.28],
+      },
+      parentPartId: 'crate-base',
+      type: 'revolute',
+    })
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(false)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'movable_joint_missing_control',
+          refs: {
+            jointIds: 'crate-latch-hinge',
+          },
+          stage: 'structure',
+        }),
+      ]),
+    )
   })
 
   it('flags physically disconnected part groups', () => {

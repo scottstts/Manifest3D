@@ -44,6 +44,19 @@ const visualSchema = objectSchema(
         ),
         objectSchema(
           {
+            type: literalSchema('roundedBox'),
+            size: positiveVector3Schema(
+              'Rounded box dimensions [width, height, depth].',
+            ),
+            radius: positiveNumberSchema(
+              'Positive corner radius smaller than half the shortest dimension.',
+            ),
+            segments: roundedBoxSegmentCountSchema(),
+          },
+          ['type', 'size', 'radius', 'segments'],
+        ),
+        objectSchema(
+          {
             type: literalSchema('cylinder'),
             radiusTop: positiveNumberSchema('Positive top radius.'),
             radiusBottom: positiveNumberSchema('Positive bottom radius.'),
@@ -69,6 +82,26 @@ const visualSchema = objectSchema(
             radialSegments: segmentCountSchema(),
           },
           ['type', 'radius', 'height', 'radialSegments'],
+        ),
+        objectSchema(
+          {
+            type: literalSchema('capsule'),
+            radius: positiveNumberSchema('Positive capsule radius.'),
+            height: positiveNumberSchema(
+              'Positive height of the straight middle section.',
+            ),
+            capSegments: capsuleCapSegmentCountSchema(),
+            radialSegments: segmentCountSchema(),
+            heightSegments: capsuleHeightSegmentCountSchema(),
+          },
+          [
+            'type',
+            'radius',
+            'height',
+            'capSegments',
+            'radialSegments',
+            'heightSegments',
+          ],
         ),
         objectSchema(
           {
@@ -594,6 +627,27 @@ function segmentCountSchema(): JsonSchema {
   return integerSchema('Integer segment count from 3 to 192.', {
     maximum: 192,
     minimum: 3,
+  })
+}
+
+function roundedBoxSegmentCountSchema(): JsonSchema {
+  return integerSchema('Integer rounded-corner segment count from 1 to 32.', {
+    maximum: 32,
+    minimum: 1,
+  })
+}
+
+function capsuleCapSegmentCountSchema(): JsonSchema {
+  return integerSchema('Integer cap segment count from 1 to 64.', {
+    maximum: 64,
+    minimum: 1,
+  })
+}
+
+function capsuleHeightSegmentCountSchema(): JsonSchema {
+  return integerSchema('Integer height segment count from 1 to 64.', {
+    maximum: 64,
+    minimum: 1,
   })
 }
 

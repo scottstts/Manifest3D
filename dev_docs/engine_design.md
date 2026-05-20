@@ -16,6 +16,21 @@ Stable ids are the contract surface:
 
 Names remain display labels. Checks, controls, and allowances should reference ids so repairs do not accidentally break exact relationships or UI articulation controls by renaming visible text.
 
+Current geometry descriptors include additive primitives for hard-surface objects plus the later quality primitives added after live headless stress runs:
+
+- `box`
+- `roundedBox`
+- `cylinder`
+- `capsule`
+- `sphere`
+- `cone`
+- `torus`
+- `lathe`
+- `extrude`
+- `tube`
+
+`roundedBox` and `capsule` are part of the real asset contract, not test-only affordances. They exist because repeated generated assets needed softened housings, panels, handles, rails, grips, rounded pins, and padded supports without excessive stacks of boxes and cylinders.
+
 ## Joint-Driven Assembly
 
 `src/engine/geometry/assetBuilder.ts` builds the Three.js hierarchy from joints:
@@ -46,6 +61,7 @@ Implemented baseline QC includes:
 - disconnected visual-island warning inside a part
 - current-pose overlap failure unless scoped by allowance
 - joint-origin distance warning
+- movable-joint control coverage for articulated assets with multiple movable joints
 
 Authored checks are for prompt-critical exact claims:
 
@@ -58,9 +74,11 @@ Authored checks are for prompt-critical exact claims:
 
 ## Approximate Geometry Policy
 
-The browser harness currently uses Three.js `Box3` bounds, projection intervals, and contact tolerances. This is intentional for Phase 3: it gives deterministic validation and report shape before adding heavier mesh-level collision logic.
+The browser harness currently uses Three.js `Box3` bounds, projection intervals, and contact tolerances. This is intentional: it gives deterministic validation and report shape before adding heavier mesh-level collision logic.
 
-Future mesh-level overlap/contact checks should keep the same signal and check schema so Phase 4 repair feedback does not need a second redesign.
+There is one important refinement: hollow `torus` and `tube` visuals are decomposed into segment bounds for overlap checks. A whole-visual AABB treats a ring or grille like a filled disk, which caused false-positive guard-versus-rotor failures in live headless fan runs. Segment proxies preserve the same signal/check surface while letting hollow grilles, cages, rims, and rings protect moving internals without being treated as solid blockers.
+
+Future mesh-level overlap/contact checks should keep the same signal and check schema so repair feedback does not need a second redesign.
 
 ## Allowances
 

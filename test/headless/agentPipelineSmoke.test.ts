@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { request as httpsRequest } from 'node:https'
-import { dirname, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { basename, dirname, extname, relative, resolve } from 'node:path'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { runManifestAgentLoop, type AgentLoopEvent } from '../../src/engine/agent/agentLoop'
 import { createOpenAIManifestClient } from '../../src/engine/agent/openAiManifestClient'
 import type {
+  AgentImageAttachment,
   AgentRequest,
   AgentResponse,
   OpenAIManifestClient,
@@ -12,7 +13,15 @@ import type {
 import { createAssetLibraryStore } from '../../src/engine/persistence/assetLibraryStore'
 import { createMemoryAssetLibraryRepository } from '../../src/engine/persistence/assetLibraryRepository'
 import { createSceneStore } from '../../src/engine/scene/sceneStore'
-import type { ManifestScene } from '../../src/engine/schema/manifestTypes'
+import {
+  canExportManifestAssetAnimation,
+  exportManifestAssetGlb,
+  type GlbExportMode,
+} from '../../src/engine/scene/exportGlb'
+import type {
+  ManifestAsset,
+  ManifestScene,
+} from '../../src/engine/schema/manifestTypes'
 
 type CapturedExchange = {
   artifacts: {
@@ -48,9 +57,23 @@ type CapturedExchange = {
   }
 }
 
+type HeadlessGlbArtifact = {
+  byteLength: number
+  fileName: string
+  mode: GlbExportMode
+  path: string
+}
+
+type HeadlessImageArtifact = {
+  mediaType: string
+  name: string
+  path: string
+}
+
 // intentionally use a more difficult prompt to stress test the pipeline
 const defaultPrompt =
   'a silver boxy pickup truck with spinning wheels and front wheels that can turn left and right'
+const defaultRunTimeoutMs = 3_600_000
 const emptyScene: ManifestScene = {
   assets: [],
   schemaVersion: 1,
@@ -59,13 +82,20 @@ const emptyScene: ManifestScene = {
 const describeLiveHeadless = isHeadlessAgentEnabled() ? describe : describe.skip
 
 describeLiveHeadless('headless agent pipeline smoke', () => {
+  beforeAll(() => {
+    vi.stubGlobal('FileReader', HeadlessFileReader)
+  })
+
   it(
     'runs the real create pipeline and captures every candidate attempt',
     async () => {
       const prompt = readStringEnv('HEADLESS_AGENT_PROMPT', defaultPrompt)
       const runId = `headless:${safeTimestamp()}`
       const artifactRoot = createArtifactRoot(runId)
-      const runTimeoutMs = readNumberEnv('HEADLESS_AGENT_RUN_TIMEOUT_MS', 540_000)
+      const runTimeoutMs = readNumberEnv(
+        'HEADLESS_AGENT_RUN_TIMEOUT_MS',
+        defaultRunTimeoutMs,
+      )
       const fetchTimeoutMs = readNumberEnv(
         'HEADLESS_AGENT_FETCH_TIMEOUT_MS',
         runTimeoutMs + 30_000,
@@ -76,6 +106,8 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       }, runTimeoutMs)
       const apiKey = readRequiredOpenAIApiKey()
       const events: AgentLoopEvent[] = []
+      const { artifacts: imageArtifacts, attachments: imageAttachments } =
+        readHeadlessImageAttachments(artifactRoot)
       const sceneStore = createSceneStore(emptyScene)
       const assetLibraryStore = createAssetLibraryStore(
         createMemoryAssetLibraryRepository(),
@@ -95,6 +127,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         result = await runManifestAgentLoop(
           {
             maxRepairTurns: readNumberEnv('HEADLESS_AGENT_MAX_REPAIR_TURNS', 4),
+            imageAttachments,
             mode: 'create',
             runId,
             scene: emptyScene,
@@ -128,6 +161,8 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       }
 
       let savedVersionId: string | null = null
+      let glbExports: HeadlessGlbArtifact[] = []
+      let glbViewerHtml: string | null = null
 
       if (result.status === 'ready') {
         const savedVersion = await assetLibraryStore.saveValidatedVersion({
@@ -139,6 +174,8 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 
         savedVersionId = savedVersion.versionId
         sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
+        glbExports = await writeHeadlessGlbExports(artifactRoot, result.asset)
+        glbViewerHtml = writeHeadlessGlbViewer(artifactRoot, glbExports)
       }
 
       writeHeadlessArtifacts({
@@ -152,6 +189,9 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         runCompletedAt: new Date(),
         fetchTimeoutMs,
         runTimeoutMs,
+        glbExports,
+        glbViewerHtml,
+        imageArtifacts,
         savedVersionId,
         scene: sceneStore.getSnapshot().scene,
         library: assetLibraryStore.getSnapshot().library,
@@ -165,7 +205,8 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
     },
     readNumberEnv(
       'HEADLESS_AGENT_TIMEOUT_MS',
-      readNumberEnv('HEADLESS_AGENT_RUN_TIMEOUT_MS', 540_000) + 60_000,
+      readNumberEnv('HEADLESS_AGENT_RUN_TIMEOUT_MS', defaultRunTimeoutMs) +
+        60_000,
     ),
   )
 })
@@ -310,6 +351,9 @@ function writeHeadlessArtifacts({
   runCompletedAt,
   fetchTimeoutMs,
   runTimeoutMs,
+  glbExports,
+  glbViewerHtml,
+  imageArtifacts,
   savedVersionId,
   scene,
   library,
@@ -324,6 +368,9 @@ function writeHeadlessArtifacts({
   runCompletedAt: Date
   fetchTimeoutMs: number
   runTimeoutMs: number
+  glbExports: readonly HeadlessGlbArtifact[]
+  glbViewerHtml: string | null
+  imageArtifacts: readonly HeadlessImageArtifact[]
   savedVersionId: string | null
   scene: ManifestScene
   library: unknown
@@ -359,6 +406,10 @@ function writeHeadlessArtifacts({
     runStartedAt: runStartedAt.toISOString(),
     fetchTimeoutMs,
     runTimeoutMs,
+    glbExports,
+    glbViewerHtml,
+    imageArtifacts,
+    imageAttachmentCount: imageArtifacts.length,
     savedVersionId,
     sceneAssetIds: scene.assets.map((asset) => asset.id),
     attempts: result.history.attempts.map((attempt) => ({
@@ -541,6 +592,215 @@ function logHeadlessSummary(
   }
 }
 
+function readHeadlessImageAttachments(artifactRoot: string): {
+  artifacts: HeadlessImageArtifact[]
+  attachments: AgentImageAttachment[]
+} {
+  const imagePaths = readImageAttachmentPaths()
+
+  if (imagePaths.length === 0) {
+    return {
+      artifacts: [],
+      attachments: [],
+    }
+  }
+
+  const artifacts: HeadlessImageArtifact[] = []
+  const attachments = imagePaths.map((imagePath, index) => {
+    const absolutePath = resolve(process.cwd(), imagePath)
+    const content = readFileSync(absolutePath)
+    const mediaType = inferImageMediaType(absolutePath)
+    const name = basename(absolutePath)
+    const artifactPath = writeBinaryArtifact(
+      artifactRoot,
+      `reference-images/${String(index + 1).padStart(2, '0')}-${name}`,
+      content,
+    )
+
+    artifacts.push({
+      mediaType,
+      name,
+      path: artifactPath,
+    })
+
+    return {
+      id: `headless-ref-${index + 1}`,
+      imageUrl: `data:${mediaType};base64,${content.toString('base64')}`,
+      mediaType,
+      name,
+    }
+  })
+
+  return {
+    artifacts,
+    attachments,
+  }
+}
+
+function readImageAttachmentPaths() {
+  const combined = [
+    process.env.HEADLESS_AGENT_IMAGE_PATH,
+    process.env.HEADLESS_AGENT_IMAGE_PATHS,
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join(',')
+
+  if (!combined) {
+    return []
+  }
+
+  return combined
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+}
+
+function inferImageMediaType(path: string) {
+  switch (extname(path).toLowerCase()) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg'
+    case '.webp':
+      return 'image/webp'
+    case '.gif':
+      return 'image/gif'
+    case '.png':
+      return 'image/png'
+    default:
+      throw new Error(
+        `Unsupported headless image extension for "${path}". Use PNG, JPEG, WEBP, or GIF.`,
+      )
+  }
+}
+
+async function writeHeadlessGlbExports(
+  artifactRoot: string,
+  asset: ManifestAsset,
+): Promise<HeadlessGlbArtifact[]> {
+  const artifacts: HeadlessGlbArtifact[] = []
+  const staticExport = await exportManifestAssetGlb(asset, { mode: 'static' })
+
+  artifacts.push(writeHeadlessGlbArtifact(artifactRoot, 'static', staticExport))
+
+  if (canExportManifestAssetAnimation(asset)) {
+    const dynamicExport = await exportManifestAssetGlb(asset, { mode: 'dynamic' })
+
+    artifacts.push(
+      writeHeadlessGlbArtifact(artifactRoot, 'dynamic', dynamicExport),
+    )
+  }
+
+  return artifacts
+}
+
+function writeHeadlessGlbArtifact(
+  artifactRoot: string,
+  mode: GlbExportMode,
+  result: Awaited<ReturnType<typeof exportManifestAssetGlb>>,
+): HeadlessGlbArtifact {
+  const fileName =
+    mode === 'dynamic'
+      ? addFileNameSuffix(result.fileName, 'dynamic')
+      : result.fileName
+  const path = writeBinaryArtifact(
+    artifactRoot,
+    `glb/${fileName}`,
+    result.arrayBuffer,
+  )
+
+  return {
+    byteLength: result.arrayBuffer.byteLength,
+    fileName,
+    mode,
+    path,
+  }
+}
+
+function writeHeadlessGlbViewer(
+  artifactRoot: string,
+  glbExports: readonly HeadlessGlbArtifact[],
+) {
+  if (glbExports.length === 0) {
+    return null
+  }
+
+  const options = glbExports
+    .map(
+      (glbExport) =>
+        `<option value="${escapeHtml(relativeArtifactPath(artifactRoot, glbExport.path))}">${escapeHtml(`${glbExport.mode} - ${glbExport.fileName}`)}</option>`,
+    )
+    .join('\n')
+  const firstSrc = escapeHtml(
+    relativeArtifactPath(artifactRoot, glbExports[0].path),
+  )
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manifest3D Headless GLB</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: #9a9a9a;
+      color: #111;
+      font: 14px system-ui, sans-serif;
+    }
+    model-viewer {
+      width: 100%;
+      height: 100%;
+      background: #9a9a9a;
+    }
+    .toolbar {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      z-index: 1;
+    }
+  </style>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+</head>
+<body>
+  <div class="toolbar">
+    <select id="asset-select" aria-label="GLB export">
+${options}
+    </select>
+  </div>
+  <model-viewer id="viewer" src="${firstSrc}" camera-controls auto-rotate exposure="0.9" shadow-intensity="0.8"></model-viewer>
+  <script>
+    const select = document.querySelector('#asset-select');
+    const viewer = document.querySelector('#viewer');
+    select.addEventListener('change', () => {
+      viewer.src = select.value;
+    });
+  </script>
+</body>
+</html>
+`
+
+  return writeTextArtifact(artifactRoot, 'glb-viewer.html', html)
+}
+
+function addFileNameSuffix(fileName: string, suffix: string) {
+  return fileName.endsWith('.glb')
+    ? `${fileName.slice(0, -4)}.${suffix}.glb`
+    : `${fileName}.${suffix}.glb`
+}
+
+function relativeArtifactPath(artifactRoot: string, targetPath: string) {
+  return relative(artifactRoot, targetPath).replaceAll('\\', '/')
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
 function createArtifactRoot(runId: string) {
   const baseDir = readStringEnv(
     'HEADLESS_AGENT_ARTIFACT_DIR',
@@ -574,6 +834,19 @@ function writeTextArtifact(
 
   mkdirSync(dirname(targetPath), { recursive: true })
   writeFileSync(targetPath, content, 'utf8')
+
+  return targetPath
+}
+
+function writeBinaryArtifact(
+  artifactRoot: string,
+  relativePath: string,
+  content: ArrayBuffer | Uint8Array,
+) {
+  const targetPath = resolve(artifactRoot, relativePath)
+
+  mkdirSync(dirname(targetPath), { recursive: true })
+  writeFileSync(targetPath, Buffer.from(content))
 
   return targetPath
 }
@@ -657,4 +930,20 @@ function isHeadlessAgentEnabled() {
 
 function safeTimestamp() {
   return new Date().toISOString().replace(/[.]/g, '-')
+}
+
+class HeadlessFileReader {
+  onloadend: (() => void) | null = null
+  result: ArrayBuffer | string | null = null
+
+  readAsArrayBuffer(blob: Blob) {
+    void blob.arrayBuffer().then((arrayBuffer) => {
+      this.result = arrayBuffer
+      this.onloadend?.()
+    })
+  }
+
+  readAsDataURL() {
+    throw new Error('Headless GLB export only reads binary buffers.')
+  }
 }

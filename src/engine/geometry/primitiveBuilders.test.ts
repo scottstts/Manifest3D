@@ -16,6 +16,22 @@ describe('buildPrimitiveGeometry', () => {
     expect(geometry.boundingBox?.max.z).toBeCloseTo(0.4)
   })
 
+  it('builds rounded boxes for softened manufactured forms', () => {
+    const geometry = buildPrimitiveGeometry({
+      radius: 0.04,
+      segments: 6,
+      size: [0.6, 0.2, 0.4],
+      type: 'roundedBox',
+    })
+
+    geometry.computeBoundingBox()
+
+    expect(geometry.type).toBe('RoundedBoxGeometry')
+    expect(geometry.boundingBox?.max.x).toBeCloseTo(0.3)
+    expect(geometry.boundingBox?.max.y).toBeCloseTo(0.1)
+    expect(geometry.boundingBox?.max.z).toBeCloseTo(0.2)
+  })
+
   it('builds tapered cylinders without losing positive volume', () => {
     const geometry = buildPrimitiveGeometry({
       type: 'cylinder',
@@ -28,6 +44,23 @@ describe('buildPrimitiveGeometry', () => {
     geometry.computeBoundingBox()
 
     expect(geometry.type).toBe('CylinderGeometry')
+    expect(geometry.boundingBox?.max.y).toBeGreaterThan(0.3)
+    expect(geometry.boundingBox?.min.y).toBeLessThan(-0.3)
+  })
+
+  it('builds capsules for rounded handles and rails', () => {
+    const geometry = buildPrimitiveGeometry({
+      capSegments: 4,
+      height: 0.5,
+      heightSegments: 2,
+      radialSegments: 12,
+      radius: 0.06,
+      type: 'capsule',
+    })
+
+    geometry.computeBoundingBox()
+
+    expect(geometry.type).toBe('CapsuleGeometry')
     expect(geometry.boundingBox?.max.y).toBeGreaterThan(0.3)
     expect(geometry.boundingBox?.min.y).toBeLessThan(-0.3)
   })

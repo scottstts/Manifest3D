@@ -16,6 +16,12 @@ export type ManifestGeometry =
       size: ManifestVector3
     }
   | {
+      type: 'roundedBox'
+      size: ManifestVector3
+      radius: number
+      segments?: number
+    }
+  | {
       type: 'cylinder'
       radiusTop: number
       radiusBottom: number
@@ -40,6 +46,14 @@ export type ManifestGeometry =
       radius: number
       height: number
       radialSegments?: number
+    }
+  | {
+      type: 'capsule'
+      radius: number
+      height: number
+      capSegments?: number
+      radialSegments?: number
+      heightSegments?: number
     }
   | {
       type: 'lathe'

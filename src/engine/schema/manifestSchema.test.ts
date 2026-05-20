@@ -20,6 +20,43 @@ describe('manifestSchema', () => {
     expect(safeParseManifestScene(invalidScene).success).toBe(false)
   })
 
+  it('accepts rounded box and capsule geometry descriptors', () => {
+    const scene = createValidScene()
+
+    scene.assets[0].parts[0].visuals = [
+      {
+        id: 'schema-rounded-panel',
+        geometry: {
+          radius: 0.02,
+          segments: 4,
+          size: [0.8, 0.2, 0.4],
+          type: 'roundedBox',
+        },
+        materialId: 'mat-blue',
+        transform: {
+          position: [0, 0.1, 0],
+        },
+      },
+      {
+        id: 'schema-capsule-handle',
+        geometry: {
+          capSegments: 4,
+          height: 0.35,
+          heightSegments: 1,
+          radialSegments: 12,
+          radius: 0.04,
+          type: 'capsule',
+        },
+        materialId: 'mat-blue',
+        transform: {
+          position: [0, 0.28, 0],
+        },
+      },
+    ]
+
+    expect(parseManifestScene(scene)).toEqual(scene)
+  })
+
   it('rejects legacy parentId and tests fields', () => {
     const invalidScene = createValidScene()
     const legacyPart = invalidScene.assets[0].parts[0] as Record<string, unknown>

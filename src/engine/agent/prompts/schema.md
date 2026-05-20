@@ -31,12 +31,15 @@ geometry segment or bevel fields. Use `position: [0, 0, 0]`,
 `rotation: [0, 0, 0]`, and `scale: [1, 1, 1]` when no local transform is
 needed.
 
-Part visuals support geometry types `box`, `cylinder`, `sphere`, `cone`, `torus`, `lathe`, `extrude`, and `tube`. Visual transforms are local to the owning part.
+Part visuals support geometry types `box`, `roundedBox`, `cylinder`, `sphere`, `cone`, `capsule`, `torus`, `lathe`, `extrude`, and `tube`. Visual transforms are local to the owning part.
 
 Geometry authoring guidance:
 
 - Use composed wall, rim, rail, sleeve, panel, handle, boss, shaft, and bracket visuals when the real object has those features.
+- Use `roundedBox` for softened manufactured housings, panels, padded blocks, cases, seats, and controls that should not read as sharp placeholder boxes.
+- Use `capsule` for pill-shaped handles, rounded rails, grips, rubber feet, bumpers, soft bars, and small retained pins with rounded ends.
 - Do not represent visible hollow bodies or open cavities as one solid box or capped cylinder.
+- For protective grilles, cages, guards, and shrouds around moving internals, model the guard as stationary bars/rings with real clearance around the moving part's swept volume.
 - Keep visual ids stable and meaningful because checks and allowances may reference them directly.
 - Use one connected part for a manufactured continuous piece; use separate parts only when the real object has a separate body or a meaningful joint.
 
@@ -49,8 +52,9 @@ Joints are the assembly source of truth:
 
 Controls define the preview dials exposed by the app:
 
-- Use `controls: []` for static assets or when each movable joint can use its own fallback dial.
+- Use `controls: []` for static assets, or for a single-movable-joint asset when the fallback dial is acceptable.
 - Add a control when one UI dial should drive one or more movable joints.
+- If an asset has more than one movable joint, include manifest controls that cover every movable joint. Group linked motion such as wheel spin or paired steering under shared controls, and give independent mechanisms separate controls.
 - Each control has `{ "id", "name", "joints", "limits" }`.
 - Each control joint binding has `{ "jointId", "scale", "offset" }` and maps dial value to joint value as `offset + scale * dialValue`.
 - Use one grouped control for linked motion such as four spinning wheels or paired steering knuckles; use separate controls when mechanisms should move independently, such as two separate window hinges.

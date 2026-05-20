@@ -61,6 +61,12 @@ function validateManifestGeometry(
   switch (geometry.type) {
     case 'box':
       return validatePositiveVector3(geometry.size, `${path}/size`, refs)
+    case 'roundedBox':
+      return [
+        ...validatePositiveVector3(geometry.size, `${path}/size`, refs),
+        ...validatePositiveNumber(geometry.radius, `${path}/radius`, refs),
+        ...validateRoundedBoxRadius(geometry.size, geometry.radius, path, refs),
+      ]
     case 'cylinder':
       return [
         ...validatePositiveNumber(geometry.radiusTop, `${path}/radiusTop`, refs),
@@ -75,6 +81,11 @@ function validateManifestGeometry(
         ...validatePositiveNumber(geometry.tube, `${path}/tube`, refs),
       ]
     case 'cone':
+      return [
+        ...validatePositiveNumber(geometry.radius, `${path}/radius`, refs),
+        ...validatePositiveNumber(geometry.height, `${path}/height`, refs),
+      ]
+    case 'capsule':
       return [
         ...validatePositiveNumber(geometry.radius, `${path}/radius`, refs),
         ...validatePositiveNumber(geometry.height, `${path}/height`, refs),
@@ -94,6 +105,32 @@ function validateManifestGeometry(
     default:
       return assertNever(geometry)
   }
+}
+
+function validateRoundedBoxRadius(
+  size: ManifestVector3,
+  radius: number,
+  path: string,
+  refs: Record<string, string>,
+) {
+  const shortestHalfExtent = Math.min(...size) / 2
+
+  if (radius > shortestHalfExtent) {
+    return [
+      createValidationSignal(
+        'model_validity',
+        'rounded_box_radius_too_large',
+        `Rounded box radius ${radius} exceeds half the shortest size ${shortestHalfExtent}.`,
+        {
+          path: `${path}/radius`,
+          refs,
+          stage: 'structure',
+        },
+      ),
+    ]
+  }
+
+  return []
 }
 
 function validateTransform(

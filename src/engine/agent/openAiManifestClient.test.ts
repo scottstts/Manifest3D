@@ -73,6 +73,8 @@ describe('buildOpenAIResponsesRequestBody', () => {
     const controlBindingSchema = getArrayItem(getProperty(controlSchema, 'joints'))
     const boxSchema = getAnyOfVariant(geometrySchema, 'box')
     const boxSizeSchema = getProperty(boxSchema, 'size')
+    const roundedBoxSchema = getAnyOfVariant(geometrySchema, 'roundedBox')
+    const capsuleSchema = getAnyOfVariant(geometrySchema, 'capsule')
     const latheSchema = getAnyOfVariant(geometrySchema, 'lathe')
 
     expect(getProperty(assetSchema, 'parts')).toMatchObject({ minItems: 1 })
@@ -89,6 +91,16 @@ describe('buildOpenAIResponsesRequestBody', () => {
     expect(getArrayItem(boxSizeSchema)).toMatchObject({
       exclusiveMinimum: 0,
       type: 'number',
+    })
+    expect(getProperty(roundedBoxSchema, 'segments')).toMatchObject({
+      maximum: 32,
+      minimum: 1,
+      type: 'integer',
+    })
+    expect(getProperty(capsuleSchema, 'capSegments')).toMatchObject({
+      maximum: 64,
+      minimum: 1,
+      type: 'integer',
     })
     expect(getProperty(latheSchema, 'points')).toMatchObject({ minItems: 2 })
     expect(getProperty(materialSchema, 'opacity')).toMatchObject({
