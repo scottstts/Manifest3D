@@ -17,6 +17,8 @@ The prompt files are Manifest3D-specific, but they intentionally carry the relev
 - avoid floating parts and unsupported visual islands
 - classify overlap as intentional or unintended before repairing it
 - pair intentional overlap allowances with exact proof checks
+- keep `roundedBox` radius within the primitive contract instead of spending a repair turn on impossible corner radii
+- keep visuals inside a part physically continuous, or split separate mounted islands into fixed child parts
 - preserve real clearance for moving rotors, blades, wheels, hinges, and sliders inside stationary guards, grilles, cages, rails, and shrouds
 - treat validation output as sensor data, not as permission to simplify the requested object
 - use concise stable semantic ids and avoid state words like `open`, `closed`, or `extended`
@@ -84,6 +86,11 @@ Failure ordering is deliberate:
 This keeps the model from tuning local geometry before JSON shape, ids, refs, roots, cycles, and joint semantics are valid.
 
 Repair rules are chosen from the primary failure kind. Schema failures tell the model to fix JSON first. Structural failures emphasize stable ids, refs, roots, and joint graph validity. Floating and overlap failures require either a physical fix or scoped allowances with concrete reasons. Missing exact geometry is treated as a stable-id contract failure.
+
+Two common structural repair loops have targeted rules:
+
+- `rounded_box_radius_too_large` tells the model to reduce the radius below half of the shortest size component or adjust the size while preserving softened manufactured form.
+- `allowance_overlap_missing_proof_check` tells the model that every intentional overlap allowance needs a matching exact proof check, and visual-scoped allowances need the same visual pair in that proof.
 
 Repeated failures and failure streaks are included in the feedback summary so Phase 5 can feed them back into repair turns.
 

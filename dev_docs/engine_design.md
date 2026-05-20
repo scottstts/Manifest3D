@@ -30,7 +30,7 @@ Current geometry descriptors include additive primitives for hard-surface object
 - `extrude`
 - `tube`
 
-`roundedBox` and `capsule` are part of the real asset contract, not test-only affordances. They exist because repeated generated assets needed softened housings, panels, handles, rails, grips, rounded pins, and padded supports without excessive stacks of boxes and cylinders.
+`roundedBox` and `capsule` are part of the real asset contract, not test-only affordances. They exist because repeated generated assets needed softened housings, panels, handles, rails, grips, rounded pins, and padded supports without excessive stacks of boxes and cylinders. `roundedBox.radius` must stay within the Three geometry contract: no larger than half of the shortest size component.
 
 ## Joint-Driven Assembly
 
@@ -91,6 +91,10 @@ Allowances are explicit authored declarations:
 - `allow_isolated_part`
 
 Overlap allowances are matched against reported part and optional visual pairs. Scoped visual-pair allowances are preferred. Allowances emit note signals so intentional exceptions remain visible to the agent and UI.
+
+Overlap allowances are also a structure-level contract now, not just prompt guidance. Every `allow_overlap` must have a matching authored proof check for the same part pair. When the allowance names `visualAId` and `visualBId`, the proof check must reference that same visual pair through `expect_contact`, `expect_gap`, `expect_overlap`, or `expect_within`. Broad part-pair overlap allowances remain valid only when there is a matching proof check, but they emit a warning because they make accidental part-wide collisions harder to distinguish from intentional fitted contact.
+
+Disconnected visual islands inside one part remain non-blocking warnings because generated hard-surface assets sometimes use panel/trim composition where a stricter rule could cause repair churn. Prompt guidance now asks the model to keep visuals within a part physically continuous or split separate mounted pieces into fixed child parts.
 
 ## Dev Fixtures
 

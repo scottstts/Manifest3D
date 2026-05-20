@@ -354,6 +354,17 @@ function responseRulesForFailures(
       '- Fix the JSON shape first. Schema failures block structural, geometry, QC, and authored-check feedback.',
       '- Preserve strict Manifest3D JSON only; do not include prose, comments, markdown fences, or generated code.',
     ]
+  } else if (primary.code === 'rounded_box_radius_too_large') {
+    rules = [
+      '- Fix the roundedBox geometry contract before tuning placement: radius must be less than or equal to half of the shortest size component.',
+      '- Keep the softened manufactured form where appropriate; reduce the radius or increase the thin dimension instead of replacing the visual with a sharp placeholder box.',
+    ]
+  } else if (primary.code === 'allowance_overlap_missing_proof_check') {
+    rules = [
+      '- Every intentional overlap allowance needs a matching authored proof check for the same part pair.',
+      '- If the allowance names visual ids, the proof check must reference the same visual pair with expect_contact, expect_gap, expect_overlap, or expect_within.',
+      '- Do not delete the allowance to hide a real intentional fit; either prove the fit or repair the geometry so no allowance is needed.',
+    ]
   } else if (
     primary.stage === 'structure' ||
     primary.kind === 'single_root_policy' ||

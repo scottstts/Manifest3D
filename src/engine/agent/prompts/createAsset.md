@@ -10,7 +10,9 @@ Requirements:
 - Add authored checks for the prompt-critical relationships.
 - Keep the initial candidate compact, physically plausible, and exportable as GLB.
 - Model the object's real construction logic. Use visible walls, rims, lips, rails, bosses, shafts, brackets, panels, and controls instead of one generic placeholder mass.
+- Keep each part internally connected: panels, windows, lamps, rails, axles, and brackets assigned to the same part should touch or visibly mount to that part. Use fixed joints for separate attached pieces instead of disconnected visual islands.
 - Choose geometry that carries the silhouette. Use `roundedBox` or beveled `extrude` for softened manufactured panels and shells, `capsule`/`tube` for handles and rods, and `lathe`/`torus` for rims, tires, knobs, bowls, wheels, and collars.
+- Before returning a candidate, check every `roundedBox`: `radius` must be no larger than half the shortest `size` value.
 - For fans, rotors, guarded wheels, or any moving part inside a grille/cage/shroud, leave visible clearance between the stationary guard bars/rings and the moving swept volume.
 - Use real-world dimensions and plausible materials.
 - For visible lighting requests, make the visible lens/screen material emissive; for flashing or color-switching lights, author material `emissionAnimation` instead of adding separate light objects.
@@ -19,3 +21,4 @@ Requirements:
 - If the asset has more than one movable joint, controls must cover every movable joint; use fallback dials only for a single-joint mechanism.
 - For primary mechanisms, include at least one pose-specific authored check with `check.pose` so validation can inspect the open, extended, rotated, or retained state.
 - Do not duplicate baseline QC as checks. Use authored checks for exact prompt-critical relationships only.
+- If you author an `allow_overlap`, include a matching exact proof check for the same part pair and exact visual pair when visuals are named.

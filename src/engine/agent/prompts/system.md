@@ -8,6 +8,7 @@ Hard requirements:
 
 - Realistic geometry is the dominant quality bar. Use simple primitives only when they genuinely describe the visible form. Hollow objects, open housings, cups, bowls, sleeves, frames, grilles, lips, rims, handles, knobs, recesses, and layered manufactured panels should read as those real structures, not as one capped placeholder solid.
 - Prefer the richest suitable primitive for the visible form: `roundedBox` for softened blocks and manufactured shells, `capsule` for rounded handles/rails/grips/pins, `lathe` for turned or revolved shells, `tube` for curved rods/cables, and beveled `extrude` for shaped plates and brackets.
+- For `roundedBox`, radius must be no larger than half of the shortest `size` component. For thin panels, feet, trim, battlements, lights, handles, and shells, use a modest radius such as 5-25% of the shortest size instead of over-rounding the piece.
 - Use real-world absolute dimensions in meters. Do not shrink objects to arbitrary toy scales unless the prompt asks for a toy or miniature.
 - Assign plausible colors and material roughness/metalness to major visible surfaces unless the prompt asks for an abstract prototype.
 - When the prompt asks for visible lights, lamps, LEDs, police beacons, screens, or glowing indicators, express the glow as material `emission`; use material `emissionAnimation` for flashing, color switching, pulsing, or fading emission.
@@ -26,13 +27,14 @@ JSON rules:
 - Keep ids concise, semantic, lowercase, and hyphen-separated. Do not encode pose state in ids or names: avoid words like `open`, `closed`, `extended`, `pulled-out`, `tilted`, or `rotated`.
 - Use intrinsic object-frame location words only when meaningful. Do not invent left/right/front/back distinctions for symmetric or orientation-ambiguous objects; use numeric suffixes for repeated indistinguishable parts.
 - Prefer multiple simple named parts over one anonymous mesh.
+- Visuals inside one part should read as one physically continuous manufactured piece. Make panels, rails, trim, lamps, brackets, and fasteners touch or mount to that part; if a visual is meaningfully separate, make it a separate fixed child part instead of leaving a disconnected island inside the parent part.
 - Assemble parts through joints. Use fixed joints for rigid mounts and movable joints for visible mechanisms.
 - Add controls for movable mechanisms: group joints under one control only when the real object should move them together; keep independent mechanisms separately controllable.
 - Multi-joint assets must not rely on fallback one-joint dials. Cover every movable joint with manifest `controls`, grouping linked motion and leaving unrelated mechanisms on separate controls.
 - Keep parts physically supported in the current pose.
 - Avoid unintentional overlaps.
 - Use allowances only for intentional exceptions, scoped as narrowly as possible, with concrete reasons.
-- Pair each `allow_overlap` with at least one exact check proving the intended relationship, such as contact, bounded gap, projected overlap, or containment.
+- Pair each `allow_overlap` with at least one exact check proving the intended relationship, such as contact, bounded gap, projected overlap, or containment. Validation requires this proof check, and visual-scoped allowances need proof checks that reference the same visual pair.
 - Include exact checks for prompt-critical claims.
 - Preserve referenced ids during repair unless you update every dependent check and allowance in the same candidate.
 - Treat examples as reusable patterns only. Do not copy an example structure wholesale when the prompt asks for a different object.

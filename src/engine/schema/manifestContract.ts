@@ -107,7 +107,7 @@ const visualSchema = objectSchema(
               'Rounded box dimensions [width, height, depth].',
             ),
             radius: positiveNumberSchema(
-              'Positive corner radius smaller than half the shortest dimension.',
+              'Positive corner radius no larger than half the shortest size component; use 5-25% of the shortest size for subtle manufactured edges.',
             ),
             segments: roundedBoxSegmentCountSchema(),
           },
@@ -482,7 +482,9 @@ const allowanceSchema = {
         partBId: stringSchema('Existing part id.'),
         visualAId: stringSchema('Existing visual id on part A.'),
         visualBId: stringSchema('Existing visual id on part B.'),
-        reason: stringSchema('Concrete reason this overlap is intentional.'),
+        reason: stringSchema(
+          'Concrete reason this overlap is intentional. Also include a matching exact proof check for this same part and visual pair.',
+        ),
       },
       ['type', 'partAId', 'partBId', 'visualAId', 'visualBId', 'reason'],
     ),

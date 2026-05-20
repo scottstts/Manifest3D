@@ -122,6 +122,58 @@ describe('renderValidationSignals', () => {
     expect(rendered).toContain('Keep the joint graph as the assembly source of truth')
   })
 
+  it('renders targeted repair rules for rounded box radius failures', () => {
+    const bundle: ValidationSignalBundle = {
+      signals: [
+        createValidationSignal(
+          'model_validity',
+          'rounded_box_radius_too_large',
+          'Rounded box radius exceeds half the shortest size.',
+          {
+            path: '/parts/0/visuals/0/geometry/radius',
+            stage: 'structure',
+          },
+        ),
+      ],
+      status: 'failure',
+      summary: 'status=failure failures=1 warnings=0 notes=0',
+    }
+
+    const rendered = renderValidationSignals(bundle)
+
+    expect(rendered).toContain('radius must be less than or equal to half')
+    expect(rendered).toContain('softened manufactured form')
+  })
+
+  it('renders targeted repair rules for allowance proof failures', () => {
+    const bundle: ValidationSignalBundle = {
+      signals: [
+        createValidationSignal(
+          'allowance',
+          'allowance_overlap_missing_proof_check',
+          'Overlap allowance needs a matching authored proof check.',
+          {
+            path: '/allowances/0',
+            refs: {
+              partAId: 'base',
+              partBId: 'lid',
+              visualAId: 'base-shell',
+              visualBId: 'lid-panel',
+            },
+            stage: 'structure',
+          },
+        ),
+      ],
+      status: 'failure',
+      summary: 'status=failure failures=1 warnings=0 notes=0',
+    }
+
+    const rendered = renderValidationSignals(bundle)
+
+    expect(rendered).toContain('matching authored proof check')
+    expect(rendered).toContain('same visual pair')
+  })
+
   it('compacts repeated failure groups while preserving representative refs', () => {
     const repeatedOverlapSignals = Array.from({ length: 40 }, (_, index) =>
       createValidationSignal(

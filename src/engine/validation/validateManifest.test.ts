@@ -272,6 +272,66 @@ describe('validateManifestAssetCandidate', () => {
     ).toBe('skipped')
   })
 
+  it('rejects overlap allowances without matching authored proof checks', () => {
+    const asset = createOverlappingValidationFixtureAsset()
+
+    asset.allowances = [
+      {
+        partAId: 'crate-base',
+        partBId: 'crate-lid',
+        reason: 'The lid is intentionally seated into the gasket.',
+        type: 'allow_overlap',
+        visualAId: 'crate-base-shell',
+        visualBId: 'crate-lid-panel',
+      },
+    ]
+    asset.checks = asset.checks.filter(
+      (check) => check.type === 'part_exists' || check.type === 'joint_exists',
+    )
+
+    const result = validateManifestAssetCandidate(asset)
+    const signalCodes = result.report.bundle.signals.map((signal) => signal.code)
+
+    expect(result.report.valid).toBe(false)
+    expect(signalCodes).toContain('allowance_overlap_missing_proof_check')
+    expect(
+      result.report.steps.find((step) => step.stage === 'build')?.status,
+    ).toBe('skipped')
+  })
+
+  it('warns when an overlap allowance is not scoped to exact visuals', () => {
+    const asset = createAllowedOverlapValidationFixtureAsset()
+
+    asset.allowances = [
+      {
+        partAId: 'crate-base',
+        partBId: 'crate-lid',
+        reason: 'The lid is intentionally seated slightly into the soft gasket represented by the base proxy.',
+        type: 'allow_overlap',
+      },
+    ]
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(true)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'allowance_overlap_broad_scope',
+          severity: 'warning',
+          stage: 'structure',
+        }),
+      ]),
+    )
+    expect(result.report.bundle.signals).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'allowance_overlap_missing_proof_check',
+        }),
+      ]),
+    )
+  })
+
   it('rejects controls that reference missing, fixed, or duplicated joints', () => {
     const asset = createValidValidationFixtureAsset()
 

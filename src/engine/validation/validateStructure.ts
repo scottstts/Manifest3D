@@ -1,5 +1,7 @@
 import type {
   ManifestAsset,
+  ManifestAllowance,
+  ManifestCheck,
   ManifestJoint,
   ManifestJointControl,
   ManifestJointType,
@@ -18,6 +20,7 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   signals.push(...validateUniqueIds(asset, controls))
   signals.push(...validateRefs(asset, controls))
   signals.push(...validateAllowanceRefs(asset))
+  signals.push(...validateOverlapAllowanceContracts(asset))
   signals.push(...validateControlMotionRanges(asset, controls))
   signals.push(...validateMovableControlCoverage(asset, controls))
   signals.push(...validateMaterialEmissionAnimations(asset))
@@ -623,6 +626,164 @@ function validateAllowanceVisualRef({
   return []
 }
 
+function validateOverlapAllowanceContracts(asset: ManifestAsset): ValidationSignal[] {
+  const signals: ValidationSignal[] = []
+
+  for (const [allowanceIndex, allowance] of asset.allowances.entries()) {
+    if (allowance.type !== 'allow_overlap') {
+      continue
+    }
+
+    const allowancePath = `/allowances/${allowanceIndex}`
+
+    if (!allowance.visualAId || !allowance.visualBId) {
+      signals.push(
+        createValidationSignal(
+          'allowance',
+          'allowance_overlap_broad_scope',
+          `Overlap allowance between "${allowance.partAId}" and "${allowance.partBId}" is not scoped to an exact visual pair.`,
+          {
+            details:
+              'Prefer visualAId and visualBId so validation feedback can distinguish intentional fitted contact from accidental part-wide collision.',
+            path: allowancePath,
+            refs: {
+              partAId: allowance.partAId,
+              partBId: allowance.partBId,
+            },
+            severity: 'warning',
+            stage: 'structure',
+          },
+        ),
+      )
+    }
+
+    if (!hasOverlapAllowanceProofCheck(asset.checks, allowance)) {
+      signals.push(
+        createValidationSignal(
+          'allowance',
+          'allowance_overlap_missing_proof_check',
+          `Overlap allowance between "${allowance.partAId}" and "${allowance.partBId}" needs a matching authored proof check.`,
+          {
+            details:
+              'Add or correct an expect_contact, expect_gap, expect_overlap, or expect_within check for the same part pair and, when the allowance names visuals, the same visual pair.',
+            path: allowancePath,
+            refs: {
+              partAId: allowance.partAId,
+              partBId: allowance.partBId,
+              ...(allowance.visualAId ? { visualAId: allowance.visualAId } : {}),
+              ...(allowance.visualBId ? { visualBId: allowance.visualBId } : {}),
+            },
+            stage: 'structure',
+          },
+        ),
+      )
+    }
+  }
+
+  return signals
+}
+
+function hasOverlapAllowanceProofCheck(
+  checks: readonly ManifestCheck[],
+  allowance: Extract<ManifestAllowance, { type: 'allow_overlap' }>,
+) {
+  return checks.some((check) => proofCheckMatchesAllowance(check, allowance))
+}
+
+function proofCheckMatchesAllowance(
+  check: ManifestCheck,
+  allowance: Extract<ManifestAllowance, { type: 'allow_overlap' }>,
+) {
+  switch (check.type) {
+    case 'expect_contact':
+    case 'expect_overlap':
+      return partVisualPairMatchesAllowance(
+        {
+          partAId: check.partAId,
+          partBId: check.partBId,
+          visualAId: check.visualAId,
+          visualBId: check.visualBId,
+        },
+        allowance,
+      )
+    case 'expect_gap':
+      return partVisualPairMatchesAllowance(
+        {
+          partAId: check.positivePartId,
+          partBId: check.negativePartId,
+          visualAId: check.positiveVisualId,
+          visualBId: check.negativeVisualId,
+        },
+        allowance,
+      )
+    case 'expect_within':
+      return partVisualPairMatchesAllowance(
+        {
+          partAId: check.innerPartId,
+          partBId: check.outerPartId,
+          visualAId: check.innerVisualId,
+          visualBId: check.outerVisualId,
+        },
+        allowance,
+      )
+    case 'joint_exists':
+    case 'part_exists':
+      return false
+    default:
+      return assertNever(check)
+  }
+}
+
+function partVisualPairMatchesAllowance(
+  pair: {
+    partAId: string
+    partBId: string
+    visualAId?: string
+    visualBId?: string
+  },
+  allowance: Extract<ManifestAllowance, { type: 'allow_overlap' }>,
+) {
+  return (
+    orderedPartVisualPairMatchesAllowance(pair, allowance) ||
+    orderedPartVisualPairMatchesAllowance(
+      {
+        partAId: pair.partBId,
+        partBId: pair.partAId,
+        visualAId: pair.visualBId,
+        visualBId: pair.visualAId,
+      },
+      allowance,
+    )
+  )
+}
+
+function orderedPartVisualPairMatchesAllowance(
+  pair: {
+    partAId: string
+    partBId: string
+    visualAId?: string
+    visualBId?: string
+  },
+  allowance: Extract<ManifestAllowance, { type: 'allow_overlap' }>,
+) {
+  if (
+    pair.partAId !== allowance.partAId ||
+    pair.partBId !== allowance.partBId
+  ) {
+    return false
+  }
+
+  if (allowance.visualAId && pair.visualAId !== allowance.visualAId) {
+    return false
+  }
+
+  if (allowance.visualBId && pair.visualBId !== allowance.visualBId) {
+    return false
+  }
+
+  return true
+}
+
 function validateJointTree(asset: ManifestAsset): ValidationSignal[] {
   const signals: ValidationSignal[] = []
   const partIds = new Set(asset.parts.map((part) => part.id))
@@ -967,4 +1128,8 @@ function hasNonzeroAxis(axis: ManifestVector3 | undefined) {
 
 function capitalizeJointType(jointType: ManifestJointType) {
   return jointType.charAt(0).toUpperCase() + jointType.slice(1)
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported Manifest3D structure value: ${JSON.stringify(value)}`)
 }
