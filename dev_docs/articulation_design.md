@@ -138,9 +138,9 @@ Phase 7 added coverage for:
 - generated sampled poses coming from controls for linked mechanisms
 - no-op controls whose limits clamp to no joint motion
 - material emission schema, preview, validation, and export behavior
-- OpenAI strict structured-output compatibility for the response schema
+- provider structured-output compatibility for the response schema
 
-The strict structured-output test is important because OpenAI can reject an invalid response schema before any candidate is generated. That failure does not exercise normal candidate parsing or validation, so it needs its own contract guard.
+The structured-output compatibility tests are important because providers can reject an invalid response schema before any candidate is generated. That failure does not exercise normal candidate parsing or validation, so it needs its own contract guard.
 
 ## Current Limits
 

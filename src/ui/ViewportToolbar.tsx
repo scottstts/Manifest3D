@@ -15,7 +15,6 @@ import {
 import type { ManifestAsset } from '../engine/schema/manifestTypes'
 
 type ViewportToolbarProps = {
-  apiKeyButtonDisabled: boolean
   isApiKeyLoaded: boolean
   canRedoCompose: boolean
   canUndoCompose: boolean
@@ -33,7 +32,6 @@ type ViewportToolbarProps = {
 }
 
 export function ViewportToolbar({
-  apiKeyButtonDisabled,
   isApiKeyLoaded,
   canRedoCompose,
   canUndoCompose,
@@ -105,14 +103,6 @@ export function ViewportToolbar({
   const handleExportChoice = (mode: GlbExportMode) => {
     setOpenExportMenuAssetId(null)
     onExportGlb(mode)
-  }
-
-  const handleApiKeyClick = () => {
-    if (apiKeyButtonDisabled) {
-      return
-    }
-
-    onApiKeyRequested()
   }
 
   return (
@@ -214,18 +204,15 @@ export function ViewportToolbar({
       </div>
       <button
         aria-label={
-          apiKeyButtonDisabled
-            ? isApiKeyLoaded
-              ? 'OpenAI API key loaded from local .env'
-              : 'OpenAI API key missing from local .env'
-            : hasSessionApiKey
-              ? 'Update in-memory OpenAI API key'
-              : 'Add OpenAI API key'
+          hasSessionApiKey
+            ? 'Update in-memory provider API key'
+            : isApiKeyLoaded
+              ? 'Provider API key loaded'
+              : 'Add provider API key'
         }
-        aria-disabled={apiKeyButtonDisabled}
         className="viewport-toolbar__button viewport-toolbar__button--api-key"
         type="button"
-        onClick={handleApiKeyClick}
+        onClick={onApiKeyRequested}
       >
         <KeyRound aria-hidden="true" />
         <span>API Key</span>

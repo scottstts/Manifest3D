@@ -20,7 +20,7 @@ import {
 import type {
   AgentImageAttachment,
   AgentRequest,
-  OpenAIManifestClient,
+  ManifestProviderClient,
 } from './providerClient'
 import { renderValidationSignals } from './repairFeedback'
 
@@ -61,7 +61,7 @@ export type RunManifestAgentLoopInput = {
 }
 
 export type RunManifestAgentLoopDependencies = {
-  client: OpenAIManifestClient
+  client: ManifestProviderClient
   history?: CandidateHistory
   now?: () => string
   onEvent?: (event: AgentLoopEvent) => void

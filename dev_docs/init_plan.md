@@ -54,7 +54,7 @@ Non-visual project logic must be implemented with corresponding unit tests in th
 - Validation report and repair feedback construction.
 - Candidate history and freshness state.
 - Prompt compilation.
-- OpenAI request construction.
+- Provider request construction.
 - Agent-loop state transitions.
 - Scene-store mutations.
 - Selection state.
@@ -76,10 +76,10 @@ npm run build
 - The app remains frontend-only for the first implementation.
 - WebGPU is required. Do not add WebGL fallback behavior.
 - LLM calls happen from the browser for the prototype.
-- Initial LLM support is OpenAI only.
-- The OpenAI key is supplied through project-root `.env` as `VITE_OPENAI_API_KEY=...`.
-- A Vite-exposed key is local/private prototype behavior only. Do not treat it as production-safe.
-- Do not build a provider settings UI or local-storage API-key flow in the first implementation unless explicitly requested later.
+- LLM support includes OpenAI and Gemini.
+- Local provider keys are supplied through project-root `.env` and fetched only from the localhost dev-server endpoint.
+- API keys must not be exposed through Vite's public env prefix or persisted to browser storage.
+- The Providers panel caches only the selected provider, never API keys.
 - The model generates structured Manifest3D JSON, not arbitrary TypeScript, JavaScript, Python, shader code, or raw Three.js code.
 - GLB export is generated client-side from the current Three.js scene.
 
@@ -764,7 +764,7 @@ The prompt compiler should compose:
 - Validation feedback from prior attempt.
 - Examples.
 
-Do not put long prompt strings inside `agentLoop.ts` or the OpenAI client.
+Do not put long prompt strings inside `agentLoop.ts` or provider clients.
 
 The prompt should teach the model:
 
@@ -780,39 +780,53 @@ The prompt should teach the model:
 - Include exact checks for prompt-critical claims.
 - Preserve referenced ids during repair unless intentionally updating checks too.
 
-## OpenAI Client
+## Provider Clients
 
 Create a narrow client abstraction:
 
 ```ts
-type OpenAIManifestClient = {
+type ManifestProviderClient = {
   generateAsset(request: AgentRequest): Promise<AgentResponse>
 }
 ```
 
-Initial implementation:
+Current implementation:
 
-- OpenAI only.
+- OpenAI and Gemini are supported behind the same agent-loop interface.
+- OpenAI remains the starting default; the last user-selected provider is cached as the next default.
 - Browser `fetch` for prototype unless explicitly changed later.
-- Read API key from `import.meta.env.VITE_OPENAI_API_KEY`.
+- Localhost reads provider API keys only from the dev-server `.env` endpoint; deployed origins use per-provider in-memory keys from the Providers panel.
 - Read model settings only from `src/engine/config/modelConfig.ts`.
+- `modelConfig.ts` must not hardcode a provider field.
 - Do not log or display the API key.
 - If no key exists, return a controlled unavailable state and keep the app usable.
 - Use structured output requiring strict Manifest3D JSON.
 - Include user text, scene summary, selected asset for edits, schema summary, examples, images, and validation feedback.
 - Use `AbortController` once cancellation exists.
 
-Before implementation, verify the current official OpenAI browser request shape and structured-output parameters. Keep all API-specific translation inside the OpenAI client.
+Before changing provider request code, verify the current official provider docs and keep all API-specific translation inside provider clients.
 
-Initial config:
+Current OpenAI config:
 
 ```ts
 export const modelConfig = {
-  provider: "openai",
   model: "gpt-5.5",
-  reasoningEffort: "medium",
+  reasoningEffort: "high",
   temperature: 1.0,
   maxOutputTokens: 64_000,
+  agentRunTimeoutMs: 3_600_000,
+} as const
+```
+
+Current Gemini config:
+
+```ts
+export const geminiModelConfig = {
+  model: "gemini-flash-latest",
+  thinkingLevel: "high",
+  temperature: 1.0,
+  maxOutputTokens: 64_000,
+  agentRunTimeoutMs: 3_600_000,
 } as const
 ```
 
@@ -949,13 +963,13 @@ Acceptance:
 - Prompt compiler imports prompt files instead of embedding long prompt strings inline.
 - Unit tests cover repair feedback priority, freshness, repeated signatures, and prompt composition.
 
-### Phase 5: Agent Loop With Real OpenAI
+### Phase 5: Agent Loop With Real Providers
 
 Tasks:
 
 - Add `modelConfig.ts`.
-- Add OpenAI client.
-- Verify current official OpenAI request and structured-output shape before implementation.
+- Add provider clients.
+- Verify current official provider request and structured-output shape before implementation.
 - Add real create mode.
 - Add real edit mode.
 - Add repair loop.
@@ -964,9 +978,9 @@ Tasks:
 
 Acceptance:
 
-- With `VITE_OPENAI_API_KEY` set, user can prompt asset creation.
+- With a supported local `.env` provider key or in-memory deployed-origin key, user can prompt asset creation.
 - With no key, app reports generation unavailable without breaking the existing scene.
-- OpenAI request parameters come from `modelConfig`.
+- Provider request parameters come from `modelConfig`.
 - Model output is parsed, validated, and committed only if valid.
 - Invalid output triggers repair loop within the turn cap.
 - Failed candidates and repair reports remain visible in history/timeline.
@@ -1073,7 +1087,7 @@ Repair and agent:
 - Candidate mutation after validation clears freshness.
 - Agent repair loop retries invalid candidate.
 - Agent stops at turn cap.
-- Missing OpenAI key returns controlled unavailable state.
+- Missing provider key returns controlled unavailable state.
 
 Export:
 
@@ -1083,8 +1097,8 @@ Export:
 
 ## Main Risks
 
-- Frontend-only OpenAI calls expose `VITE_OPENAI_API_KEY` to the browser bundle. This is acceptable only for local/private prototype mode.
-- Direct browser calls to OpenAI may hit CORS or API-shape constraints. Verify early with the smallest real request.
+- Frontend-only provider calls expose user-provided in-memory keys to the browser runtime. Local `.env` keys must only be served by the localhost dev-server endpoint and must not enter the built bundle.
+- Direct browser calls to providers may hit CORS or API-shape constraints. Verify early with the smallest real request.
 - Browser geometry QC may start approximate and require mesh-level precision later.
 - Additive primitive modeling makes hollow objects, cavities, sleeves, sockets, and cutouts hard. Prefer composed wall geometry first; add CSG only when necessary.
 - If the hierarchy model becomes ambiguous again, articulation preview and exact tests will become unreliable. Preserve Contract V2's joint-driven hierarchy through the real agent loop.
@@ -1096,7 +1110,7 @@ The first useful prototype is complete when:
 
 - The app opens to the Manifest3D creation workspace.
 - WebGPU viewport renders validated Manifest3D assets.
-- User can prompt through the right panel using OpenAI via `VITE_OPENAI_API_KEY`.
+- User can prompt through the right panel using OpenAI or Gemini with local `.env` or in-memory provider keys.
 - The agent loop validates every candidate before commit.
 - Failed candidates produce structured repair feedback and remain visible in history.
 - Valid assets appear in the viewport.

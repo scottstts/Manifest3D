@@ -4,6 +4,6 @@ Taking inspiration from the [Articraft project](https://articraft3d.github.io/),
 
 ![Manifest3d](assets/screenshot.png)
 
-When running this app locally, remember to add a .env file with openai api key (see .env.example)
+When running this app locally, add a `.env` file with at least one provider API key (see `.env.example`). OpenAI uses `OPENAI_API_KEY`; Gemini uses `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 
-When using this app non locally, provide the API key directly in app
+When using this app non locally, choose a provider from the in-app Providers panel and provide that provider's API key directly in app.

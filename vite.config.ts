@@ -1,32 +1,40 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const localOpenAIApiKeyEndpoint = '/__manifest3d/local-openai-api-key'
+const localProviderApiKeysEndpoint = '/__manifest3d/local-provider-api-keys'
 
 // https://vite.dev/config/
 export default defineConfig({
   envPrefix: 'MANIFEST3D_PUBLIC_',
-  plugins: [localOpenAIApiKeyPlugin(), react()],
+  plugins: [localProviderApiKeysPlugin(), react()],
 })
 
-function localOpenAIApiKeyPlugin(): Plugin {
-  let apiKey = ''
+function localProviderApiKeysPlugin(): Plugin {
+  let openaiApiKey = ''
+  let geminiApiKey = ''
 
   return {
-    name: 'manifest3d-local-openai-api-key',
+    name: 'manifest3d-local-provider-api-keys',
     apply: 'serve',
     configResolved(config) {
       const env = loadEnv(config.mode, config.envDir, '')
 
-      apiKey = (
+      openaiApiKey = (
         env.OPENAI_API_KEY ??
         env.VITE_OPENAI_API_KEY ??
+        ''
+      ).trim()
+      geminiApiKey = (
+        env.GEMINI_API_KEY ??
+        env.GOOGLE_API_KEY ??
+        env.VITE_GEMINI_API_KEY ??
+        env.VITE_GOOGLE_API_KEY ??
         ''
       ).trim()
     },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
-        if (!request.url?.startsWith(localOpenAIApiKeyEndpoint)) {
+        if (!request.url?.startsWith(localProviderApiKeysEndpoint)) {
           next()
           return
         }
@@ -47,7 +55,14 @@ function localOpenAIApiKeyPlugin(): Plugin {
         response.statusCode = 200
         response.setHeader('Cache-Control', 'no-store')
         response.setHeader('Content-Type', 'application/json')
-        response.end(JSON.stringify({ apiKey }))
+        response.end(
+          JSON.stringify({
+            apiKeys: {
+              gemini: geminiApiKey,
+              openai: openaiApiKey,
+            },
+          }),
+        )
       })
     },
   }

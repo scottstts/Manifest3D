@@ -8,7 +8,9 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 - Full LLM transcripts are intentionally not persisted. The visible chat transcript in the right panel is a runtime UI affordance only.
 - Candidate attempts are different from chat transcripts. Attempts are saved with the validated asset version that produced or repaired them, so future edits can include compact validation history without replaying the whole conversation.
 - The agent loop commits only a fresh valid candidate. Candidate freshness is still guarded by the candidate history fingerprint before the asset is saved or rendered.
-- The OpenAI client owns provider-specific request details. UI and scene code should continue to talk to the provider through the agent loop/client interfaces, not by reaching into Responses API payloads.
+- Provider clients own provider-specific request details. UI and scene code should continue to talk to providers through the agent loop/client interfaces, not by reaching into OpenAI Responses or Gemini GenerateContent payloads.
+- OpenAI remains the starting provider default. The last provider selected in the Providers panel is cached as the next default; API keys are not persisted outside local `.env`.
+- Localhost/loopback runs load provider keys only through the dev-server `.env` endpoint. The top-bar status dot is green when at least one local provider key is present. Non-localhost runs use in-memory per-provider keys from the Providers panel, and the status dot is green only when the currently selected provider has a session key.
 
 ## Persistence
 

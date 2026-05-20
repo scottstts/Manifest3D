@@ -35,6 +35,8 @@ export type AgentResponse =
       statusCode?: number
     }
 
-export type OpenAIManifestClient = {
+export type ManifestProviderClient = {
   generateAsset: (request: AgentRequest) => Promise<AgentResponse>
 }
+
+export type OpenAIManifestClient = ManifestProviderClient

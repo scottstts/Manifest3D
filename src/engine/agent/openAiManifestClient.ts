@@ -1,5 +1,4 @@
 import { modelConfig, type ModelConfig } from '../config/modelConfig'
-import { resolveStartupOpenAIApiKeyStatus } from './openAiApiKey'
 import {
   manifestAssetResponseFormatName,
   manifestAssetResponseJsonSchema,
@@ -35,7 +34,7 @@ export function createOpenAIManifestClient(
   const endpoint = options.endpoint ?? defaultEndpoint
   const fetcher = options.fetcher ?? fetch
   const config = options.model ?? modelConfig
-  const apiKey = options.apiKey ?? resolveStartupOpenAIApiKeyStatus().apiKey
+  const apiKey = options.apiKey ?? ''
 
   return {
     async generateAsset(request) {

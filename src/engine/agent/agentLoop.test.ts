@@ -12,7 +12,7 @@ import {
 import type {
   AgentRequest,
   AgentResponse,
-  OpenAIManifestClient,
+  ManifestProviderClient,
 } from './providerClient'
 
 const emptyScene: ManifestScene = {
@@ -123,7 +123,7 @@ describe('runManifestAgentLoop', () => {
 
   it('surfaces missing-key unavailable state without recording attempts or changing the scene', async () => {
     const sceneStore = createSceneStore(emptyScene)
-    const client: OpenAIManifestClient = {
+    const client: ManifestProviderClient = {
       async generateAsset() {
         return {
           message: 'Generation is unavailable because no OpenAI API key is loaded.',
@@ -155,7 +155,7 @@ describe('runManifestAgentLoop', () => {
     const controller = new AbortController()
     const events: AgentLoopEvent[] = []
     const sceneStore = createSceneStore(emptyScene)
-    const client: OpenAIManifestClient = {
+    const client: ManifestProviderClient = {
       async generateAsset() {
         controller.abort()
 
@@ -204,7 +204,7 @@ describe('runManifestAgentLoop', () => {
 function createQueuedClient(
   responses: AgentResponse[],
   requests: AgentRequest[] = [],
-): OpenAIManifestClient {
+): ManifestProviderClient {
   return {
     async generateAsset(request) {
       requests.push(request)

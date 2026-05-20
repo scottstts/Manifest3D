@@ -37,16 +37,20 @@ import {
 } from '../engine/agent/agentLoop'
 import { createCandidateHistory } from '../engine/agent/candidateHistory'
 import {
-  canUseInAppOpenAIApiKeyModal,
-  isOpenAIApiKeyLoaded,
-  loadStartupOpenAIApiKeyStatus,
-  resolveStartupOpenAIApiKeyStatus,
-} from '../engine/agent/openAiApiKey'
-import { createOpenAIManifestClient } from '../engine/agent/openAiManifestClient'
-import type {
-  AgentImageAttachment,
-  OpenAIManifestClient,
-} from '../engine/agent/providerClient'
+  canUseInAppProviderApiKeyInput,
+  createEmptyProviderApiKeys,
+  getProviderApiKey,
+  isProviderApiKeyLoaded,
+  loadStartupProviderApiKeyStatus,
+  resolveStartupProviderApiKeyStatus,
+} from '../engine/agent/providerApiKey'
+import { createManifestProviderClient } from '../engine/agent/manifestProviderClient'
+import {
+  getProviderLabel,
+  readPreferredModelProvider,
+  writePreferredModelProvider,
+} from '../engine/agent/providerPreference'
+import type { AgentImageAttachment } from '../engine/agent/providerClient'
 import {
   findAssetLibraryVersion,
   getAdjacentAssetVersions,
@@ -91,6 +95,7 @@ import {
   type MaterialAnimationValues,
 } from '../engine/geometry/materialAnimations'
 import { modelConfig } from '../engine/config/modelConfig'
+import type { ModelProvider } from '../engine/config/modelConfig'
 import {
   resolveAssetPanelActiveState,
   resolveCreatePromptMode,
@@ -134,20 +139,19 @@ type AgentRunView = {
 const composeHistoryLimit = 40
 
 export function AppShell() {
-  const [startupOpenAIApiKeyStatus, setStartupOpenAIApiKeyStatus] = useState(
-    () => resolveStartupOpenAIApiKeyStatus(),
+  const [selectedProvider, setSelectedProvider] = useState<ModelProvider>(
+    () => readPreferredModelProvider(),
+  )
+  const [startupProviderApiKeyStatus, setStartupProviderApiKeyStatus] =
+    useState(() => resolveStartupProviderApiKeyStatus())
+  const [sessionApiKeys, setSessionApiKeys] = useState(() =>
+    createEmptyProviderApiKeys(),
   )
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
   const [isHistoryPanelCollapsed, setIsHistoryPanelCollapsed] = useState(true)
   const [rightPanelOcclusionWidth, setRightPanelOcclusionWidth] = useState(0)
   const [leftPanelOcclusionWidth, setLeftPanelOcclusionWidth] = useState(0)
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
-  const [hasSessionApiKey, setHasSessionApiKey] = useState(false)
-  const [openAIClient, setOpenAIClient] = useState<OpenAIManifestClient>(() =>
-    createOpenAIManifestClient({
-      apiKey: startupOpenAIApiKeyStatus.apiKey,
-    }),
-  )
   const [agentEvents, setAgentEvents] = useState<AgentLoopEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [candidateTimelineItems, setCandidateTimelineItems] = useState<
@@ -299,12 +303,27 @@ export function AppShell() {
     sceneSnapshot.activeWorkspace === 'compose' && composeUndoStack.length > 0
   const canRedoCompose =
     sceneSnapshot.activeWorkspace === 'compose' && composeRedoStack.length > 0
-  const canOpenInAppApiKeyModal = canUseInAppOpenAIApiKeyModal(
+  const canUseInAppApiKeyInput = canUseInAppProviderApiKeyInput(
     typeof window === 'undefined' ? '' : window.location.hostname,
   )
-  const isApiKeyLoaded = isOpenAIApiKeyLoaded(
-    startupOpenAIApiKeyStatus,
-    hasSessionApiKey,
+  const selectedProviderApiKey = getProviderApiKey(
+    selectedProvider,
+    startupProviderApiKeyStatus,
+    sessionApiKeys,
+  )
+  const providerClient = useMemo(
+    () =>
+      createManifestProviderClient({
+        apiKey: selectedProviderApiKey,
+        provider: selectedProvider,
+      }),
+    [selectedProvider, selectedProviderApiKey],
+  )
+  const hasSessionApiKey = Boolean(sessionApiKeys[selectedProvider])
+  const isApiKeyLoaded = isProviderApiKeyLoaded(
+    selectedProvider,
+    startupProviderApiKeyStatus,
+    sessionApiKeys,
   )
 
   useEffect(() => {
@@ -314,16 +333,12 @@ export function AppShell() {
   useEffect(() => {
     let isMounted = true
 
-    void loadStartupOpenAIApiKeyStatus().then((status) => {
+    void loadStartupProviderApiKeyStatus().then((status) => {
       if (!isMounted) {
         return
       }
 
-      setStartupOpenAIApiKeyStatus(status)
-
-      if (status.source === 'local_env') {
-        setOpenAIClient(createOpenAIManifestClient({ apiKey: status.apiKey }))
-      }
+      setStartupProviderApiKeyStatus(status)
     })
 
     return () => {
@@ -786,7 +801,7 @@ export function AppShell() {
           userPrompt,
         },
         {
-          client: openAIClient,
+          client: providerClient,
           history: agentHistoryRef.current,
           onEvent: (event) => {
             runEvents = upsertAgentEvent(runEvents, event)
@@ -912,7 +927,7 @@ export function AppShell() {
       handleJointResetAll,
       isActiveAgentRunRunning,
       librarySnapshot.library,
-      openAIClient,
+      providerClient,
       removeAgentRunView,
       sceneSnapshot.activeWorkspace,
       sceneStore,
@@ -988,11 +1003,20 @@ export function AppShell() {
       })
   }, [exportableCreateAsset])
 
-  const handleApiKeySubmit = useCallback((apiKey: string) => {
-    setOpenAIClient(createOpenAIManifestClient({ apiKey }))
-    setHasSessionApiKey(true)
+  const handleProviderChange = useCallback((provider: ModelProvider) => {
+    setSelectedProvider(provider)
+    writePreferredModelProvider(provider)
+  }, [])
+
+  const handleApiKeySubmit = useCallback((provider: ModelProvider, apiKey: string) => {
+    setSelectedProvider(provider)
+    writePreferredModelProvider(provider)
+    setSessionApiKeys((currentApiKeys) => ({
+      ...currentApiKeys,
+      [provider]: apiKey,
+    }))
     setIsApiKeyModalOpen(false)
-    setAgentStatus('OpenAI API key loaded for this session.')
+    setAgentStatus(`${getProviderLabel(provider)} API key loaded for this session.`)
   }, [])
 
   const handleWorkspaceChange = useCallback(
@@ -1421,7 +1445,6 @@ export function AppShell() {
       />
       <FrameChrome
         activeWorkspace={sceneSnapshot.activeWorkspace}
-        apiKeyButtonDisabled={!canOpenInAppApiKeyModal}
         isApiKeyLoaded={isApiKeyLoaded}
         canRedoCompose={canRedoCompose}
         canUndoCompose={canUndoCompose}
@@ -1431,9 +1454,7 @@ export function AppShell() {
         hasSessionApiKey={hasSessionApiKey}
         versionLabel={versionLabel}
         onApiKeyRequested={() => {
-          if (canOpenInAppApiKeyModal) {
-            setIsApiKeyModalOpen(true)
-          }
+          setIsApiKeyModalOpen(true)
         }}
         onExportGlb={handleExportGlb}
         onRedoCompose={handleRedoCompose}
@@ -1519,8 +1540,11 @@ export function AppShell() {
         onConfirm={handleConfirmDeleteAsset}
       />
       <ApiKeyModal
+        provider={selectedProvider}
         isOpen={isApiKeyModalOpen}
+        showApiKeyInput={canUseInAppApiKeyInput}
         onCancel={() => setIsApiKeyModalOpen(false)}
+        onProviderChange={handleProviderChange}
         onSubmit={handleApiKeySubmit}
       />
     </div>

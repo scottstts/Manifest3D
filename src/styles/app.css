@@ -1517,7 +1517,19 @@ a.viewport-toolbar__button {
   display: block;
 }
 
-.api-key-modal__field input {
+.api-key-modal__provider-field {
+  display: grid;
+  gap: 8px;
+}
+
+.api-key-modal__provider-field span {
+  color: #4a51a6;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.api-key-modal__field input,
+.api-key-modal__field select {
   width: 100%;
   height: 42px;
   padding: 0 12px;
@@ -1532,7 +1544,12 @@ a.viewport-toolbar__button {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.78);
 }
 
-.api-key-modal__field input:focus {
+.api-key-modal__field select {
+  cursor: pointer;
+}
+
+.api-key-modal__field input:focus,
+.api-key-modal__field select:focus {
   border-color: rgb(119 67 234 / 0.58);
   box-shadow:
     0 0 0 3px rgb(119 67 234 / 0.14),
