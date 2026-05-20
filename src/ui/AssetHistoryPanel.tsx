@@ -8,6 +8,7 @@ import {
 import type { AssetLibraryAsset } from '../engine/persistence/assetLibraryTypes'
 
 type PendingCreateRunMenuItem = {
+  prompt: string
   runId: string
   status: string | null
 }
@@ -79,7 +80,7 @@ export function AssetHistoryPanel({
             <p className="asset-history-panel__empty">No saved assets yet.</p>
           ) : (
             <ol className="asset-history-list">
-              {pendingCreateRuns.map((run, index) => (
+              {pendingCreateRuns.map((run) => (
                 <li
                   className={
                     activeRunId === run.runId
@@ -89,12 +90,9 @@ export function AssetHistoryPanel({
                   key={run.runId}
                 >
                   <AssetHistoryItemButton
+                    isMetaRolling
                     meta={run.status ?? 'Agent running...'}
-                    name={
-                      pendingCreateRuns.length > 1
-                        ? `Creating ${index + 1}`
-                        : 'Creating'
-                    }
+                    name={run.prompt}
                     trailing={
                       <LoaderCircle
                         aria-hidden="true"
@@ -159,11 +157,13 @@ export function AssetHistoryPanel({
 }
 
 function AssetHistoryItemButton({
+  isMetaRolling = false,
   meta,
   name,
   onClick,
   trailing = null,
 }: {
+  isMetaRolling?: boolean
   meta: string | null
   name: string
   onClick: () => void
@@ -177,7 +177,17 @@ function AssetHistoryItemButton({
     >
       <span className="asset-history-list__copy">
         <span className="asset-history-list__name">{name}</span>
-        {meta && <span className="asset-history-list__meta">{meta}</span>}
+        {meta && (
+          <span
+            className={
+              isMetaRolling
+                ? 'asset-history-list__meta asset-history-list__meta--rolling'
+                : 'asset-history-list__meta'
+            }
+          >
+            {meta}
+          </span>
+        )}
       </span>
       {trailing}
     </button>

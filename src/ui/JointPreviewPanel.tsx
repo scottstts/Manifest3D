@@ -22,7 +22,7 @@ type JointPreviewPanelProps = {
   instance: SceneAssetInstance | null
   jointPoses: JointPoseValues
   materialAnimationValues: MaterialAnimationValues
-  playingPreview: PlayingPreviewControl | null
+  playingPreviews: readonly PlayingPreviewControl[]
   rightOffset: number
   onJointPoseChange: (
     instanceId: string,
@@ -48,7 +48,7 @@ export function JointPreviewPanel({
   instance,
   jointPoses,
   materialAnimationValues,
-  playingPreview,
+  playingPreviews,
   rightOffset,
   onJointPoseChange,
   onJointReset,
@@ -90,9 +90,10 @@ export function JointPreviewPanel({
         {jointControls.map((control) => {
           const range = control.range
           const value = getJointControlPreviewValue(control, jointPoses)
-          const isPlaying =
-            playingPreview?.kind === 'joint' &&
-            playingPreview.controlId === control.id
+          const isPlaying = playingPreviews.some(
+            (preview) =>
+              preview.kind === 'joint' && preview.controlId === control.id,
+          )
 
           return (
             <li key={`joint:${control.id}`}>
@@ -142,9 +143,10 @@ export function JointPreviewPanel({
             control,
             materialAnimationValues,
           )
-          const isPlaying =
-            playingPreview?.kind === 'material' &&
-            playingPreview.controlId === control.id
+          const isPlaying = playingPreviews.some(
+            (preview) =>
+              preview.kind === 'material' && preview.controlId === control.id,
+          )
 
           return (
             <li key={`material:${control.id}`}>
