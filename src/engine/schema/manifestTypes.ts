@@ -87,6 +87,28 @@ export type ManifestMaterial = {
   metalness: number
   roughness: number
   opacity?: number
+  emission?: ManifestMaterialEmission | null
+  emissionAnimation?: ManifestMaterialEmissionAnimation | null
+}
+
+export type ManifestMaterialEmission = {
+  hasEmission: boolean
+  color: string
+  intensity: number
+}
+
+export type ManifestMaterialEmissionInterpolation = 'linear' | 'step'
+
+export type ManifestMaterialEmissionKeyframe = ManifestMaterialEmission & {
+  time: number
+}
+
+export type ManifestMaterialEmissionAnimation = {
+  id: string
+  name: string
+  interpolation: ManifestMaterialEmissionInterpolation
+  keyframes: ManifestMaterialEmissionKeyframe[]
+  loop: boolean
 }
 
 export type ManifestVisual = {

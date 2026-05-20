@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import * as THREE from 'three/webgpu'
 import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
 import { parseManifestAsset } from '../schema/manifestSchema'
 import {
+  applyBuiltManifestMaterialAnimations,
   buildManifestAsset,
   disposeManifestObject,
   findManifestObjectData,
@@ -55,6 +57,56 @@ describe('buildManifestAsset', () => {
     const lidJointGroup = builtAsset.jointGroups.get('crate-lid-hinge')
 
     expect(lidJointGroup?.rotation.x).toBeCloseTo(-1.2)
+
+    disposeManifestObject(builtAsset.group)
+  })
+
+  it('applies material emission animation preview values', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.materials[0] = {
+      ...asset.materials[0],
+      emission: {
+        color: '#ff0000',
+        hasEmission: true,
+        intensity: 2,
+      },
+      emissionAnimation: {
+        id: 'crate-warning-flash',
+        interpolation: 'linear',
+        keyframes: [
+          {
+            color: '#ff0000',
+            hasEmission: true,
+            intensity: 2,
+            time: 0,
+          },
+          {
+            color: '#0000ff',
+            hasEmission: true,
+            intensity: 6,
+            time: 1,
+          },
+        ],
+        loop: false,
+        name: 'Warning flash',
+      },
+    }
+
+    const builtAsset = buildManifestAsset(asset)
+    const material = builtAsset.materials.get('mat-violet') as
+      | THREE.MeshStandardMaterial
+      | undefined
+
+    expect(material?.emissiveIntensity).toBeCloseTo(2)
+    expect(material?.emissive.getHexString()).toBe('ff0000')
+
+    applyBuiltManifestMaterialAnimations(builtAsset, {
+      'mat-violet': 1,
+    })
+
+    expect(material?.emissiveIntensity).toBeCloseTo(6)
+    expect(material?.emissive.getHexString()).toBe('0000ff')
 
     disposeManifestObject(builtAsset.group)
   })

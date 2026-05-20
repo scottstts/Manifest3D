@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import {
+  createGeneratedJointPoseSamples,
   getJointPreviewControls,
   resolveJointControlPoseValues,
 } from './jointPoses'
@@ -30,6 +31,21 @@ describe('joint preview controls', () => {
     expect(getJointPreviewControls(asset).map((control) => control.id)).toEqual([
       'crate-lid-hinge',
     ])
+  })
+
+  it('generates sampled poses from controls instead of isolated linked joints', () => {
+    const asset = createTwoWheelAsset()
+    const samples = createGeneratedJointPoseSamples(asset)
+
+    expect(samples).toHaveLength(3)
+    expect(samples.every((sample) => sample.id.startsWith('sample:wheel-spin-control:'))).toBe(true)
+    expect(
+      samples.every(
+        (sample) =>
+          sample.poses['left-wheel-spin'] !== undefined &&
+          sample.poses['right-wheel-spin'] !== undefined,
+      ),
+    ).toBe(true)
   })
 })
 

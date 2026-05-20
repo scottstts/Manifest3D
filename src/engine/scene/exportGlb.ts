@@ -3,6 +3,7 @@ import {
   buildManifestAsset,
   disposeManifestObject,
 } from '../geometry/assetBuilder'
+import { hasMaterialEmissionAnimation } from '../geometry/materialAnimations'
 import {
   applyManifestTransform,
   getDefaultJointControlValue,
@@ -15,6 +16,7 @@ import {
   type JointPreviewControl,
 } from '../geometry/jointPoses'
 import type { ManifestAsset, ManifestJoint } from '../schema/manifestTypes'
+import { appendMaterialEmissionAnimationsToGlb } from './gltfMaterialAnimation'
 
 export type GlbExportResult = {
   arrayBuffer: ArrayBuffer
@@ -71,7 +73,7 @@ export async function exportManifestAssetGlb(
     const { GLTFExporter } = await import(
       'three/examples/jsm/exporters/GLTFExporter.js'
     )
-    const gltf = await new GLTFExporter().parseAsync(exportableAsset.root, {
+    let gltf = await new GLTFExporter().parseAsync(exportableAsset.root, {
       animations: exportableAsset.animations,
       binary: true,
       includeCustomExtensions: false,
@@ -81,6 +83,10 @@ export async function exportManifestAssetGlb(
 
     if (!(gltf instanceof ArrayBuffer)) {
       throw new Error('GLB export did not produce binary output.')
+    }
+
+    if ((options.mode ?? 'static') === 'dynamic') {
+      gltf = appendMaterialEmissionAnimationsToGlb(gltf, asset)
     }
 
     return {
@@ -94,7 +100,7 @@ export async function exportManifestAssetGlb(
 }
 
 export function canExportManifestAssetAnimation(asset: ManifestAsset) {
-  return getMovableJoints(asset).length > 0
+  return getMovableJoints(asset).length > 0 || hasMaterialEmissionAnimation(asset)
 }
 
 export function createExportableManifestAssetGroup(asset: ManifestAsset) {
@@ -129,11 +135,7 @@ function createExportableManifestAsset(
           )
         : []
 
-    if (
-      mode === 'dynamic' &&
-      canExportManifestAssetAnimation(asset) &&
-      animations.length === 0
-    ) {
+    if (mode === 'dynamic' && getMovableJoints(asset).length > 0 && animations.length === 0) {
       throw new Error(
         `Asset "${asset.id}" contains movable joints but no exportable animation tracks.`,
       )
@@ -153,6 +155,7 @@ export function cloneExportableObject(
   options: CloneExportableObjectOptions = {},
 ) {
   const clone = source.clone(true)
+  const materialClones = new Map<THREE.Material, THREE.Material>()
 
   if (options.clonedObjects) {
     mapClonedObjects(source, clone, options.clonedObjects)
@@ -165,7 +168,7 @@ export function cloneExportableObject(
     if (isMesh(object)) {
       object.geometry = object.geometry.clone()
       object.geometry.userData = {}
-      object.material = cloneExportMaterial(object.material)
+      object.material = cloneExportMaterial(object.material, materialClones)
     }
   })
 
@@ -545,17 +548,33 @@ function sanitizeObjectForExport(object: THREE.Object3D) {
 
 function cloneExportMaterial(
   material: THREE.Material | THREE.Material[],
+  materialClones: Map<THREE.Material, THREE.Material>,
 ): THREE.Material | THREE.Material[] {
   return Array.isArray(material)
-    ? material.map(cloneExportMaterialInstance)
-    : cloneExportMaterialInstance(material)
+    ? material.map((entry) => cloneExportMaterialInstance(entry, materialClones))
+    : cloneExportMaterialInstance(material, materialClones)
 }
 
-function cloneExportMaterialInstance(material: THREE.Material) {
+function cloneExportMaterialInstance(
+  material: THREE.Material,
+  materialClones: Map<THREE.Material, THREE.Material>,
+) {
+  const existingClone = materialClones.get(material)
+
+  if (existingClone) {
+    return existingClone
+  }
+
   const clonedMaterial = isMeshStandardMaterial(material) && !isNodeMaterial(material)
     ? material.clone()
     : new THREE.MeshStandardMaterial({
         color: readMaterialColor(material),
+        emissive: readMaterialColor(material, 'emissive', '#000000'),
+        emissiveIntensity: readMaterialNumber(
+          material,
+          'emissiveIntensity',
+          1,
+        ),
         metalness: readMaterialNumber(material, 'metalness', 0),
         opacity: readMaterialNumber(material, 'opacity', 1),
         roughness: readMaterialNumber(material, 'roughness', 0.7),
@@ -565,19 +584,24 @@ function cloneExportMaterialInstance(material: THREE.Material) {
 
   clonedMaterial.name = material.name
   clonedMaterial.userData = {}
+  materialClones.set(material, clonedMaterial)
 
   return clonedMaterial
 }
 
-function readMaterialColor(material: THREE.Material) {
-  const color = (material as { color?: unknown }).color
+function readMaterialColor(
+  material: THREE.Material,
+  key: 'color' | 'emissive' = 'color',
+  fallback = '#ffffff',
+) {
+  const color = (material as unknown as Record<typeof key, unknown>)[key]
 
-  return color instanceof THREE.Color ? color : new THREE.Color('#ffffff')
+  return color instanceof THREE.Color ? color : new THREE.Color(fallback)
 }
 
 function readMaterialNumber(
   material: THREE.Material,
-  key: 'metalness' | 'opacity' | 'roughness',
+  key: 'emissiveIntensity' | 'metalness' | 'opacity' | 'roughness',
   fallback: number,
 ) {
   const value = (material as unknown as Record<typeof key, unknown>)[key]

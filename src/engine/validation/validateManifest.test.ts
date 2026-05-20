@@ -307,6 +307,72 @@ describe('validateManifestAssetCandidate', () => {
     expect(signalCodes).toContain('control_duplicate_joint')
   })
 
+  it('rejects malformed material emission animations', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.materials[0] = {
+      ...asset.materials[0],
+      emission: {
+        color: '#ff0000',
+        hasEmission: true,
+        intensity: 2,
+      },
+      emissionAnimation: {
+        id: 'bad-emission',
+        interpolation: 'linear',
+        keyframes: [
+          {
+            color: '#ff0000',
+            hasEmission: true,
+            intensity: 2,
+            time: 0.4,
+          },
+          {
+            color: '#ff0000',
+            hasEmission: true,
+            intensity: 2,
+            time: 0.2,
+          },
+        ],
+        loop: true,
+        name: 'Bad emission',
+      },
+    }
+    asset.materials[1] = {
+      ...asset.materials[1],
+      emission: null,
+      emissionAnimation: {
+        id: 'bad-emission',
+        interpolation: 'step',
+        keyframes: [
+          {
+            color: '#0000ff',
+            hasEmission: false,
+            intensity: 0,
+            time: 0,
+          },
+          {
+            color: '#0000ff',
+            hasEmission: false,
+            intensity: 0,
+            time: 0.5,
+          },
+        ],
+        loop: true,
+        name: 'Duplicate bad emission',
+      },
+    }
+
+    const result = validateManifestAssetCandidate(asset)
+    const signalCodes = result.report.bundle.signals.map((signal) => signal.code)
+
+    expect(result.report.valid).toBe(false)
+    expect(signalCodes).toContain('duplicate_material_animation_id')
+    expect(signalCodes).toContain('material_emission_animation_start_time')
+    expect(signalCodes).toContain('material_emission_keyframe_time_order')
+    expect(signalCodes).toContain('material_emission_animation_static')
+  })
+
   it('requires manifest controls for multi-joint articulated assets', () => {
     const asset = createValidValidationFixtureAsset()
 
@@ -418,6 +484,36 @@ describe('validateManifestAssetCandidate', () => {
     )
   })
 
+  it('rejects controls whose limits do not produce joint motion', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.joints[0] = {
+      ...asset.joints[0],
+      limits: {
+        effort: 10,
+        lower: 0,
+        upper: 1.9,
+        velocity: 2,
+      },
+    }
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(false)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'control_no_effective_motion',
+          path: '/controls/0/limits',
+          refs: {
+            controlId: 'crate-lid-control',
+          },
+          stage: 'structure',
+        }),
+      ]),
+    )
+  })
+
   it('flags physically disconnected part groups', () => {
     const asset = createValidValidationFixtureAsset()
 
@@ -522,6 +618,13 @@ describe('validateManifestAssetCandidate', () => {
         lower: 0,
         upper: 1.9,
         velocity: 2,
+      },
+    }
+    asset.controls[0] = {
+      ...asset.controls[0],
+      limits: {
+        lower: 0,
+        upper: 1.9,
       },
     }
 

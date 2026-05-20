@@ -8,12 +8,14 @@ import { outline } from 'three/addons/tsl/display/OutlineNode.js'
 import { color, float, max, mix, pass, vec4 } from 'three/tsl'
 import * as THREE from 'three/webgpu'
 import {
+  applyBuiltManifestMaterialAnimations,
   applyBuiltManifestJointPoses,
   buildManifestAsset,
   disposeManifestObject,
   findManifestObjectData,
 } from '../engine/geometry/assetBuilder'
 import type { JointPoseValues } from '../engine/geometry/jointPoses'
+import type { MaterialAnimationValues } from '../engine/geometry/materialAnimations'
 import type {
   SceneAssetInstance,
   SceneTransform,
@@ -27,6 +29,9 @@ type WebGPUSceneProps = {
   assets: readonly SceneAssetInstance[]
   cameraQuaternionRef: RefObject<THREE.Quaternion>
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
+  materialAnimationValuesByInstance: Readonly<
+    Record<string, MaterialAnimationValues>
+  >
   leftPanelOcclusionWidth: number
   onCameraQuaternionChange: () => void
   rightPanelOcclusionWidth: number
@@ -79,12 +84,14 @@ const selectionOutlineStrength = 5.2
 const selectionOutlineThickness = 5.0
 const selectionOutlineGlow = 1.45
 const emptyJointPoseValues: JointPoseValues = {}
+const emptyMaterialAnimationValues: MaterialAnimationValues = {}
 
 export function WebGPUScene({
   activeTransformTool,
   assets,
   cameraQuaternionRef,
   jointPreviewPosesByInstance,
+  materialAnimationValuesByInstance,
   leftPanelOcclusionWidth,
   onCameraQuaternionChange,
   rightPanelOcclusionWidth,
@@ -182,6 +189,10 @@ export function WebGPUScene({
           jointPreviewPoses={
             jointPreviewPosesByInstance[asset.instanceId] ?? emptyJointPoseValues
           }
+          materialAnimationValues={
+            materialAnimationValuesByInstance[asset.instanceId] ??
+            emptyMaterialAnimationValues
+          }
           key={`${asset.instanceId}:${asset.versionId ?? asset.asset.id}`}
           onAssetSelected={onAssetSelected}
           onSelectionCleared={onSelectionCleared}
@@ -208,6 +219,7 @@ type ManifestAssetObjectProps = {
   instance: SceneAssetInstance
   isSelected: boolean
   jointPreviewPoses: JointPoseValues
+  materialAnimationValues: MaterialAnimationValues
   onAssetSelected: (
     targetId: string,
     assetId?: string | null,
@@ -224,6 +236,7 @@ function ManifestAssetObject({
   instance,
   isSelected,
   jointPreviewPoses,
+  materialAnimationValues,
   onAssetSelected,
   onSelectionCleared,
   registerAssetGroup,
@@ -239,8 +252,9 @@ function ManifestAssetObject({
 
   useEffect(() => {
     applyBuiltManifestJointPoses(builtAsset, jointPreviewPoses)
+    applyBuiltManifestMaterialAnimations(builtAsset, materialAnimationValues)
     invalidate()
-  }, [builtAsset, invalidate, jointPreviewPoses])
+  }, [builtAsset, invalidate, jointPreviewPoses, materialAnimationValues])
 
   useEffect(() => {
     const group = groupRef.current

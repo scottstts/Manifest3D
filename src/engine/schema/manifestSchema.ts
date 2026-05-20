@@ -10,6 +10,8 @@ const roundedBoxSegmentCount = z.number().int().min(1).max(32)
 const capsuleCapSegmentCount = z.number().int().min(1).max(64)
 const capsuleHeightSegmentCount = z.number().int().min(1).max(64)
 const hexColor = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/)
+const materialEmissionIntensity = finiteNumber.min(0).max(100)
+const materialEmissionKeyframeTime = finiteNumber.min(0).max(120)
 
 export const manifestVector2Schema = z.tuple([finiteNumber, finiteNumber])
 export const manifestVector3Schema = z.tuple([
@@ -130,6 +132,37 @@ export const manifestMaterialSchema = z
     metalness: finiteNumber.min(0).max(1),
     roughness: finiteNumber.min(0).max(1),
     opacity: finiteNumber.min(0).max(1).optional(),
+    emission: z
+      .object({
+        hasEmission: z.boolean(),
+        color: hexColor,
+        intensity: materialEmissionIntensity,
+      })
+      .strict()
+      .nullable()
+      .optional(),
+    emissionAnimation: z
+      .object({
+        id: nonEmptyId,
+        name: z.string().trim().min(1),
+        interpolation: z.enum(['linear', 'step']),
+        keyframes: z
+          .array(
+            z
+              .object({
+                time: materialEmissionKeyframeTime,
+                hasEmission: z.boolean(),
+                color: hexColor,
+                intensity: materialEmissionIntensity,
+              })
+              .strict(),
+          )
+          .min(2),
+        loop: z.boolean(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict()
 

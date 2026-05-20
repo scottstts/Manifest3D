@@ -290,15 +290,13 @@ export function resolvePoseSpecValues(
 export function createGeneratedJointPoseSamples(
   asset: ManifestAsset,
 ): JointPoseSample[] {
-  return getMovableJoints(asset).flatMap((joint) => {
-    const values = getGeneratedSampleValues(joint)
+  return getJointPreviewControls(asset).flatMap((control) => {
+    const values = getGeneratedControlSampleValues(control)
 
     return values.map((value) => ({
-      id: `sample:${joint.id}:${formatPoseValue(value)}`,
-      label: `${joint.name} ${formatPoseValue(value)}`,
-      poses: {
-        [joint.id]: value,
-      },
+      id: `sample:${control.id}:${formatPoseValue(value)}`,
+      label: `${control.name} ${formatPoseValue(value)}`,
+      poses: resolveJointControlPoseValues(control, value),
       source: 'generated' as const,
     }))
   })
@@ -318,25 +316,26 @@ export function getNormalizedJointAxis(joint: ManifestJoint) {
   return axis.normalize()
 }
 
-function getGeneratedSampleValues(joint: ManifestJoint) {
-  if (joint.type === 'continuous') {
-    return [Math.PI / 2, Math.PI, Math.PI * 1.5]
+function getGeneratedControlSampleValues(control: JointPreviewControl) {
+  if (control.wrap) {
+    const min = control.range.min
+    const span = control.range.max - control.range.min
+    const wrappedSpan = Number.isFinite(span) && span > 0 ? span : twoPi
+
+    return [0.25, 0.5, 0.75].map((phase) =>
+      normalizeJointControlValue(control, min + wrappedSpan * phase),
+    )
   }
 
-  if (joint.type === 'fixed') {
-    return []
-  }
+  const defaultValue = getDefaultJointControlValue(control)
+  const candidates = [control.range.min, control.range.max]
 
-  const range = getJointPreviewRange(joint)
-  const defaultValue = getDefaultJointPoseValue(joint)
-  const candidates = [range.min, range.max]
-
-  if (range.min < 0 && range.max > 0) {
-    candidates.push((range.min + range.max) / 2)
+  if (control.range.min < 0 && control.range.max > 0) {
+    candidates.push((control.range.min + control.range.max) / 2)
   }
 
   return uniqueFiniteValues(candidates)
-    .map((value) => normalizeJointPoseValue(joint, value))
+    .map((value) => normalizeJointControlValue(control, value))
     .filter((value) => Math.abs(value - defaultValue) > 1e-8)
 }
 

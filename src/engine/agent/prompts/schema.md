@@ -31,6 +31,15 @@ geometry segment or bevel fields. Use `position: [0, 0, 0]`,
 `rotation: [0, 0, 0]`, and `scale: [1, 1, 1]` when no local transform is
 needed.
 
+Materials may define emission in their own material object:
+
+- Use `emission: null` and `emissionAnimation: null` for ordinary non-emissive materials.
+- Use `emission: { "hasEmission": true, "color": "#rrggbb", "intensity": number }` for a static glowing material.
+- Use `emissionAnimation` only for visible light-emission behavior such as flashing police lights, beacons, warning LEDs, screens, or pulsing indicators.
+- Each emission animation has `{ "id", "name", "interpolation", "keyframes", "loop" }`; `interpolation` is `"step"` for hard switching or `"linear"` for fades.
+- Keyframes use seconds and must start at `time: 0` with strictly increasing times. Each keyframe has `{ "time", "hasEmission", "color", "intensity" }`; set `hasEmission: false` and `intensity: 0` for off intervals.
+- Keep the base `emission` aligned with the first keyframe so rest-state preview and dynamic GLB export begin from the same material state.
+
 Part visuals support geometry types `box`, `roundedBox`, `cylinder`, `sphere`, `cone`, `capsule`, `torus`, `lathe`, `extrude`, and `tube`. Visual transforms are local to the owning part.
 
 Geometry authoring guidance:

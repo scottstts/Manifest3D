@@ -75,9 +75,96 @@ describe('GLB export', () => {
     expect(gltf.nodes?.[target?.node ?? -1]?.name).toBe('Lid Hinge')
   })
 
+  it('reuses one exported material slot for visuals sharing a manifest material', async () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts[0].visuals.push({
+      id: 'crate-base-side-rib',
+      geometry: {
+        size: [0.1, 0.08, 0.54],
+        type: 'box',
+      },
+      materialId: 'mat-violet',
+      name: 'Base side rib',
+      transform: {
+        position: [0.43, 0.24, 0],
+      },
+    })
+
+    const result = await exportManifestAssetGlb(asset)
+    const gltf = readGlbJson(result.arrayBuffer)
+
+    expect(
+      gltf.materials?.filter((material) => material.name === 'mat-violet'),
+    ).toHaveLength(1)
+  })
+
+  it('exports material emission animation with KHR_animation_pointer in dynamic GLB', async () => {
+    const result = await exportManifestAssetGlb(
+      createMaterialEmissionAnimationFixtureAsset(),
+      { mode: 'dynamic' },
+    )
+    const gltf = readGlbJson(result.arrayBuffer)
+    const materialIndex =
+      gltf.materials?.findIndex((material) => material.name === 'mat-violet') ??
+      -1
+    const animation = gltf.animations?.find(
+      (candidate) => candidate.name === 'Beacon Emission',
+    )
+    const pointers = animation?.channels.map(
+      (channel) => channel.target.extensions?.KHR_animation_pointer?.pointer,
+    )
+
+    expect(gltf.extensionsUsed).toEqual(
+      expect.arrayContaining([
+        'KHR_animation_pointer',
+        'KHR_materials_emissive_strength',
+      ]),
+    )
+    expect(gltf.extensionsRequired).toEqual(
+      expect.arrayContaining([
+        'KHR_animation_pointer',
+        'KHR_materials_emissive_strength',
+      ]),
+    )
+    expect(materialIndex).toBeGreaterThanOrEqual(0)
+    expect(gltf.materials?.[materialIndex]).toMatchObject({
+      emissiveFactor: [1, 0, 0],
+      extensions: {
+        KHR_materials_emissive_strength: {
+          emissiveStrength: 4,
+        },
+      },
+    })
+    expect(animation?.samplers).toHaveLength(2)
+    expect(animation?.samplers.every((sampler) => sampler.interpolation === 'STEP')).toBe(true)
+    expect(pointers).toEqual([
+      `/materials/${materialIndex}/emissiveFactor`,
+      `/materials/${materialIndex}/extensions/KHR_materials_emissive_strength/emissiveStrength`,
+    ])
+    expect(animation?.channels.every((channel) => channel.target.node === undefined)).toBe(true)
+    expect(gltf.accessors?.[animation?.samplers[0].input ?? -1]).toMatchObject({
+      componentType: 5126,
+      count: 4,
+      type: 'SCALAR',
+    })
+  })
+
+  it('omits material emission animation channels from static GLB export', async () => {
+    const result = await exportManifestAssetGlb(
+      createMaterialEmissionAnimationFixtureAsset(),
+      { mode: 'static' },
+    )
+    const gltf = readGlbJson(result.arrayBuffer)
+
+    expect(gltf.animations).toBeUndefined()
+    expect(gltf.extensionsUsed ?? []).not.toContain('KHR_animation_pointer')
+  })
+
   it('detects export animation capability from movable joints', () => {
     const movableAsset = createValidValidationFixtureAsset()
     const staticAsset = createValidValidationFixtureAsset()
+    const materialAnimatedAsset = createMaterialEmissionAnimationFixtureAsset()
 
     staticAsset.joints = staticAsset.joints.map((joint) => ({
       ...joint,
@@ -88,6 +175,7 @@ describe('GLB export', () => {
 
     expect(canExportManifestAssetAnimation(movableAsset)).toBe(true)
     expect(canExportManifestAssetAnimation(staticAsset)).toBe(false)
+    expect(canExportManifestAssetAnimation(materialAnimatedAsset)).toBe(true)
   })
 
   it('strips helpers, non-exportable objects, and userData from cloned export objects', () => {
@@ -157,6 +245,71 @@ describe('GLB export', () => {
   })
 })
 
+function createMaterialEmissionAnimationFixtureAsset() {
+  const asset = createValidValidationFixtureAsset()
+
+  return {
+    ...asset,
+    id: 'material-emission-crate',
+    name: 'Material Emission Crate',
+    controls: [],
+    joints: asset.joints.map((joint) => ({
+      ...joint,
+      axis: undefined,
+      limits: undefined,
+      type: 'fixed' as const,
+    })),
+    materials: asset.materials.map((material) =>
+      material.id === 'mat-violet'
+        ? {
+            ...material,
+            emission: {
+              color: '#ff0000',
+              hasEmission: true,
+              intensity: 4,
+            },
+            emissionAnimation: {
+              id: 'beacon-emission',
+              interpolation: 'step' as const,
+              keyframes: [
+                {
+                  color: '#ff0000',
+                  hasEmission: true,
+                  intensity: 4,
+                  time: 0,
+                },
+                {
+                  color: '#ff0000',
+                  hasEmission: false,
+                  intensity: 0,
+                  time: 0.4,
+                },
+                {
+                  color: '#0000ff',
+                  hasEmission: true,
+                  intensity: 4,
+                  time: 0.8,
+                },
+                {
+                  color: '#0000ff',
+                  hasEmission: false,
+                  intensity: 0,
+                  time: 1.2,
+                },
+              ],
+              loop: true,
+              name: 'Beacon',
+            },
+          }
+        : {
+            ...material,
+            emission: null,
+            emissionAnimation: null,
+          },
+    ),
+  }
+}
+
 class TestFileReader {
   onloadend: (() => void) | null = null
   result: ArrayBuffer | string | null = null
@@ -178,16 +331,39 @@ function readGlbMagic(arrayBuffer: ArrayBuffer) {
 }
 
 type GltfJson = {
+  accessors?: Array<{
+    componentType?: number
+    count?: number
+    type?: string
+  }>
   animations?: Array<{
     channels: Array<{
       target: {
+        extensions?: {
+          KHR_animation_pointer?: {
+            pointer?: string
+          }
+        }
         node?: number
-        path: string
+        path?: string
       }
     }>
     name?: string
+    samplers: Array<{
+      input: number
+      interpolation?: string
+    }>
   }>
+  extensionsRequired?: string[]
+  extensionsUsed?: string[]
   materials?: Array<{
+    emissiveFactor?: number[]
+    extensions?: {
+      KHR_materials_emissive_strength?: {
+        emissiveStrength?: number
+      }
+    }
+    name?: string
     pbrMetallicRoughness?: {
       baseColorFactor?: number[]
       metallicFactor?: number

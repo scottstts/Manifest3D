@@ -83,6 +83,13 @@ import {
   type JointPreviewControl,
   type JointPoseValues,
 } from '../engine/geometry/jointPoses'
+import {
+  getDefaultMaterialEmissionControlValue,
+  getMaterialEmissionAnimationControls,
+  getMaterialEmissionControlPreviewValue,
+  normalizeMaterialEmissionControlValue,
+  type MaterialAnimationValues,
+} from '../engine/geometry/materialAnimations'
 import { modelConfig } from '../engine/config/modelConfig'
 import {
   resolveAssetPanelActiveState,
@@ -98,9 +105,14 @@ type ComposeHistoryEntry = {
 
 type JointPreviewByInstance = Record<string, JointPoseValues>
 
-type PlayingJointPreview = {
+type MaterialAnimationByInstance = Record<string, MaterialAnimationValues>
+
+type PreviewControlKind = 'joint' | 'material'
+
+type PlayingAnimationPreview = {
   controlId: string
   instanceId: string
+  kind: PreviewControlKind
 }
 
 
@@ -159,8 +171,10 @@ export function AppShell() {
   >([])
   const [jointPreviewByInstance, setJointPreviewByInstance] =
     useState<JointPreviewByInstance>({})
-  const [playingJointPreview, setPlayingJointPreview] =
-    useState<PlayingJointPreview | null>(null)
+  const [materialAnimationByInstance, setMaterialAnimationByInstance] =
+    useState<MaterialAnimationByInstance>({})
+  const [playingAnimationPreview, setPlayingAnimationPreview] =
+    useState<PlayingAnimationPreview | null>(null)
   const sidePanelRef = useRef<HTMLElement | null>(null)
   const assetHistoryPanelRef = useRef<HTMLElement | null>(null)
   const pendingTransformHistoryRef = useRef<ComposeHistoryEntry | null>(null)
@@ -191,11 +205,18 @@ export function AppShell() {
   const viewedAsset = viewedAssetInstance?.asset
   const selectedJointPreviewPoses =
     selectedInstance ? jointPreviewByInstance[selectedInstance.instanceId] ?? {} : {}
-  const selectedPlayingJointId =
-    playingJointPreview &&
+  const selectedMaterialAnimationValues =
+    selectedInstance
+      ? materialAnimationByInstance[selectedInstance.instanceId] ?? {}
+      : {}
+  const selectedPlayingPreview =
+    playingAnimationPreview &&
     selectedInstance &&
-    playingJointPreview.instanceId === selectedInstance.instanceId
-      ? playingJointPreview.controlId
+    playingAnimationPreview.instanceId === selectedInstance.instanceId
+      ? {
+          controlId: playingAnimationPreview.controlId,
+          kind: playingAnimationPreview.kind,
+        }
       : null
   const exportableCreateAsset =
     sceneSnapshot.activeWorkspace === 'create' && sceneSnapshot.createInstance
@@ -471,6 +492,57 @@ export function AppShell() {
     [sceneStore],
   )
 
+  const handleMaterialAnimationTimeChange = useCallback(
+    (instanceId: string, controlId: string, value: number) => {
+      const instance = sceneStore.getInstance(instanceId)
+      const control = instance
+        ? getMaterialEmissionAnimationControls(instance.asset).find(
+            (candidate) => candidate.id === controlId,
+          )
+        : null
+
+      if (!control) {
+        return
+      }
+
+      setMaterialAnimationByInstance((currentPreview) => ({
+        ...currentPreview,
+        [instanceId]: {
+          ...(currentPreview[instanceId] ?? {}),
+          [control.materialId]: normalizeMaterialEmissionControlValue(
+            control,
+            value,
+          ),
+        },
+      }))
+    },
+    [sceneStore],
+  )
+
+  const handleMaterialAnimationReset = useCallback(
+    (instanceId: string, controlId: string) => {
+      const instance = sceneStore.getInstance(instanceId)
+      const control = instance
+        ? getMaterialEmissionAnimationControls(instance.asset).find(
+            (candidate) => candidate.id === controlId,
+          )
+        : null
+
+      if (!control) {
+        return
+      }
+
+      setMaterialAnimationByInstance((currentPreview) => ({
+        ...currentPreview,
+        [instanceId]: {
+          ...(currentPreview[instanceId] ?? {}),
+          [control.materialId]: getDefaultMaterialEmissionControlValue(control),
+        },
+      }))
+    },
+    [sceneStore],
+  )
+
   const handleJointResetAll = useCallback((instanceId: string) => {
     setJointPreviewByInstance((currentPreview) => {
       const remainingPreview = { ...currentPreview }
@@ -478,18 +550,38 @@ export function AppShell() {
       delete remainingPreview[instanceId]
       return remainingPreview
     })
-    setPlayingJointPreview((currentPlaying) =>
+    setMaterialAnimationByInstance((currentPreview) => {
+      const remainingPreview = { ...currentPreview }
+
+      delete remainingPreview[instanceId]
+      return remainingPreview
+    })
+    setPlayingAnimationPreview((currentPlaying) =>
       currentPlaying?.instanceId === instanceId ? null : currentPlaying,
     )
   }, [])
 
   const handleJointTogglePlayback = useCallback(
     (instanceId: string, controlId: string) => {
-      setPlayingJointPreview((currentPlaying) =>
+      setPlayingAnimationPreview((currentPlaying) =>
         currentPlaying?.instanceId === instanceId &&
-        currentPlaying.controlId === controlId
+        currentPlaying.controlId === controlId &&
+        currentPlaying.kind === 'joint'
           ? null
-          : { controlId, instanceId },
+          : { controlId, instanceId, kind: 'joint' },
+      )
+    },
+    [],
+  )
+
+  const handleMaterialAnimationTogglePlayback = useCallback(
+    (instanceId: string, controlId: string) => {
+      setPlayingAnimationPreview((currentPlaying) =>
+        currentPlaying?.instanceId === instanceId &&
+        currentPlaying.controlId === controlId &&
+        currentPlaying.kind === 'material'
+          ? null
+          : { controlId, instanceId, kind: 'material' },
       )
     },
     [],
@@ -1182,72 +1274,104 @@ export function AppShell() {
   ])
 
   useEffect(() => {
-    if (!playingJointPreview) {
+    if (!playingAnimationPreview) {
       return undefined
     }
 
-    const instance = sceneStore.getInstance(playingJointPreview.instanceId)
-    const control = instance
-      ? getJointPreviewControls(instance.asset).find(
-          (candidate) => candidate.id === playingJointPreview.controlId,
-        )
-      : null
+    const instance = sceneStore.getInstance(playingAnimationPreview.instanceId)
+    const jointControl =
+      instance && playingAnimationPreview.kind === 'joint'
+        ? getJointPreviewControls(instance.asset).find(
+            (candidate) => candidate.id === playingAnimationPreview.controlId,
+          )
+        : null
+    const materialControl =
+      instance && playingAnimationPreview.kind === 'material'
+        ? getMaterialEmissionAnimationControls(instance.asset).find(
+            (candidate) => candidate.id === playingAnimationPreview.controlId,
+          )
+        : null
 
-    if (!instance || !control) {
+    if (!instance || (!jointControl && !materialControl)) {
       return undefined
     }
 
     const activeInstance = instance
-    const activeControl = control
     let animationFrame = 0
     let previousTime = performance.now()
 
     jointAnimationDirectionRef.current = 1
 
-    function animateJointPreview(time: number) {
+    function animatePreview(time: number) {
       const deltaSeconds = Math.min(0.05, Math.max(0, (time - previousTime) / 1000))
 
       previousTime = time
-      setJointPreviewByInstance((currentPreview) => {
-        const range = activeControl.range
-        const currentValue = getJointControlPreviewValue(
-          activeControl,
-          currentPreview[activeInstance.instanceId] ?? {},
-        )
-        const speed = getJointAnimationSpeed(range.unit, range.max - range.min)
-        let nextValue =
-          currentValue + speed * deltaSeconds * jointAnimationDirectionRef.current
 
-        if (activeControl.wrap) {
-          nextValue = normalizeJointControlValue(activeControl, nextValue)
-        } else if (nextValue >= range.max) {
-          nextValue = range.max
-          jointAnimationDirectionRef.current = -1
-        } else if (nextValue <= range.min) {
-          nextValue = range.min
-          jointAnimationDirectionRef.current = 1
-        }
+      if (jointControl) {
+        const activeControl = jointControl
 
-        const poseValues = resolveJointControlPoseValues(activeControl, nextValue)
+        setJointPreviewByInstance((currentPreview) => {
+          const range = activeControl.range
+          const currentValue = getJointControlPreviewValue(
+            activeControl,
+            currentPreview[activeInstance.instanceId] ?? {},
+          )
+          const speed = getJointAnimationSpeed(range.unit, range.max - range.min)
+          let nextValue =
+            currentValue + speed * deltaSeconds * jointAnimationDirectionRef.current
 
-        return {
-          ...currentPreview,
-          [activeInstance.instanceId]: {
-            ...(currentPreview[activeInstance.instanceId] ?? {}),
-            ...poseValues,
-          },
-        }
-      })
+          if (activeControl.wrap) {
+            nextValue = normalizeJointControlValue(activeControl, nextValue)
+          } else if (nextValue >= range.max) {
+            nextValue = range.max
+            jointAnimationDirectionRef.current = -1
+          } else if (nextValue <= range.min) {
+            nextValue = range.min
+            jointAnimationDirectionRef.current = 1
+          }
 
-      animationFrame = requestAnimationFrame(animateJointPreview)
+          const poseValues = resolveJointControlPoseValues(activeControl, nextValue)
+
+          return {
+            ...currentPreview,
+            [activeInstance.instanceId]: {
+              ...(currentPreview[activeInstance.instanceId] ?? {}),
+              ...poseValues,
+            },
+          }
+        })
+      } else if (materialControl) {
+        const activeControl = materialControl
+
+        setMaterialAnimationByInstance((currentPreview) => {
+          const currentValue = getMaterialEmissionControlPreviewValue(
+            activeControl,
+            currentPreview[activeInstance.instanceId] ?? {},
+          )
+          const rawNextValue = currentValue + deltaSeconds
+          const nextValue = activeControl.wrap
+            ? normalizeMaterialEmissionControlValue(activeControl, rawNextValue)
+            : Math.min(activeControl.range.max, rawNextValue)
+
+          return {
+            ...currentPreview,
+            [activeInstance.instanceId]: {
+              ...(currentPreview[activeInstance.instanceId] ?? {}),
+              [activeControl.materialId]: nextValue,
+            },
+          }
+        })
+      }
+
+      animationFrame = requestAnimationFrame(animatePreview)
     }
 
-    animationFrame = requestAnimationFrame(animateJointPreview)
+    animationFrame = requestAnimationFrame(animatePreview)
 
     return () => {
       cancelAnimationFrame(animationFrame)
     }
-  }, [playingJointPreview, sceneStore])
+  }, [playingAnimationPreview, sceneStore])
 
   useLayoutEffect(() => {
     const sidePanel = sidePanelRef.current
@@ -1284,6 +1408,7 @@ export function AppShell() {
         assets={sceneSnapshot.renderableAssets}
         isSidePanelCollapsed={isSidePanelCollapsed}
         jointPreviewPosesByInstance={jointPreviewByInstance}
+        materialAnimationValuesByInstance={materialAnimationByInstance}
         leftPanelOcclusionWidth={leftPanelOcclusionWidth}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
         selectedTargetId={selection.targetId}
@@ -1359,10 +1484,16 @@ export function AppShell() {
         <JointPreviewPanel
           instance={selectedInstance ?? null}
           jointPoses={selectedJointPreviewPoses}
-          playingJointId={selectedPlayingJointId}
+          materialAnimationValues={selectedMaterialAnimationValues}
+          playingPreview={selectedPlayingPreview}
           rightOffset={composeToolbarRightOffset}
           onJointPoseChange={handleJointPoseChange}
           onJointReset={handleJointReset}
+          onMaterialAnimationReset={handleMaterialAnimationReset}
+          onMaterialAnimationTimeChange={handleMaterialAnimationTimeChange}
+          onMaterialAnimationTogglePlayback={
+            handleMaterialAnimationTogglePlayback
+          }
           onResetAll={handleJointResetAll}
           onTogglePlayback={handleJointTogglePlayback}
         />

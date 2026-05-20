@@ -78,7 +78,9 @@
       "color": "#8fa7ff",
       "metalness": 0.05,
       "roughness": 0.5,
-      "opacity": 1
+      "opacity": 1,
+      "emission": null,
+      "emissionAnimation": null
     },
     {
       "id": "mat-lid",
@@ -86,7 +88,9 @@
       "color": "#f7f6ff",
       "metalness": 0,
       "roughness": 0.35,
-      "opacity": 1
+      "opacity": 1,
+      "emission": null,
+      "emissionAnimation": null
     }
   ],
   "checks": [

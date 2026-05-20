@@ -11,9 +11,10 @@ The difference is how the existing joint fields are used:
 - static assets use `fixed` joints to assemble a rigid part tree
 - articulated assets use `revolute`, `prismatic`, or `continuous` joints with axis and limit data
 - `controls` may group one or more movable joints under a single preview dial
+- material emission animation lives on the material that glows, using emission keyframes rather than scene lights
 - pose-specific authored checks may add `check.pose` when a mechanism needs validation away from rest pose
 
-This keeps the renderer, validator, export path, and repair loop on one contract surface. A static chair and a hinged box are both Manifest3D assets; the hinged box simply has movable joints, optional control grouping, and pose-aware checks.
+This keeps the renderer, validator, export path, and repair loop on one contract surface. A static chair, a hinged box, and a police light bar are all Manifest3D assets; the hinged box uses movable joints, while the light bar uses material emission animation.
 
 ## Joint Pose Semantics
 
@@ -33,24 +34,25 @@ Joint transforms are applied at the joint group. Part-local visual transforms re
 
 ## Runtime Preview State
 
-Joint preview is UI/runtime state, not manifest data and not persisted asset state.
+Animation preview is UI/runtime state, not persisted asset state.
 
-`AppShell` stores preview values by scene instance id, then passes them into the WebGPU renderer. The renderer applies those values to already-built joint groups through `applyBuiltManifestJointPoses`.
+`AppShell` stores joint pose values and material animation times by scene instance id, then passes them into the WebGPU renderer. The renderer applies joint values to already-built joint groups through `applyBuiltManifestJointPoses` and applies material emission state through `applyBuiltManifestMaterialAnimations`.
 
 This means:
 
 - scrubbing a joint does not mutate the asset JSON
+- scrubbing a material emission animation does not mutate the asset JSON
 - the same saved asset can be previewed differently in different scene instances
 - export still uses the canonical asset; dynamic GLB export adds generated motion clips instead of exporting the current preview pose
 - resetting the preview simply removes per-instance pose state
 
-The preview panel appears only for selected instances that have movable joints. If the asset declares `controls`, those controls define the dials; uncovered movable joints still get fallback individual dials at runtime. Validation is stricter for generated multi-joint assets: when more than one movable joint exists, the manifest must declare controls that cover those movable joints. This keeps the authored mechanism intentional for preview and dynamic GLB export instead of relying on accidental fallback dials.
+The preview panel appears only for selected instances that have movable joints or material emission animation. If the asset declares `controls`, those controls define the joint dials; uncovered movable joints still get fallback individual dials at runtime. Material emission animations appear in the same panel as timeline controls. Validation is stricter for generated multi-joint assets: when more than one movable joint exists, the manifest must declare controls that cover those movable joints. This keeps the authored mechanism intentional for preview and dynamic GLB export instead of relying on accidental fallback dials.
 
 Limited revolute/prismatic controls ping-pong during playback; continuous controls wrap through a full turn.
 
 ## Demand-Driven Rendering
 
-The app still uses demand-driven rendering. Joint preview changes explicitly invalidate the Fiber scene after poses are applied.
+The app still uses demand-driven rendering. Joint preview and material emission preview changes explicitly invalidate the Fiber scene after poses or material values are applied.
 
 Animation is driven from `AppShell` with `requestAnimationFrame`, not hidden inside the Three object builder. This keeps animation lifecycle tied to UI state and avoids making asset construction itself stateful.
 
@@ -62,10 +64,12 @@ Rest-pose authored checks continue to run through `runPromptChecks` by default. 
 
 Sampled-pose validation combines two sources:
 
-- generated samples from movable joints, such as hinge limits, slider limits, and continuous quarter-turns
+- generated samples from manifest preview controls, such as hinge limits, slider limits, paired steering controls, and continuous quarter-turns
 - authored samples from `check.pose`
 
 For each sample, validation builds the asset with those joint values, runs sampled-pose overlap QC, then runs any authored checks that target that same pose.
+
+Generated samples intentionally follow controls rather than sampling every movable joint independently. This matches the UI and dynamic-export contract for linked mechanisms and avoids forcing repairs for impossible single-joint poses, such as one steering knuckle turning while the paired steering control would move both.
 
 The report can now distinguish failures such as:
 
@@ -116,7 +120,7 @@ Timeline copy also distinguishes sampled-pose failures from rest-pose validation
 
 ## Prompt Contract
 
-Prompt docs now ask the model to include pose-specific checks for primary mechanisms: lids, drawers, wheels, hinges, sleeves, retainers, handles, and controls.
+Prompt docs now ask the model to include pose-specific checks for primary mechanisms: lids, drawers, wheels, hinges, sleeves, retainers, handles, and controls. They also tell the model to use material `emission` and `emissionAnimation` for prompt-critical visible lights, flashing beacons, LEDs, screens, and color-switching indicators.
 
 This is a prompt-quality requirement, not a new schema mode. If the prompt asks for a static object, the model should not invent pose checks or controls. If the prompt asks for a mechanism, the model should express the mechanism with movable joints, appropriate control grouping, and targeted pose checks.
 
@@ -131,6 +135,9 @@ Phase 7 added coverage for:
 - hollow torus/tube overlap checks not filling the center void
 - validation timeline/stage ordering including sampled poses
 - grouped preview controls and per-joint fallback controls
+- generated sampled poses coming from controls for linked mechanisms
+- no-op controls whose limits clamp to no joint motion
+- material emission schema, preview, validation, and export behavior
 - OpenAI strict structured-output compatibility for the response schema
 
 The strict structured-output test is important because OpenAI can reject an invalid response schema before any candidate is generated. That failure does not exercise normal candidate parsing or validation, so it needs its own contract guard.
@@ -144,5 +151,6 @@ The system does not yet provide:
 - general mesh-level collision/contact
 - persisted preview poses
 - export of a chosen animated pose
+- material animation properties beyond emission color/on-off/intensity
 
-Those are future extensions. The Phase 7 boundary is deterministic articulation preview plus sampled-pose validation inside the existing Manifest3D pipeline.
+Those are future extensions. The current boundary is deterministic joint articulation, material-emission animation preview, sampled-pose validation, and dynamic GLB export for the supported animation surfaces inside the existing Manifest3D pipeline.

@@ -25,8 +25,66 @@ const materialSchema = objectSchema(
       0,
       1,
     ),
+    emission: nullableSchema(
+      objectSchema(
+        {
+          hasEmission: booleanSchema(
+            'Whether this material emits light in its rest state.',
+          ),
+          color: stringSchema('Hex emissive color, for example #ff2040.'),
+          intensity: boundedNumberSchema(
+            'Nonnegative emissive strength from 0 to 100.',
+            0,
+            100,
+          ),
+        },
+        ['hasEmission', 'color', 'intensity'],
+      ),
+    ),
+    emissionAnimation: nullableSchema(
+      objectSchema(
+        {
+          id: stringSchema('Stable material emission animation id.'),
+          name: stringSchema('Human-readable emission control name.'),
+          interpolation: enumSchema(['linear', 'step']),
+          keyframes: arraySchema(
+            objectSchema(
+              {
+                time: boundedNumberSchema(
+                  'Nonnegative keyframe time in seconds from 0 to 120.',
+                  0,
+                  120,
+                ),
+                hasEmission: booleanSchema(
+                  'Whether emission is on at this keyframe.',
+                ),
+                color: stringSchema('Hex emissive color at this keyframe.'),
+                intensity: boundedNumberSchema(
+                  'Nonnegative emissive strength from 0 to 100.',
+                  0,
+                  100,
+                ),
+              },
+              ['time', 'hasEmission', 'color', 'intensity'],
+            ),
+            { minItems: 2 },
+          ),
+          loop: booleanSchema('Whether preview playback should wrap.'),
+        },
+        ['id', 'name', 'interpolation', 'keyframes', 'loop'],
+      ),
+    ),
   },
-  ['id', 'name', 'color', 'metalness', 'roughness', 'opacity'],
+  [
+    'id',
+    'name',
+    'color',
+    'metalness',
+    'roughness',
+    'opacity',
+    'emission',
+    'emissionAnimation',
+  ],
 )
 
 const visualSchema = objectSchema(
@@ -558,6 +616,17 @@ function enumSchema(values: readonly string[]): JsonSchema {
   return {
     type: 'string',
     enum: [...values],
+  }
+}
+
+function nullableSchema(schema: JsonSchema): JsonSchema {
+  return {
+    anyOf: [
+      schema,
+      {
+        type: 'null',
+      },
+    ],
   }
 }
 

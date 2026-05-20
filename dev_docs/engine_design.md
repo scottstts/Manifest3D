@@ -13,6 +13,7 @@ Stable ids are the contract surface:
 - joints: `jointId`
 - controls: `controlId`
 - materials: `materialId`
+- material emission animations: `emissionAnimation.id`
 
 Names remain display labels. Checks, controls, and allowances should reference ids so repairs do not accidentally break exact relationships or UI articulation controls by renaming visible text.
 
@@ -62,6 +63,8 @@ Implemented baseline QC includes:
 - current-pose overlap failure unless scoped by allowance
 - joint-origin distance warning
 - movable-joint control coverage for articulated assets with multiple movable joints
+- no-op control detection when authored control limits clamp to no actual joint motion
+- material emission animation timing and visible-motion checks
 
 Authored checks are for prompt-critical exact claims:
 

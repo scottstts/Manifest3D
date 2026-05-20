@@ -14,6 +14,12 @@ import {
   applyManifestTransform,
   type JointPoseValues,
 } from './jointPoses'
+import {
+  applyMaterialEmissionToThreeMaterial,
+  resolveMaterialEmissionAtTime,
+  resolveStaticMaterialEmission,
+  type MaterialAnimationValues,
+} from './materialAnimations'
 
 export type ManifestObjectKind = 'asset' | 'part' | 'visual' | 'joint'
 
@@ -30,6 +36,7 @@ export type BuiltManifestAsset = {
   bounds: THREE.Box3
   group: THREE.Group
   jointGroups: Map<string, THREE.Group>
+  materials: Map<string, THREE.Material>
   partBounds: Map<string, THREE.Box3>
   partGroups: Map<string, THREE.Group>
   visualBounds: Map<string, THREE.Box3>
@@ -120,6 +127,7 @@ export function buildManifestAsset(
     bounds,
     group,
     jointGroups,
+    materials: materialById,
     partBounds,
     partGroups,
     visualBounds,
@@ -134,6 +142,27 @@ export function applyBuiltManifestJointPoses(
 ) {
   applyJointPosesToBuiltGroups(builtAsset.asset, builtAsset.jointGroups, jointPoses)
   builtAsset.group.updateMatrixWorld(true)
+}
+
+export function applyBuiltManifestMaterialAnimations(
+  builtAsset: BuiltManifestAsset,
+  materialAnimationValues: MaterialAnimationValues,
+) {
+  for (const material of builtAsset.asset.materials) {
+    const threeMaterial = builtAsset.materials.get(material.id)
+
+    if (!threeMaterial) {
+      continue
+    }
+
+    applyMaterialEmissionToThreeMaterial(
+      threeMaterial,
+      resolveMaterialEmissionAtTime(
+        material,
+        materialAnimationValues[material.id],
+      ),
+    )
+  }
 }
 
 export function findManifestObjectData(
@@ -338,14 +367,21 @@ function buildMaterialMap(materials: readonly ManifestMaterial[]) {
 
 function createMaterial(material: ManifestMaterial) {
   const opacity = material.opacity ?? 1
-
-  return new THREE.MeshStandardNodeMaterial({
+  const emission = resolveStaticMaterialEmission(material)
+  const hasEmission = emission.hasEmission && emission.intensity > 0
+  const threeMaterial = new THREE.MeshStandardNodeMaterial({
     color: material.color,
+    emissive: hasEmission ? emission.color : '#000000',
+    emissiveIntensity: hasEmission ? emission.intensity : 0,
     metalness: material.metalness,
     opacity,
     roughness: material.roughness,
     transparent: opacity < 1,
   })
+
+  threeMaterial.name = material.id
+
+  return threeMaterial
 }
 
 function setManifestUserData(

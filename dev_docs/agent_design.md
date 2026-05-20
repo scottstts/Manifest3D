@@ -12,6 +12,7 @@ The prompt files are Manifest3D-specific, but they intentionally carry the relev
 - use real-world scale and plausible materials
 - prefer `roundedBox` and `capsule` where manufactured objects need softened panels, handles, rails, padded supports, rounded pins, or grips
 - articulate primary visible mechanisms and controls
+- use material `emission` and `emissionAnimation` for visible lights, flashing beacons, LEDs, screens, and color-switching indicators
 - give multi-joint mechanisms clear `controls` coverage instead of leaving unrelated movable joints as orphan dials
 - avoid floating parts and unsupported visual islands
 - classify overlap as intentional or unintended before repairing it
@@ -98,7 +99,7 @@ Current headless stress behavior:
 
 - the default run budget is one hour
 - ready candidates export static GLB artifacts
-- assets with movable joints also export dynamic GLB artifacts when animation export is supported
+- assets with movable joints or material emission animation also export dynamic GLB artifacts when animation export is supported
 - local reference images can be supplied through `HEADLESS_AGENT_IMAGE_PATH` or `HEADLESS_AGENT_IMAGE_PATHS`
 - summary JSON records exported GLB paths and the generated viewer HTML path
 

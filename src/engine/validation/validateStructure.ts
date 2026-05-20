@@ -1,6 +1,7 @@
 import type {
   ManifestAsset,
   ManifestJoint,
+  ManifestJointControl,
   ManifestJointType,
   ManifestVector3,
 } from '../schema/manifestTypes'
@@ -17,7 +18,9 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   signals.push(...validateUniqueIds(asset, controls))
   signals.push(...validateRefs(asset, controls))
   signals.push(...validateAllowanceRefs(asset))
+  signals.push(...validateControlMotionRanges(asset, controls))
   signals.push(...validateMovableControlCoverage(asset, controls))
+  signals.push(...validateMaterialEmissionAnimations(asset))
   signals.push(...validateJointTree(asset))
   signals.push(...validateJointSemantics(asset))
 
@@ -40,6 +43,14 @@ function validateUniqueIds(
       'duplicate_material_id',
       '/materials',
       'Material ids must be unique.',
+    ),
+    ...findDuplicateSignals(
+      asset.materials
+        .map((material) => material.emissionAnimation?.id)
+        .filter((id): id is string => typeof id === 'string'),
+      'duplicate_material_animation_id',
+      '/materials/*/emissionAnimation/id',
+      'Material emission animation ids must be unique.',
     ),
     ...findDuplicateSignals(
       asset.joints.map((joint) => joint.id),
@@ -244,6 +255,78 @@ function validateRefs(
   return signals
 }
 
+function validateControlMotionRanges(
+  asset: ManifestAsset,
+  controls: ManifestAsset['controls'],
+) {
+  const signals: ValidationSignal[] = []
+  const jointsById = new Map(asset.joints.map((joint) => [joint.id, joint]))
+
+  for (const [controlIndex, control] of controls.entries()) {
+    if (control.limits.lower >= control.limits.upper) {
+      continue
+    }
+
+    const movableBindings = control.joints
+      .map((binding) => ({
+        binding,
+        joint: jointsById.get(binding.jointId),
+      }))
+      .filter(
+        (entry): entry is {
+          binding: ManifestJointControl['joints'][number]
+          joint: ManifestJoint
+        } => entry.joint !== undefined && entry.joint.type !== 'fixed',
+      )
+
+    if (movableBindings.length === 0) {
+      continue
+    }
+
+    const hasEffectiveMotion = movableBindings.some(({ binding, joint }) => {
+      if (Math.abs(binding.scale) <= 1e-8) {
+        return false
+      }
+
+      const lower = resolveControlBindingJointValue(
+        joint,
+        binding,
+        control.limits.lower,
+      )
+      const upper = resolveControlBindingJointValue(
+        joint,
+        binding,
+        control.limits.upper,
+      )
+
+      return (
+        lower !== null &&
+        upper !== null &&
+        Math.abs(upper - lower) > 1e-8
+      )
+    })
+
+    if (!hasEffectiveMotion) {
+      signals.push(
+        createValidationSignal(
+          'model_validity',
+          'control_no_effective_motion',
+          `Control "${control.id}" does not move any bound joint through its authored limits.`,
+          {
+            details:
+              'Adjust control lower/upper, binding scale, or binding offset so the control range maps into at least one bound joint range.',
+            path: `/controls/${controlIndex}/limits`,
+            refs: { controlId: control.id },
+            stage: 'structure',
+          },
+        ),
+      )
+    }
+  }
+
+  return signals
+}
+
 function validateMovableControlCoverage(
   asset: ManifestAsset,
   controls: ManifestAsset['controls'],
@@ -300,6 +383,87 @@ function validateMovableControlCoverage(
       },
     ),
   ]
+}
+
+function validateMaterialEmissionAnimations(asset: ManifestAsset) {
+  const signals: ValidationSignal[] = []
+
+  for (const [materialIndex, material] of asset.materials.entries()) {
+    const animation = material.emissionAnimation
+
+    if (!animation) {
+      continue
+    }
+
+    const path = `/materials/${materialIndex}/emissionAnimation`
+    const keyframes = animation.keyframes
+
+    if (keyframes.length < 2) {
+      continue
+    }
+
+    if (Math.abs(keyframes[0].time) > 1e-8) {
+      signals.push(
+        createValidationSignal(
+          'model_validity',
+          'material_emission_animation_start_time',
+          `Material "${material.id}" emission animation must start at time 0.`,
+          {
+            details:
+              'Start material emission keyframes at zero seconds so preview and GLB animation rest state are unambiguous.',
+            path: `${path}/keyframes/0/time`,
+            refs: {
+              materialAnimationId: animation.id,
+              materialId: material.id,
+            },
+            stage: 'structure',
+          },
+        ),
+      )
+    }
+
+    for (let index = 1; index < keyframes.length; index += 1) {
+      if (keyframes[index].time <= keyframes[index - 1].time) {
+        signals.push(
+          createValidationSignal(
+            'model_validity',
+            'material_emission_keyframe_time_order',
+            `Material "${material.id}" emission keyframe times must be strictly increasing.`,
+            {
+              path: `${path}/keyframes/${index}/time`,
+              refs: {
+                materialAnimationId: animation.id,
+                materialId: material.id,
+              },
+              stage: 'structure',
+            },
+          ),
+        )
+      }
+    }
+
+    if (!hasVisibleMaterialEmissionMotion(keyframes)) {
+      signals.push(
+        createValidationSignal(
+          'model_validity',
+          'material_emission_animation_static',
+          `Material "${material.id}" emission animation has no visible emission change.`,
+          {
+            details:
+              'Change emissive color, on/off state, or intensity across keyframes; omit emissionAnimation for a static emissive material.',
+            path,
+            refs: {
+              materialAnimationId: animation.id,
+              materialId: material.id,
+            },
+            stage: 'structure',
+          },
+        ),
+      )
+    }
+  }
+
+  return signals
 }
 
 function validateAllowanceRefs(asset: ManifestAsset): ValidationSignal[] {
@@ -727,6 +891,59 @@ function validateBoundedJointLimits(joint: ManifestJoint, jointPath: string) {
   }
 
   return signals
+}
+
+type MaterialEmissionKeyframe = NonNullable<
+  ManifestAsset['materials'][number]['emissionAnimation']
+>['keyframes'][number]
+
+function hasVisibleMaterialEmissionMotion(
+  keyframes: readonly MaterialEmissionKeyframe[],
+) {
+  const firstState = getVisibleMaterialEmissionState(keyframes[0])
+
+  return keyframes.slice(1).some((keyframe) => {
+    const state = getVisibleMaterialEmissionState(keyframe)
+
+    return (
+      Math.abs(state.intensity - firstState.intensity) > 1e-8 ||
+      ((state.intensity > 1e-8 || firstState.intensity > 1e-8) &&
+        state.color !== firstState.color)
+    )
+  })
+}
+
+function getVisibleMaterialEmissionState(keyframe: MaterialEmissionKeyframe) {
+  return {
+    color: keyframe.color.toLowerCase(),
+    intensity: keyframe.hasEmission ? keyframe.intensity : 0,
+  }
+}
+
+function resolveControlBindingJointValue(
+  joint: ManifestJoint,
+  binding: ManifestJointControl['joints'][number],
+  controlValue: number,
+) {
+  const value = binding.offset + binding.scale * controlValue
+
+  if (joint.type === 'continuous') {
+    return value
+  }
+
+  if (joint.type === 'revolute' || joint.type === 'prismatic') {
+    if (joint.limits?.lower === undefined || joint.limits.upper === undefined) {
+      return null
+    }
+
+    return clamp(value, joint.limits.lower, joint.limits.upper)
+  }
+
+  return null
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
 }
 
 function requiresAxis(jointType: ManifestJointType) {

@@ -7,6 +7,7 @@ import type {
   SceneTransform,
 } from '../engine/scene/sceneStore'
 import type { JointPoseValues } from '../engine/geometry/jointPoses'
+import type { MaterialAnimationValues } from '../engine/geometry/materialAnimations'
 import { UnsupportedWebGPU } from '../ui/UnsupportedWebGPU'
 import { computeRendererDpr, createFiberWebGPURenderer } from './createRenderer'
 import { ViewportGizmoOverlay } from './ViewportGizmo'
@@ -24,6 +25,7 @@ type WebGPUCanvasProps = {
   activeTransformTool: TransformTool
   isSidePanelCollapsed: boolean
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
+  materialAnimationValuesByInstance: Readonly<Record<string, MaterialAnimationValues>>
   leftPanelOcclusionWidth: number
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
@@ -51,6 +53,7 @@ export function WebGPUCanvas({
   assets,
   isSidePanelCollapsed,
   jointPreviewPosesByInstance,
+  materialAnimationValuesByInstance,
   leftPanelOcclusionWidth,
   rightPanelOcclusionWidth,
   selectedTargetId,
@@ -172,6 +175,7 @@ export function WebGPUCanvas({
             assets={assets}
             cameraQuaternionRef={cameraQuaternionRef}
             jointPreviewPosesByInstance={jointPreviewPosesByInstance}
+            materialAnimationValuesByInstance={materialAnimationValuesByInstance}
             leftPanelOcclusionWidth={leftPanelOcclusionWidth}
             onCameraQuaternionChange={handleCameraQuaternionChange}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}

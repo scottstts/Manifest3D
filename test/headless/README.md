@@ -19,7 +19,7 @@ ignored by git. Each run captures:
 - validation reports and signals for every attempt
 - agent events, final scene, saved in-memory library, and summary JSON
 - final static GLB export for ready runs
-- final dynamic GLB export for ready runs with movable joints
+- final dynamic GLB export for ready runs with movable joints or material emission animation
 - `glb-viewer.html`, a local visual-inspection page that opens the exported GLB
 
 Useful overrides:

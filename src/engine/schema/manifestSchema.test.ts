@@ -77,6 +77,47 @@ describe('manifestSchema', () => {
 
     expect(parseManifestScene(legacyScene).assets[0].controls).toEqual([])
   })
+
+  it('accepts material emission and emission animation descriptors', () => {
+    const scene = createValidScene()
+
+    scene.assets[0].materials[0] = {
+      ...scene.assets[0].materials[0],
+      emission: {
+        color: '#ff2020',
+        hasEmission: true,
+        intensity: 3.5,
+      },
+      emissionAnimation: {
+        id: 'warning-light-flash',
+        interpolation: 'step',
+        keyframes: [
+          {
+            color: '#ff2020',
+            hasEmission: true,
+            intensity: 3.5,
+            time: 0,
+          },
+          {
+            color: '#ff2020',
+            hasEmission: false,
+            intensity: 0,
+            time: 0.35,
+          },
+          {
+            color: '#2060ff',
+            hasEmission: true,
+            intensity: 3.5,
+            time: 0.7,
+          },
+        ],
+        loop: true,
+        name: 'Warning light flash',
+      },
+    }
+
+    expect(parseManifestScene(scene)).toEqual(scene)
+  })
 })
 
 function createValidScene(): ManifestScene {
