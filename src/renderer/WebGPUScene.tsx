@@ -3,9 +3,9 @@ import type { ThreeEvent } from '@react-three/fiber'
 import { useFrame, useThree } from '@react-three/fiber'
 import type { ComponentRef, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type OutlineNode from 'three/addons/tsl/display/OutlineNode.js'
+import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { outline } from 'three/addons/tsl/display/OutlineNode.js'
-import { color, float, max, mix, pass, vec4 } from 'three/tsl'
+import { color, emissive, float, max, mix, mrt, output, pass, vec4 } from 'three/tsl'
 import * as THREE from 'three/webgpu'
 import {
   applyBuiltManifestMaterialAnimations,
@@ -74,8 +74,8 @@ type ObjectTransformSnapshot = {
   quaternion: THREE.Quaternion
   scale: THREE.Vector3
 }
-type SelectionOutlinePipelineHandle = {
-  outlinePass: OutlineNode
+type SceneEffectsPipelineHandle = {
+  disposables: Array<{ dispose: () => void }>
   pipeline: THREE.RenderPipeline
 }
 
@@ -83,6 +83,12 @@ const selectionOutlineColor = '#007acc'
 const selectionOutlineStrength = 5.2
 const selectionOutlineThickness = 5.0
 const selectionOutlineGlow = 1.45
+const assetBloomSettings = {
+  radius: 0.34,
+  smoothWidth: 0.01,
+  strength: 0.72,
+  threshold: 0,
+}
 const emptyJointPoseValues: JointPoseValues = {}
 const emptyMaterialAnimationValues: MaterialAnimationValues = {}
 
@@ -157,7 +163,7 @@ export function WebGPUScene({
         onTransformEnded={onTransformEnded}
         onTransformStarted={onTransformStarted}
       />
-      <SelectionOutlinePipeline object={selectedTransformHandle?.group ?? null} />
+      <SceneEffectsPipeline object={selectedTransformHandle?.group ?? null} />
       <color attach="background" args={['#f7f7fb']} />
       <fogExp2 attach="fog" args={['#efeff9', 0.018]} />
 
@@ -318,16 +324,28 @@ function ManifestAssetObject({
   )
 }
 
-type SelectionOutlinePipelineProps = {
+type SceneEffectsPipelineProps = {
   object: THREE.Object3D | null
 }
 
-function SelectionOutlinePipeline({ object }: SelectionOutlinePipelineProps) {
+function SceneEffectsPipeline({ object }: SceneEffectsPipelineProps) {
   const { camera, gl, scene } = useThree()
   const invalidate = useThree((state) => state.invalidate)
-  const pipelineHandle = useMemo<SelectionOutlinePipelineHandle>(() => {
+  const pipelineHandle = useMemo<SceneEffectsPipelineHandle>(() => {
     const selectedObjects = object ? [object] : []
     const scenePass = pass(scene, camera)
+    scenePass.setMRT(mrt({ output, emissive }))
+
+    const scenePassColor = scenePass.getTextureNode('output')
+    const emissivePass = scenePass.getTextureNode('emissive')
+    const assetBloomPass = bloom(
+      emissivePass,
+      assetBloomSettings.strength,
+      assetBloomSettings.radius,
+      assetBloomSettings.threshold,
+    )
+    assetBloomPass.smoothWidth.value = assetBloomSettings.smoothWidth
+
     const outlinePass = outline(scene, camera, {
       downSampleRatio: 1,
       edgeGlow: float(selectionOutlineGlow),
@@ -338,7 +356,7 @@ function SelectionOutlinePipeline({ object }: SelectionOutlinePipelineProps) {
       .mul(float(selectionOutlineStrength))
       .clamp()
     const outputNode = mix(
-      scenePass,
+      scenePassColor.add(assetBloomPass),
       vec4(color(selectionOutlineColor), 1),
       outlineMask,
     )
@@ -350,7 +368,12 @@ function SelectionOutlinePipeline({ object }: SelectionOutlinePipelineProps) {
     pipeline.needsUpdate = true
 
     return {
-      outlinePass,
+      disposables: [
+        scenePass as { dispose: () => void },
+        assetBloomPass as { dispose: () => void },
+        outlinePass,
+        pipeline,
+      ],
       pipeline,
     }
   }, [camera, gl, object, scene])
@@ -361,8 +384,9 @@ function SelectionOutlinePipeline({ object }: SelectionOutlinePipelineProps) {
 
   useEffect(
     () => () => {
-      pipelineHandle.outlinePass.dispose()
-      pipelineHandle.pipeline.dispose()
+      for (const disposable of pipelineHandle.disposables) {
+        disposable.dispose()
+      }
     },
     [pipelineHandle],
   )
