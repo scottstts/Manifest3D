@@ -79,6 +79,7 @@
       "metalness": 0.05,
       "roughness": 0.5,
       "opacity": 1,
+      "side": "front",
       "emission": null,
       "emissionAnimation": null
     },
@@ -89,6 +90,7 @@
       "metalness": 0,
       "roughness": 0.35,
       "opacity": 1,
+      "side": "front",
       "emission": null,
       "emissionAnimation": null
     }

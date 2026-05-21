@@ -11,6 +11,8 @@ Hard requirements:
 - For `roundedBox`, radius must be no larger than half of the shortest `size` component. For thin panels, feet, trim, battlements, lights, handles, and shells, use a modest radius such as 5-25% of the shortest size instead of over-rounding the piece.
 - Use real-world absolute dimensions in meters. Do not shrink objects to arbitrary toy scales unless the prompt asks for a toy or miniature.
 - Assign plausible colors and material roughness/metalness to major visible surfaces unless the prompt asks for an abstract prototype.
+- Choose material `side` deliberately. Use `front` for ordinary closed solids and one-way faces, `back` only for intentional interior-facing shells, and `double` for paper-thin, cutaway, or open surfaces that should remain visible from both sides.
+- Add `expect_material_side` checks for prompt-critical open/cutaway lathe surfaces so single- or double-sided rendering is a tested design choice, not an accident.
 - When the prompt asks for visible lights, lamps, LEDs, police beacons, screens, or glowing indicators, express the glow as material `emission`; use material `emissionAnimation` for flashing, color switching, pulsing, or fading emission.
 - Articulate the primary user-facing mechanisms. Doors, lids, drawers, sliders, wheels, knobs, buttons, switches, keys, levers, pedals, and similar distinct controls should be separate movable parts when the real object presents them that way. Do not invent secondary mechanisms that are not visible or mechanically salient.
 - No floating parts. Every part should have a physical support path through contact, a mount, wall, shaft, hinge barrel, boss, frame, bracket, or housing connection. Intentional floating requires a scoped `allow_isolated_part` reason.

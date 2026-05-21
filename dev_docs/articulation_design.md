@@ -12,6 +12,7 @@ The difference is how the existing joint fields are used:
 - articulated assets use `revolute`, `prismatic`, or `continuous` joints with axis and limit data
 - `controls` may group one or more movable joints under a single preview dial
 - material emission animation lives on the material that glows, using emission keyframes rather than scene lights
+- material side lives on the material as an authored render contract, with `expect_material_side` checks for prompt-critical open or cutaway surfaces
 - pose-specific authored checks may add `check.pose` when a mechanism needs validation away from rest pose
 
 This keeps the renderer, validator, export path, and repair loop on one contract surface. A static chair, a hinged box, and a police light bar are all Manifest3D assets; the hinged box uses movable joints, while the light bar uses material emission animation.
@@ -120,7 +121,7 @@ Timeline copy also distinguishes sampled-pose failures from rest-pose validation
 
 ## Prompt Contract
 
-Prompt docs now ask the model to include pose-specific checks for primary mechanisms: lids, drawers, wheels, hinges, sleeves, retainers, handles, and controls. They also tell the model to use material `emission` and `emissionAnimation` for prompt-critical visible lights, flashing beacons, LEDs, screens, and color-switching indicators.
+Prompt docs now ask the model to include pose-specific checks for primary mechanisms: lids, drawers, wheels, hinges, sleeves, retainers, handles, and controls. They also tell the model to use material `emission` and `emissionAnimation` for prompt-critical visible lights, flashing beacons, LEDs, screens, and color-switching indicators. Material `side` is now part of the same prompt contract: closed solids normally use `front`, intentional interior shells may use `back`, and paper-thin/open surfaces that need two-sided visibility use `double`; prompt-critical open/cutaway lathe visuals should include `expect_material_side`.
 
 This is a prompt-quality requirement, not a new schema mode. If the prompt asks for a static object, the model should not invent pose checks or controls. If the prompt asks for a mechanism, the model should express the mechanism with movable joints, appropriate control grouping, and targeted pose checks.
 

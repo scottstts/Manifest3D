@@ -80,6 +80,8 @@ export type ManifestGeometry =
       closed?: boolean
     }
 
+export type ManifestMaterialSide = 'front' | 'back' | 'double'
+
 export type ManifestMaterial = {
   id: string
   name: string
@@ -87,6 +89,7 @@ export type ManifestMaterial = {
   metalness: number
   roughness: number
   opacity?: number
+  side?: ManifestMaterialSide
   emission?: ManifestMaterialEmission | null
   emissionAnimation?: ManifestMaterialEmissionAnimation | null
 }
@@ -197,6 +200,11 @@ export type ManifestCheck =
       type: 'joint_exists'
       jointId: string
       jointType?: ManifestJointType
+    } & ManifestCheckPoseField)
+  | ({
+      type: 'expect_material_side'
+      visualId: string
+      side: ManifestMaterialSide
     } & ManifestCheckPoseField)
   | ({
       type: 'expect_contact'

@@ -20,6 +20,7 @@ import {
   resolveStaticMaterialEmission,
   type MaterialAnimationValues,
 } from './materialAnimations'
+import { toThreeMaterialSide } from './materialSide'
 
 export type ManifestObjectKind = 'asset' | 'part' | 'visual' | 'joint'
 
@@ -376,6 +377,7 @@ function createMaterial(material: ManifestMaterial) {
     metalness: material.metalness,
     opacity,
     roughness: material.roughness,
+    side: toThreeMaterialSide(material.side),
     transparent: opacity < 1,
   })
 

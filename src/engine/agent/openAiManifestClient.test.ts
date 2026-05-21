@@ -107,6 +107,10 @@ describe('buildOpenAIResponsesRequestBody', () => {
       maximum: 1,
       minimum: 0,
     })
+    expect(getProperty(materialSchema, 'side')).toMatchObject({
+      enum: ['front', 'back', 'double'],
+      type: 'string',
+    })
   })
 })
 

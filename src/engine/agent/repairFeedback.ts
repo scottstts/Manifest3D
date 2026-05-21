@@ -365,6 +365,12 @@ function responseRulesForFailures(
       '- If the allowance names visual ids, the proof check must reference the same visual pair with expect_contact, expect_gap, expect_overlap, or expect_within.',
       '- Do not delete the allowance to hide a real intentional fit; either prove the fit or repair the geometry so no allowance is needed.',
     ]
+  } else if (primary.code === 'surface_side_missing_check') {
+    rules = [
+      '- Decide whether the surface should be visible from one side or both sides, then set the material side to front, back, or double.',
+      '- Add an expect_material_side check for the exact visual so the renderer-facing side choice is deliberate and testable.',
+      '- Use double for intentional paper-thin or open surfaces that should remain visible from either side; keep single-sided materials only when one-way visibility is intended.',
+    ]
   } else if (
     primary.stage === 'structure' ||
     primary.kind === 'single_root_policy' ||

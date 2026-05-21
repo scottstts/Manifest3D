@@ -7,6 +7,7 @@ import {
   getProjectedOverlap,
   normalizeAxes,
 } from '../geometry/measurements'
+import { normalizeManifestMaterialSide } from '../geometry/materialSide'
 import type { ManifestAsset, ManifestCheck } from '../schema/manifestTypes'
 import type { ValidationSignal, ValidationStage } from '../schema/validationTypes'
 import { createValidationSignal } from './reportBuilder'
@@ -100,6 +101,8 @@ function runPromptCheck(
           ]
     case 'joint_exists':
       return runJointExistsCheck(asset, check, path, context)
+    case 'expect_material_side':
+      return runMaterialSideCheck(asset, check, path, context)
     case 'expect_contact':
       return runContactCheck(builtAsset, check, path, context)
     case 'expect_gap':
@@ -111,6 +114,76 @@ function runPromptCheck(
     default:
       return assertNever(check)
   }
+}
+
+function runMaterialSideCheck(
+  asset: ManifestAsset,
+  check: Extract<ManifestCheck, { type: 'expect_material_side' }>,
+  path: string,
+  context: {
+    poseLabel?: string
+    stage: ValidationStage
+  },
+) {
+  const visualEntry = findVisualEntry(asset, check.visualId)
+
+  if (!visualEntry) {
+    return [
+      createCheckFailure(
+        'missing_exact_geometry',
+        'check_ref_missing',
+        `Authored check expected visual "${check.visualId}".`,
+        path,
+        { visualId: check.visualId },
+        undefined,
+        context,
+      ),
+    ]
+  }
+
+  const material = asset.materials.find(
+    (candidate) => candidate.id === visualEntry.visual.materialId,
+  )
+
+  if (!material) {
+    return [
+      createCheckFailure(
+        'missing_exact_geometry',
+        'check_ref_missing',
+        `Authored check expected material "${visualEntry.visual.materialId}".`,
+        path,
+        {
+          partId: visualEntry.partId,
+          visualId: check.visualId,
+          materialId: visualEntry.visual.materialId,
+        },
+        undefined,
+        context,
+      ),
+    ]
+  }
+
+  const actualSide = normalizeManifestMaterialSide(material.side)
+
+  if (actualSide === check.side) {
+    return []
+  }
+
+  return [
+    createCheckFailure(
+      'authored_check',
+      'expect_material_side_failed',
+      `Expected visual "${check.visualId}" to render material side "${check.side}", but material "${material.id}" uses "${actualSide}".`,
+      path,
+      {
+        partId: visualEntry.partId,
+        visualId: check.visualId,
+        materialId: material.id,
+      },
+      `expectedSide=${check.side} actualSide=${actualSide}`,
+      context,
+    ),
+  ]
 }
 
 function runJointExistsCheck(
@@ -385,6 +458,18 @@ function runWithinCheck(
       context,
     ),
   ]
+}
+
+function findVisualEntry(asset: ManifestAsset, visualId: string) {
+  for (const part of asset.parts) {
+    for (const visual of part.visuals) {
+      if (visual.id === visualId) {
+        return { partId: part.id, visual }
+      }
+    }
+  }
+
+  return null
 }
 
 function resolvePairBounds(

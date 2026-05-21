@@ -153,6 +153,8 @@ function formatSignalDetail(signal: ValidationSignal) {
       return `Joint ${quoteRef(signal, 'jointId', 'this joint')} is far from the geometry it connects. This may make motion or placement look wrong.`
     case 'authored_checks_missing':
       return 'The candidate did not include authored checks, so the harness has less evidence that it matches the prompt.'
+    case 'surface_side_missing_check':
+      return `Visual ${quoteRef(signal, 'visualId', 'this surface')} needs an authored material-side check so single- or double-sided rendering is intentional.`
     case 'check_part_missing':
       return `The candidate is missing expected part ${quoteRef(signal, 'partId', 'from the prompt')}.`
     case 'check_joint_missing':
@@ -171,6 +173,8 @@ function formatSignalDetail(signal: ValidationSignal) {
       return `Expected parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} to overlap, but they do not overlap enough.`
     case 'expect_within_failed':
       return `Expected part ${quoteRef(signal, 'innerPartId', 'one part')} to sit within ${quoteRef(signal, 'outerPartId', 'another part')}, but it is outside the expected bounds.`
+    case 'expect_material_side_failed':
+      return `Visual ${quoteRef(signal, 'visualId', 'this visual')} does not use the material side declared by its authored check.`
     case 'duplicate_part_id':
     case 'duplicate_material_id':
     case 'duplicate_joint_id':

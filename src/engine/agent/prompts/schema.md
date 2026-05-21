@@ -27,9 +27,17 @@ Return one object with this shape:
 For structured output, include fully populated values for optional authoring
 fields when they are useful: visual `name`, part `role` and `description`,
 all transform `position`/`rotation`/`scale` arrays, material `opacity`, and
-geometry segment or bevel fields. Use `position: [0, 0, 0]`,
+material `side`, and geometry segment or bevel fields. Use `position: [0, 0, 0]`,
 `rotation: [0, 0, 0]`, and `scale: [1, 1, 1]` when no local transform is
 needed.
+
+Materials must choose an explicit render side:
+
+- Use `side: "front"` for normal closed solid geometry and one-way front-facing details such as labels, screens, and decals.
+- Use `side: "back"` only for intentionally interior-facing shells.
+- Use `side: "double"` for intentional paper-thin, cutaway, or open surfaces that should remain visible from either side.
+- If an open or cutaway lathe visual is prompt-critical, add an `expect_material_side` check for that visual so the side choice is tested.
+- Use separate material ids when two visuals share color/finish but need different side behavior.
 
 Materials may define emission in their own material object:
 
@@ -74,6 +82,7 @@ Authored checks should prove prompt-critical exact relationships:
 
 - `part_exists`
 - `joint_exists`
+- `expect_material_side`
 - `expect_contact`
 - `expect_gap`
 - `expect_overlap`

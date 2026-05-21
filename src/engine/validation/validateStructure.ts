@@ -2,16 +2,21 @@ import type {
   ManifestAsset,
   ManifestAllowance,
   ManifestCheck,
+  ManifestGeometry,
   ManifestJoint,
   ManifestJointControl,
   ManifestJointType,
   ManifestVector3,
 } from '../schema/manifestTypes'
+import { normalizeManifestMaterialSide } from '../geometry/materialSide'
 import type { ValidationSignal } from '../schema/validationTypes'
 import { createValidationSignal } from './reportBuilder'
 
 const axisLengthEpsilon = 0.000001
 const maxPrismaticTravelMeters = 10
+const fullLatheSweep = Math.PI * 2
+const latheSweepEpsilon = 0.0001
+const latheAxisEpsilon = 0.000001
 
 export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   const signals: ValidationSignal[] = []
@@ -21,6 +26,7 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   signals.push(...validateRefs(asset, controls))
   signals.push(...validateAllowanceRefs(asset))
   signals.push(...validateOverlapAllowanceContracts(asset))
+  signals.push(...validateSurfaceSideContracts(asset))
   signals.push(...validateControlMotionRanges(asset, controls))
   signals.push(...validateMovableControlCoverage(asset, controls))
   signals.push(...validateMaterialEmissionAnimations(asset))
@@ -728,10 +734,93 @@ function proofCheckMatchesAllowance(
       )
     case 'joint_exists':
     case 'part_exists':
+    case 'expect_material_side':
       return false
     default:
       return assertNever(check)
   }
+}
+
+function validateSurfaceSideContracts(asset: ManifestAsset): ValidationSignal[] {
+  const signals: ValidationSignal[] = []
+  const materialById = new Map(asset.materials.map((material) => [material.id, material]))
+
+  for (const [partIndex, part] of asset.parts.entries()) {
+    for (const [visualIndex, visual] of part.visuals.entries()) {
+      if (!isSurfaceSideSensitiveGeometry(visual.geometry)) {
+        continue
+      }
+
+      const material = materialById.get(visual.materialId)
+
+      if (!material) {
+        continue
+      }
+
+      const side = normalizeManifestMaterialSide(material.side)
+
+      if (hasMatchingMaterialSideCheck(asset.checks, visual.id, side)) {
+        continue
+      }
+
+      signals.push(
+        createValidationSignal(
+          'authored_checks',
+          'surface_side_missing_check',
+          `Surface-sensitive visual "${visual.id}" needs an authored material-side check.`,
+          {
+            details:
+              'Open or cutaway lathe surfaces can disappear from some viewing angles when rendered single-sided. Add expect_material_side for this visual, and use material.side double when both faces should be visible.',
+            path: `/parts/${partIndex}/visuals/${visualIndex}/geometry`,
+            refs: {
+              materialId: material.id,
+              materialSide: side,
+              partId: part.id,
+              visualId: visual.id,
+            },
+            source: 'checks',
+            stage: 'structure',
+          },
+        ),
+      )
+    }
+  }
+
+  return signals
+}
+
+function hasMatchingMaterialSideCheck(
+  checks: readonly ManifestCheck[],
+  visualId: string,
+  side: string,
+) {
+  return checks.some(
+    (check) =>
+      check.type === 'expect_material_side' &&
+      check.visualId === visualId &&
+      check.side === side,
+  )
+}
+
+function isSurfaceSideSensitiveGeometry(geometry: ManifestGeometry) {
+  if (geometry.type !== 'lathe') {
+    return false
+  }
+
+  const firstPoint = geometry.points[0]
+  const lastPoint = geometry.points[geometry.points.length - 1]
+
+  if (!firstPoint || !lastPoint) {
+    return false
+  }
+
+  const phiLength = geometry.phiLength ?? fullLatheSweep
+  const hasFullSweep = Math.abs(phiLength - fullLatheSweep) <= latheSweepEpsilon
+  const profileTouchesAxisAtEnds =
+    Math.abs(firstPoint[0]) <= latheAxisEpsilon &&
+    Math.abs(lastPoint[0]) <= latheAxisEpsilon
+
+  return !hasFullSweep || !profileTouchesAxisAtEnds
 }
 
 function partVisualPairMatchesAllowance(

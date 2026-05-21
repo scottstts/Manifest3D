@@ -33,6 +33,8 @@ export const manifestTransformSchema = z
   })
   .strict()
 
+export const manifestMaterialSideSchema = z.enum(['front', 'back', 'double'])
+
 export const manifestGeometrySchema = z.discriminatedUnion('type', [
   z
     .object({
@@ -132,6 +134,7 @@ export const manifestMaterialSchema = z
     metalness: finiteNumber.min(0).max(1),
     roughness: finiteNumber.min(0).max(1),
     opacity: finiteNumber.min(0).max(1).optional(),
+    side: manifestMaterialSideSchema.default('front'),
     emission: z
       .object({
         hasEmission: z.boolean(),
@@ -281,6 +284,14 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       type: z.literal('joint_exists'),
       jointId: nonEmptyId,
       jointType: manifestJointTypeSchema.optional(),
+      pose: manifestPoseSpecSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('expect_material_side'),
+      visualId: nonEmptyId,
+      side: manifestMaterialSideSchema,
       pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),

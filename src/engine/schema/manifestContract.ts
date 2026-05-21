@@ -25,6 +25,11 @@ const materialSchema = objectSchema(
       0,
       1,
     ),
+    side: enumSchema([
+      'front',
+      'back',
+      'double',
+    ], 'Which side of the material renders: front-facing triangles, back-facing triangles, or both sides. Use double for intentional paper-thin or open surfaces that should remain visible from either side.'),
     emission: nullableSchema(
       objectSchema(
         {
@@ -82,6 +87,7 @@ const materialSchema = objectSchema(
     'metalness',
     'roughness',
     'opacity',
+    'side',
     'emission',
     'emissionAnimation',
   ],
@@ -386,6 +392,17 @@ const checkSchema = {
     ),
     ...checkSchemaVariants(
       {
+        type: literalSchema('expect_material_side'),
+        visualId: stringSchema('Existing visual id whose material side is intentional.'),
+        side: enumSchema(
+          ['front', 'back', 'double'],
+          'Expected authored material side for this visual.',
+        ),
+      },
+      ['type', 'visualId', 'side'],
+    ),
+    ...checkSchemaVariants(
+      {
         type: literalSchema('expect_contact'),
         partAId: stringSchema('Existing part id.'),
         partBId: stringSchema('Existing part id.'),
@@ -614,10 +631,11 @@ function literalSchema(value: string): JsonSchema {
   }
 }
 
-function enumSchema(values: readonly string[]): JsonSchema {
+function enumSchema(values: readonly string[], description?: string): JsonSchema {
   return {
     type: 'string',
     enum: [...values],
+    ...(description ? { description } : {}),
   }
 }
 

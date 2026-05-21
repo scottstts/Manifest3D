@@ -12,6 +12,8 @@ Requirements:
 - Model the object's real construction logic. Use visible walls, rims, lips, rails, bosses, shafts, brackets, panels, and controls instead of one generic placeholder mass.
 - Keep each part internally connected: panels, windows, lamps, rails, axles, and brackets assigned to the same part should touch or visibly mount to that part. Use fixed joints for separate attached pieces instead of disconnected visual islands.
 - Choose geometry that carries the silhouette. Use `roundedBox` or beveled `extrude` for softened manufactured panels and shells, `capsule`/`tube` for handles and rods, and `lathe`/`torus` for rims, tires, knobs, bowls, wheels, and collars.
+- Choose material `side` deliberately. Closed solids should usually use `front`; paper-thin, cutaway, or open shell surfaces that must be visible from both sides should use `double`.
+- Add `expect_material_side` for any prompt-critical open or cutaway lathe visual so the renderer-side visibility choice is tested.
 - Before returning a candidate, check every `roundedBox`: `radius` must be no larger than half the shortest `size` value.
 - For fans, rotors, guarded wheels, or any moving part inside a grille/cage/shroud, leave visible clearance between the stationary guard bars/rings and the moving swept volume.
 - Use real-world dimensions and plausible materials.

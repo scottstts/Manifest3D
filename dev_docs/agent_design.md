@@ -13,6 +13,7 @@ The prompt files are Manifest3D-specific, but they intentionally carry the relev
 - prefer `roundedBox` and `capsule` where manufactured objects need softened panels, handles, rails, padded supports, rounded pins, or grips
 - articulate primary visible mechanisms and controls
 - use material `emission` and `emissionAnimation` for visible lights, flashing beacons, LEDs, screens, and color-switching indicators
+- choose material `side` deliberately and add `expect_material_side` for prompt-critical open/cutaway surfaces
 - give multi-joint mechanisms clear `controls` coverage instead of leaving unrelated movable joints as orphan dials
 - avoid floating parts and unsupported visual islands
 - classify overlap as intentional or unintended before repairing it

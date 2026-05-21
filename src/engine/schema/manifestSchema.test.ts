@@ -78,6 +78,33 @@ describe('manifestSchema', () => {
     expect(parseManifestScene(legacyScene).assets[0].controls).toEqual([])
   })
 
+  it('defaults missing material side to preserve existing saved assets', () => {
+    const legacyScene = createValidScene() as unknown as {
+      assets: Array<{ materials: Array<Record<string, unknown>> }>
+    }
+
+    delete legacyScene.assets[0].materials[0].side
+
+    expect(parseManifestScene(legacyScene).assets[0].materials[0].side).toBe(
+      'front',
+    )
+  })
+
+  it('accepts explicit material side descriptors and checks', () => {
+    const scene = createValidScene()
+
+    scene.assets[0].materials[0].side = 'double'
+    scene.assets[0].checks = [
+      {
+        side: 'double',
+        type: 'expect_material_side',
+        visualId: 'schema-base-visual',
+      },
+    ]
+
+    expect(parseManifestScene(scene)).toEqual(scene)
+  })
+
   it('accepts material emission and emission animation descriptors', () => {
     const scene = createValidScene()
 
@@ -159,6 +186,7 @@ function createValidScene(): ManifestScene {
             id: 'mat-blue',
             metalness: 0.1,
             name: 'Blue',
+            side: 'front',
             roughness: 0.4,
           },
         ],

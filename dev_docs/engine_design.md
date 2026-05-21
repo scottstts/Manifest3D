@@ -32,6 +32,8 @@ Current geometry descriptors include additive primitives for hard-surface object
 
 `roundedBox` and `capsule` are part of the real asset contract, not test-only affordances. They exist because repeated generated assets needed softened housings, panels, handles, rails, grips, rounded pins, and padded supports without excessive stacks of boxes and cylinders. `roundedBox.radius` must stay within the Three geometry contract: no larger than half of the shortest size component.
 
+Materials now carry an explicit `side` contract: `front`, `back`, or `double`. Runtime parsing defaults missing legacy material side values to `front`, but strict provider output requires the field. The renderer maps the value directly to Three material side behavior. Use `front` for ordinary closed solids and one-way details, `back` only for intentional interior-facing shells, and `double` for paper-thin, cutaway, or open surfaces that should remain visible from either side.
+
 ## Joint-Driven Assembly
 
 `src/engine/geometry/assetBuilder.ts` builds the Three.js hierarchy from joints:
@@ -65,15 +67,19 @@ Implemented baseline QC includes:
 - movable-joint control coverage for articulated assets with multiple movable joints
 - no-op control detection when authored control limits clamp to no actual joint motion
 - material emission animation timing and visible-motion checks
+- material-side intent checks for open/cutaway lathe surfaces
 
 Authored checks are for prompt-critical exact claims:
 
 - `part_exists`
 - `joint_exists`
+- `expect_material_side`
 - `expect_contact`
 - `expect_gap`
 - `expect_overlap`
 - `expect_within`
+
+Open or cutaway `lathe` visuals are surface-side sensitive: if their sweep is partial or the revolved profile does not close back to the axis at both ends, validation requires a matching `expect_material_side` check for that visual. This does not force thickness or double-sided rendering. It forces the agent to choose whether the surface is intentionally one-sided or double-sided and to leave a testable design signal.
 
 ## Approximate Geometry Policy
 

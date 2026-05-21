@@ -99,6 +99,24 @@ describe('GLB export', () => {
     ).toHaveLength(1)
   })
 
+  it('exports double-sided manifest materials as glTF doubleSided materials', async () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.materials[0] = {
+      ...asset.materials[0],
+      side: 'double',
+    }
+
+    const result = await exportManifestAssetGlb(asset)
+    const gltf = readGlbJson(result.arrayBuffer)
+
+    expect(
+      gltf.materials?.find((material) => material.name === 'mat-violet'),
+    ).toMatchObject({
+      doubleSided: true,
+    })
+  })
+
   it('exports material emission animation with KHR_animation_pointer in dynamic GLB', async () => {
     const result = await exportManifestAssetGlb(
       createMaterialEmissionAnimationFixtureAsset(),
@@ -357,6 +375,7 @@ type GltfJson = {
   extensionsRequired?: string[]
   extensionsUsed?: string[]
   materials?: Array<{
+    doubleSided?: boolean
     emissiveFactor?: number[]
     extensions?: {
       KHR_materials_emissive_strength?: {

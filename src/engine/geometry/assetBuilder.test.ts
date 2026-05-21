@@ -111,6 +111,26 @@ describe('buildManifestAsset', () => {
     disposeManifestObject(builtAsset.group)
   })
 
+  it('applies authored material side to rendered node materials', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.materials[0] = {
+      ...asset.materials[0],
+      side: 'double',
+    }
+    asset.materials[1] = {
+      ...asset.materials[1],
+      side: 'back',
+    }
+
+    const builtAsset = buildManifestAsset(asset)
+
+    expect(builtAsset.materials.get('mat-violet')?.side).toBe(THREE.DoubleSide)
+    expect(builtAsset.materials.get('mat-white')?.side).toBe(THREE.BackSide)
+
+    disposeManifestObject(builtAsset.group)
+  })
+
   it('throws when the joint graph has more than one root', () => {
     const asset = parseManifestAsset({
       ...createValidValidationFixtureAsset(),

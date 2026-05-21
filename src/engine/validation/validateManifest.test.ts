@@ -5,6 +5,7 @@ import {
   createOverlappingValidationFixtureAsset,
   createValidValidationFixtureAsset,
 } from '../examples/validationFixtures'
+import type { ManifestAsset } from '../schema/manifestTypes'
 import { createSceneStore } from '../scene/sceneStore'
 import { createValidationTimeline } from '../agent/validationTimeline'
 import { commitValidatedAsset } from './commitValidatedAsset'
@@ -211,6 +212,75 @@ describe('validateManifestAssetCandidate', () => {
     expect(signalCodes).toContain('expect_within_failed')
     expect(signalCodes).not.toContain('expect_contact_failed')
     expect(signalCodes).not.toContain('expect_overlap_failed')
+  })
+
+  it('runs exact authored checks against material side choices', () => {
+    const passingAsset = createValidValidationFixtureAsset()
+    const failingAsset = createValidValidationFixtureAsset()
+
+    passingAsset.materials[0] = {
+      ...passingAsset.materials[0],
+      side: 'double',
+    }
+    passingAsset.checks = [
+      {
+        side: 'double',
+        type: 'expect_material_side',
+        visualId: 'crate-base-shell',
+      },
+    ]
+    failingAsset.checks = [
+      {
+        side: 'double',
+        type: 'expect_material_side',
+        visualId: 'crate-base-shell',
+      },
+    ]
+
+    const passingResult = validateManifestAssetCandidate(passingAsset)
+    const failingResult = validateManifestAssetCandidate(failingAsset)
+
+    expect(passingResult.report.valid).toBe(true)
+    expect(failingResult.report.valid).toBe(false)
+    expect(failingResult.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'expect_material_side_failed',
+          stage: 'checks',
+        }),
+      ]),
+    )
+  })
+
+  it('requires authored material-side checks for open lathe surfaces', () => {
+    const missingCheckAsset = createOpenLatheSurfaceAsset()
+    const checkedAsset = createOpenLatheSurfaceAsset()
+
+    checkedAsset.checks = [
+      {
+        side: 'double',
+        type: 'expect_material_side',
+        visualId: 'shade-open-shell',
+      },
+    ]
+
+    const missingCheckResult = validateManifestAssetCandidate(missingCheckAsset)
+    const checkedResult = validateManifestAssetCandidate(checkedAsset)
+
+    expect(missingCheckResult.report.valid).toBe(false)
+    expect(missingCheckResult.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'surface_side_missing_check',
+          refs: expect.objectContaining({
+            materialSide: 'double',
+            visualId: 'shade-open-shell',
+          }),
+          stage: 'structure',
+        }),
+      ]),
+    )
+    expect(checkedResult.report.valid).toBe(true)
   })
 
   it('fails current-pose overlaps unless they are explicitly allowed', () => {
@@ -706,6 +776,57 @@ describe('validateManifestAssetCandidate', () => {
     ).toBe(false)
   })
 })
+
+function createOpenLatheSurfaceAsset(): ManifestAsset {
+  const asset = createValidValidationFixtureAsset()
+
+  return {
+    ...asset,
+    controls: [],
+    checks: [],
+    id: 'open-lathe-shade',
+    joints: [],
+    materials: [
+      {
+        color: '#f7f6ff',
+        id: 'mat-shade',
+        metalness: 0,
+        name: 'Thin shade',
+        roughness: 0.42,
+        side: 'double' as const,
+      },
+    ],
+    name: 'Open Lathe Shade',
+    parts: [
+      {
+        id: 'shade-body',
+        name: 'Shade body',
+        role: 'housing' as const,
+        visuals: [
+          {
+            geometry: {
+              phiLength: Math.PI * 1.55,
+              phiStart: 0,
+              points: [
+                [0.08, 0],
+                [0.32, 0.14],
+                [0.38, 0.34],
+              ],
+              segments: 32,
+              type: 'lathe' as const,
+            },
+            id: 'shade-open-shell',
+            materialId: 'mat-shade',
+            name: 'Open shell',
+            transform: {
+              position: [0, 0, 0],
+            },
+          },
+        ],
+      },
+    ],
+  }
+}
 
 describe('commitValidatedAsset', () => {
   it('upserts only fresh valid candidates into the scene store', () => {

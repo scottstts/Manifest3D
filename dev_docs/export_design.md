@@ -14,4 +14,6 @@ The clone pass strips non-exportable content before calling `GLTFExporter`: help
 
 Renderer materials are WebGPU node materials, but glTF export needs ordinary glTF-compatible PBR materials. `MeshStandardNodeMaterial` can also expose `isMeshStandardMaterial`, so export must explicitly detect node materials and convert them to regular `THREE.MeshStandardMaterial`. Otherwise GLTFExporter writes material slots but falls back to default PBR values instead of authored color, metalness, roughness, and emission.
 
+Manifest material side is preserved through the export material conversion before `GLTFExporter` runs. glTF represents the important asset interchange case with material `doubleSided`; ordinary `front` materials omit that flag. The app renderer still obeys all three authored side modes (`front`, `back`, `double`) at runtime.
+
 Export tests parse the generated binary GLB JSON chunk rather than only checking that bytes exist. They should continue asserting that mesh primitives reference material indices, exported PBR/emission factors match the Manifest3D material contract, static export omits animation channels, and dynamic material emission export contains pointer-targeted animation channels plus real keyframe accessors.
