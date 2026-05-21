@@ -36,6 +36,7 @@ export function saveValidatedAssetVersion(
     createdAt: now,
     parentVersionId: input.parentVersionId ?? null,
     sourceRunId: input.history.runId,
+    ...(input.userInput ? { userInput: input.userInput } : {}),
     validationReport: input.validationReport,
     versionId,
     versionNumber,

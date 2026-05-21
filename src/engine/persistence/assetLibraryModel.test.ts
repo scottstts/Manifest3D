@@ -55,6 +55,48 @@ describe('asset library model', () => {
     })
   })
 
+  it('links the submitted user input to the saved asset version', () => {
+    const validAsset = createValidValidationFixtureAsset()
+    const history = createCandidateHistory({ runId: 'run-user-input' })
+    const report = validateManifestAssetCandidate(validAsset).report
+
+    history.recordValidationAttempt(validAsset, report)
+
+    const saved = saveValidatedAssetVersion(
+      createEmptyAssetLibrarySnapshot(),
+      {
+        asset: validAsset,
+        history: history.getSnapshot(),
+        now: () => '2026-05-17T00:00:00.000Z',
+        userInput: {
+          imageAttachments: [
+            {
+              height: 200,
+              id: 'ref-front',
+              imageUrl: 'data:image/png;base64,front',
+              mediaType: 'image/png',
+              name: 'front.png',
+              width: 300,
+            },
+          ],
+          text: 'Create it from this front reference.',
+        },
+        validationReport: report,
+      },
+    )
+
+    expect(saved.version.userInput).toMatchObject({
+      imageAttachments: [
+        {
+          id: 'ref-front',
+          imageUrl: 'data:image/png;base64,front',
+          mediaType: 'image/png',
+        },
+      ],
+      text: 'Create it from this front reference.',
+    })
+  })
+
   it('creates ordered versions and tracks the last selected version', () => {
     const assetV1 = createValidValidationFixtureAsset()
     const assetV2 = {

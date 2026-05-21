@@ -22,6 +22,7 @@ export type AssetLibraryVersion = {
   createdAt: string
   parentVersionId: string | null
   sourceRunId: string
+  userInput?: PersistedUserInput
   validationReport: ValidationReport
   versionId: string
   versionNumber: number
@@ -32,6 +33,21 @@ export type PersistedCandidateAttempt = CandidateAttempt & {
   versionId: string
 }
 
+export type PersistedUserInput = {
+  imageAttachments: PersistedUserInputImage[]
+  text: string
+}
+
+export type PersistedUserInputImage = {
+  detail?: 'auto' | 'high' | 'low' | 'original'
+  height?: number
+  id: string
+  imageUrl: string
+  mediaType: string
+  name?: string
+  width?: number
+}
+
 export type SaveValidatedAssetVersionInput = {
   asset: ManifestAsset
   history: {
@@ -40,6 +56,7 @@ export type SaveValidatedAssetVersionInput = {
   }
   now?: () => string
   parentVersionId?: string | null
+  userInput?: PersistedUserInput
   validationReport: ValidationReport
 }
 

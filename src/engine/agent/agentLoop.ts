@@ -16,6 +16,7 @@ import {
   compileManifestPrompt,
   type PromptCompilerMode,
   type PromptImageAttachment,
+  type PromptUserInputHistoryEntry,
 } from './promptCompiler'
 import type {
   AgentImageAttachment,
@@ -48,6 +49,12 @@ export type AgentLoopEvent = {
 
 export type AgentLoopRunMode = 'create' | 'edit'
 
+export type AgentUserInputHistoryEntry = {
+  imageAttachments?: readonly AgentImageAttachment[]
+  text: string
+  turn: number
+}
+
 export type RunManifestAgentLoopInput = {
   imageAttachments?: readonly AgentImageAttachment[]
   maxRepairTurns?: number
@@ -57,6 +64,7 @@ export type RunManifestAgentLoopInput = {
   selectedAsset?: ManifestAsset | null
   selectedAssetAttemptContext?: string | null
   signal?: AbortSignal
+  userInputHistory?: readonly AgentUserInputHistoryEntry[]
   userPrompt: string
 }
 
@@ -99,6 +107,11 @@ export async function runManifestAgentLoop(
   let validationFeedback: string | null = null
   let eventIndex = 0
   let repairTurns = 0
+  const userInputHistory = input.userInputHistory ?? []
+  const requestImageAttachments = collectRequestImageAttachments(
+    userInputHistory,
+    input.imageAttachments ?? [],
+  )
 
   history.beginRun(runId)
   emit(
@@ -143,11 +156,12 @@ export async function runManifestAgentLoop(
       scene,
       selectedAsset: input.selectedAsset ?? null,
       selectedAssetAttemptContext: input.selectedAssetAttemptContext ?? null,
+      userInputHistory: userInputHistoryMetadata(userInputHistory),
       userPrompt: input.userPrompt,
       validationFeedback,
     })
     const agentRequest: AgentRequest = {
-      imageAttachments: input.imageAttachments,
+      imageAttachments: requestImageAttachments,
       prompt,
       signal: input.signal,
     }
@@ -368,6 +382,32 @@ function imageAttachmentMetadata(
     name,
     width,
   }))
+}
+
+function userInputHistoryMetadata(
+  history: readonly AgentUserInputHistoryEntry[],
+): PromptUserInputHistoryEntry[] {
+  return history.map((entry) => ({
+    imageAttachments: imageAttachmentMetadata(entry.imageAttachments ?? []),
+    text: entry.text,
+    turn: entry.turn,
+  }))
+}
+
+function collectRequestImageAttachments(
+  history: readonly AgentUserInputHistoryEntry[],
+  currentAttachments: readonly AgentImageAttachment[],
+) {
+  const attachmentsByKey = new Map<string, AgentImageAttachment>()
+
+  for (const attachment of [
+    ...history.flatMap((entry) => entry.imageAttachments ?? []),
+    ...currentAttachments,
+  ]) {
+    attachmentsByKey.set(`${attachment.id}\n${attachment.imageUrl}`, attachment)
+  }
+
+  return [...attachmentsByKey.values()]
 }
 
 function emit(

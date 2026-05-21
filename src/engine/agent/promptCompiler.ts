@@ -16,6 +16,12 @@ export type PromptImageAttachment = {
   width?: number
 }
 
+export type PromptUserInputHistoryEntry = {
+  imageAttachments?: readonly PromptImageAttachment[]
+  text: string
+  turn: number
+}
+
 export type PromptCompilerInput = {
   candidateJson?: unknown
   imageAttachments?: readonly PromptImageAttachment[]
@@ -23,6 +29,7 @@ export type PromptCompilerInput = {
   scene: ManifestScene
   selectedAsset?: ManifestAsset | null
   selectedAssetAttemptContext?: string | null
+  userInputHistory?: readonly PromptUserInputHistoryEntry[]
   userPrompt: string
   validationFeedback?: string | null
 }
@@ -51,7 +58,9 @@ export function compileManifestPrompt(
   }
 
   const system = joinSections([systemPrompt, schemaPrompt])
+  const userInputHistory = formatUserInputHistory(input.userInputHistory ?? [])
   const user = joinSections([
+    userInputHistory ? tag('user_input_history', userInputHistory) : '',
     tag('task_mode', input.mode),
     tag('task_instructions', modePrompts[input.mode].trim()),
     tag('user_prompt', normalizeUserPrompt(input.userPrompt)),
@@ -135,6 +144,25 @@ function formatImageAttachments(
       return `- id=${attachment.id} mediaType=${attachment.mediaType}${name}${dimensions}`
     })
     .join('\n')
+}
+
+function formatUserInputHistory(
+  history: readonly PromptUserInputHistoryEntry[],
+) {
+  if (history.length === 0) {
+    return ''
+  }
+
+  return history
+    .map((entry) =>
+      [
+        `turn=${entry.turn}`,
+        `text=${JSON.stringify(normalizeUserPrompt(entry.text))}`,
+        'image_attachments:',
+        formatImageAttachments(entry.imageAttachments ?? []),
+      ].join('\n'),
+    )
+    .join('\n\n')
 }
 
 function normalizeUserPrompt(userPrompt: string) {

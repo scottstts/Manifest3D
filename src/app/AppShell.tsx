@@ -59,7 +59,6 @@ import {
 import type {
   AssetLibraryAsset,
   AssetLibraryVersion,
-  PersistedCandidateAttempt,
 } from '../engine/persistence/assetLibraryTypes'
 import type { ManifestAsset } from '../engine/schema/manifestTypes'
 import {
@@ -110,6 +109,13 @@ import {
   togglePlayingAnimationPreview,
   type PlayingAnimationPreview,
 } from './animationPreviewState'
+import {
+  createPromptUserInputHistory,
+  createVersionTimeline,
+  createVersionTranscript,
+  formatAttemptContext,
+  persistSubmittedUserInput,
+} from './agentConversation'
 
 type ComposeHistoryEntry = {
   instances: readonly SceneAssetInstance[]
@@ -751,6 +757,11 @@ export function AppShell() {
               runSelectedInstance.versionId,
             )
           : null
+      const runSelectedLibraryAsset = runSelectedInstance?.assetId
+        ? librarySnapshot.library.assets.find(
+            (asset) => asset.assetId === runSelectedInstance.assetId,
+          ) ?? null
+        : null
       const mode: AgentRunMode = runSelectedAsset ? 'edit' : 'create'
       const runStatus = runSelectedAsset
         ? `Editing ${runSelectedAsset.name}`
@@ -758,7 +769,21 @@ export function AppShell() {
       const assistantMessageId = `${runId}:assistant`
       const abortController = new AbortController()
       let didTimeOut = false
+      const submittedUserInput = {
+        imageAttachments,
+        text: userPrompt,
+      }
+      const userInputHistory = createPromptUserInputHistory({
+        asset: runSelectedLibraryAsset,
+        currentUserInput: submittedUserInput,
+        selectedVersionId: runSelectedInstance?.versionId ?? null,
+      })
+      const previousTranscript =
+        runSelectedLibraryAsset && runSelectedVersion
+          ? createVersionTranscript(runSelectedLibraryAsset, runSelectedVersion)
+          : []
       const runItems: ChatPanelTranscriptItem[] = [
+        ...previousTranscript,
         {
           id: `${runId}:user`,
           imageAttachments,
@@ -832,6 +857,7 @@ export function AppShell() {
             ? formatAttemptContext(runSelectedVersion)
             : null,
           signal: abortController.signal,
+          userInputHistory,
           userPrompt,
         },
         {
@@ -895,11 +921,20 @@ export function AppShell() {
             history: result.history,
             parentVersionId:
               mode === 'edit' ? runSelectedInstance?.versionId ?? null : null,
+            userInput: persistSubmittedUserInput(submittedUserInput),
             validationReport: result.report,
           })
           const readyStatus = `Ready: ${result.asset.name}`
           const finalRun = agentRunsRef.current.find((run) => run.runId === runId)
           const wasActive = activeAgentRunIdRef.current === runId
+          const savedLibraryAsset =
+            assetLibraryStore
+              .getSnapshot()
+              .library.assets.find((asset) => asset.assetId === result.asset.id) ??
+            null
+          const savedTranscript = savedLibraryAsset
+            ? createVersionTranscript(savedLibraryAsset, savedVersion)
+            : []
 
           updateAgentRunView(runId, (currentRun) => ({
             ...currentRun,
@@ -919,12 +954,16 @@ export function AppShell() {
             sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
             selectionStore.selectAsset('create', result.asset.id)
             setAgentStatus(readyStatus)
-            setCandidateTimelineItems(candidateHistoryTimelineItems)
+            setCandidateTimelineItems(
+              savedTranscript.length > 0 ? [] : candidateHistoryTimelineItems,
+            )
             setChatTranscriptItems((currentItems) =>
-              updateAgentTranscriptItem(currentItems, assistantMessageId, {
-                status: readyStatus,
-                timelineItems: resultTimelineItems,
-              }),
+              savedTranscript.length > 0
+                ? savedTranscript
+                : updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                    status: readyStatus,
+                    timelineItems: resultTimelineItems,
+                  }),
             )
           }
         })
@@ -1073,8 +1112,12 @@ export function AppShell() {
         version.versionId,
       )
       setAgentEvents([])
-      setChatTranscriptItems([])
-      setCandidateTimelineItems(createVersionTimeline(version))
+      const transcript = createVersionTranscript(asset, version)
+
+      setChatTranscriptItems(transcript)
+      setCandidateTimelineItems(
+        transcript.length > 0 ? [] : createVersionTimeline(version),
+      )
       setAgentStatus(`Loaded ${asset.name} v${version.versionNumber}`)
 
       if (sceneSnapshot.activeWorkspace === 'compose') {
@@ -1158,8 +1201,18 @@ export function AppShell() {
         version.versionId,
       )
       setAgentEvents([])
-      setChatTranscriptItems([])
-      setCandidateTimelineItems(createVersionTimeline(version))
+      const libraryAsset =
+        librarySnapshot.library.assets.find(
+          (asset) => asset.assetId === version.assetId,
+        ) ?? null
+      const transcript = libraryAsset
+        ? createVersionTranscript(libraryAsset, version)
+        : []
+
+      setChatTranscriptItems(transcript)
+      setCandidateTimelineItems(
+        transcript.length > 0 ? [] : createVersionTimeline(version),
+      )
       setAgentStatus(`Loaded ${version.asset.name} v${version.versionNumber}`)
 
       if (currentSceneSnapshot.activeWorkspace === 'create') {
@@ -1180,6 +1233,7 @@ export function AppShell() {
       assetLibraryStore,
       clearComposeHistory,
       clearActiveAgentRun,
+      librarySnapshot.library.assets,
       sceneStore,
       selectionStore,
     ],
@@ -1779,54 +1833,4 @@ function getJointAnimationSpeed(unit: JointPreviewControl['range']['unit'], rang
 
 function formatAgentRunTimeoutStatus(timeoutMs: number) {
   return `Agent run timed out after ${Math.round(timeoutMs / 60_000)} minutes.`
-}
-
-function formatAttemptContext(version: AssetLibraryVersion) {
-  const latestAttempt = version.attempts.at(-1)
-  const failureAttempts = version.attempts.filter(
-    (attempt) => attempt.status === 'failure',
-  )
-
-  return [
-    `versionId=${version.versionId}`,
-    `assetId=${version.assetId}`,
-    `attempts=${version.attempts.length}`,
-    `failedAttempts=${failureAttempts.length}`,
-    latestAttempt
-      ? `latestAttemptStatus=${latestAttempt.status} latestReport=${latestAttempt.report.bundle.summary}`
-      : 'latestAttemptStatus=none',
-    ...version.attempts
-      .slice(-4)
-      .map((attempt) => formatAttemptSummary(attempt)),
-  ].join('\n')
-}
-
-function formatAttemptSummary(attempt: PersistedCandidateAttempt) {
-  return [
-    `- revision=${attempt.revision}`,
-    `status=${attempt.status}`,
-    `failureStreak=${attempt.failureStreak}`,
-    `report=${attempt.report.bundle.summary}`,
-  ].join(' ')
-}
-
-function createVersionTimeline(version: AssetLibraryVersion) {
-  const latestAttempt = version.attempts.at(-1) ?? null
-  const latestSuccessfulAttempt =
-    [...version.attempts].reverse().find((attempt) => attempt.status === 'success') ??
-    null
-  const latestFailureAttempt =
-    [...version.attempts].reverse().find((attempt) => attempt.status === 'failure') ??
-    null
-
-  return createCandidateHistoryTimeline({
-    activeCandidateFingerprint: latestAttempt?.candidateFingerprint ?? null,
-    attempts: version.attempts,
-    canReportReady: latestAttempt?.status === 'success',
-    consecutiveFailureCount: latestFailureAttempt?.failureStreak ?? 0,
-    currentRevision: latestAttempt?.revision ?? 0,
-    latestFailureSignature: latestFailureAttempt?.failureSignature ?? null,
-    latestSuccessfulAttempt,
-    runId: version.sourceRunId,
-  })
 }

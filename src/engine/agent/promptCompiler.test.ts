@@ -84,6 +84,59 @@ describe('compileManifestPrompt', () => {
     expect(compiled.metadata.selectedAssetId).toBe('validation-crate')
   })
 
+  it('prepends accumulated user input history ahead of the existing edit context', () => {
+    const selectedAsset = createValidValidationFixtureAsset()
+    const scene: ManifestScene = {
+      ...emptyScene,
+      assets: [selectedAsset],
+    }
+    const compiled = compileManifestPrompt({
+      imageAttachments: [
+        {
+          id: 'ref-current',
+          mediaType: 'image/png',
+          name: 'current.png',
+        },
+      ],
+      mode: 'edit',
+      scene,
+      selectedAsset,
+      userInputHistory: [
+        {
+          imageAttachments: [
+            {
+              height: 480,
+              id: 'ref-initial',
+              mediaType: 'image/png',
+              name: 'initial.png',
+              width: 640,
+            },
+          ],
+          text: 'Initial object request.',
+          turn: 0,
+        },
+        {
+          imageAttachments: [],
+          text: 'Make the lid thicker.',
+          turn: 1,
+        },
+      ],
+      userPrompt: 'Make the lid thicker.',
+    })
+
+    expect(compiled.user.indexOf('<user_input_history>')).toBeLessThan(
+      compiled.user.indexOf('<task_mode>'),
+    )
+    expect(compiled.user).toContain('turn=0')
+    expect(compiled.user).toContain('text="Initial object request."')
+    expect(compiled.user).toContain(
+      'id=ref-initial mediaType=image/png name="initial.png" dimensions=640x480',
+    )
+    expect(compiled.user).toContain('turn=1')
+    expect(compiled.user).toContain('text="Make the lid thicker."')
+    expect(compiled.user).toContain('id=ref-current mediaType=image/png')
+  })
+
   it('includes candidate JSON and validation feedback for repair prompts', () => {
     const candidate = createValidValidationFixtureAsset()
     const compiled = compileManifestPrompt({

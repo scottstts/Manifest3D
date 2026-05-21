@@ -1,10 +1,12 @@
-import { PanelRightClose, PanelRightOpen, Plus } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
 import {
   type Ref,
   type UIEvent,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from 'react'
 import type { AgentImageAttachment } from '../engine/agent/providerClient'
 import type { AgentTimelineItem } from '../engine/agent/validationTimeline'
@@ -64,6 +66,8 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const threadRef = useRef<HTMLDivElement | null>(null)
   const isThreadPinnedToBottomRef = useRef(true)
+  const [previewAttachment, setPreviewAttachment] =
+    useState<AgentImageAttachment | null>(null)
   const timelineScrollKey = useMemo(
     () =>
       [
@@ -113,6 +117,24 @@ export function ChatPanel({
     updateThreadPinState(event.currentTarget, isThreadPinnedToBottomRef)
   }
 
+  useEffect(() => {
+    if (!previewAttachment) {
+      return undefined
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setPreviewAttachment(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [previewAttachment])
+
   return (
     <aside
       className={`chat-panel${isCollapsed ? ' is-collapsed' : ''}${isWorkspaceDisabled ? ' is-disabled' : ''}`}
@@ -155,7 +177,10 @@ export function ChatPanel({
         {!isCollapsed && (
           <>
             {transcriptItems.length > 0 && !isWorkspaceDisabled ? (
-              <ChatTranscript items={transcriptItems} />
+              <ChatTranscript
+                items={transcriptItems}
+                onImagePreviewRequested={setPreviewAttachment}
+              />
             ) : (
               <>
                 {(agentStatus || isWorkspaceDisabled) && (
@@ -183,14 +208,22 @@ export function ChatPanel({
           onSubmit={onPromptSubmit}
         />
       )}
+      {previewAttachment && (
+        <ImagePreviewModal
+          attachment={previewAttachment}
+          onClose={() => setPreviewAttachment(null)}
+        />
+      )}
     </aside>
   )
 }
 
 function ChatTranscript({
   items,
+  onImagePreviewRequested,
 }: {
   items: readonly ChatPanelTranscriptItem[]
+  onImagePreviewRequested: (attachment: AgentImageAttachment) => void
 }) {
   return (
     <div className="chat-transcript">
@@ -200,11 +233,18 @@ function ChatTranscript({
             {item.imageAttachments.length > 0 && (
               <div className="chat-message__thumbs" aria-label="Prompt images">
                 {item.imageAttachments.map((attachment) => (
-                  <img
-                    alt={attachment.name ?? 'Prompt reference'}
+                  <button
+                    aria-label={`Preview ${attachment.name ?? 'prompt reference'}`}
+                    className="chat-message__thumb"
                     key={attachment.id}
-                    src={attachment.imageUrl}
-                  />
+                    type="button"
+                    onClick={() => onImagePreviewRequested(attachment)}
+                  >
+                    <img
+                      alt={attachment.name ?? 'Prompt reference'}
+                      src={attachment.imageUrl}
+                    />
+                  </button>
                 ))}
               </div>
             )}
@@ -225,6 +265,40 @@ function ChatTranscript({
           </article>
         ),
       )}
+    </div>
+  )
+}
+
+function ImagePreviewModal({
+  attachment,
+  onClose,
+}: {
+  attachment: AgentImageAttachment
+  onClose: () => void
+}) {
+  return (
+    <div
+      aria-label={attachment.name ?? 'Prompt reference'}
+      aria-modal="true"
+      className="image-preview-modal"
+      role="dialog"
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) {
+          onClose()
+        }
+      }}
+    >
+      <div className="image-preview-modal__content">
+        <button
+          aria-label="Close image preview"
+          className="image-preview-modal__close"
+          type="button"
+          onClick={onClose}
+        >
+          <X aria-hidden="true" />
+        </button>
+        <img alt={attachment.name ?? 'Prompt reference'} src={attachment.imageUrl} />
+      </div>
     </div>
   )
 }

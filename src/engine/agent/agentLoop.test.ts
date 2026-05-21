@@ -121,6 +121,92 @@ describe('runManifestAgentLoop', () => {
     expect(result.history.canReportReady).toBe(false)
   })
 
+  it('includes accumulated user input history and its images on every stateless request', async () => {
+    const requests: AgentRequest[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const client = createQueuedClient(
+      [
+        {
+          candidate: createInvalidValidationFixtureAsset(),
+          rawText: '{}',
+          responseId: 'resp_invalid',
+          status: 'ok',
+        },
+        {
+          candidate: createValidValidationFixtureAsset(),
+          rawText: '{}',
+          responseId: 'resp_valid',
+          status: 'ok',
+        },
+      ],
+      requests,
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        imageAttachments: [
+          {
+            id: 'ref-current',
+            imageUrl: 'data:image/png;base64,current',
+            mediaType: 'image/png',
+          },
+        ],
+        mode: 'edit',
+        runId: 'run-user-history',
+        scene: emptyScene,
+        selectedAsset: createValidValidationFixtureAsset(),
+        userInputHistory: [
+          {
+            imageAttachments: [
+              {
+                id: 'ref-initial',
+                imageUrl: 'data:image/png;base64,initial',
+                mediaType: 'image/png',
+              },
+            ],
+            text: 'Initial image prompt.',
+            turn: 0,
+          },
+          {
+            imageAttachments: [
+              {
+                id: 'ref-current',
+                imageUrl: 'data:image/png;base64,current',
+                mediaType: 'image/png',
+              },
+            ],
+            text: 'Current edit prompt.',
+            turn: 1,
+          },
+        ],
+        userPrompt: 'Current edit prompt.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(requests).toHaveLength(2)
+    expect(requests.map((request) => request.prompt.metadata.mode)).toEqual([
+      'edit',
+      'repair',
+    ])
+    expect(requests[0].prompt.user).toContain('<user_input_history>')
+    expect(requests[0].prompt.user).toContain('turn=0')
+    expect(requests[0].prompt.user).toContain('id=ref-initial')
+    expect(requests[1].prompt.user).toContain('<user_input_history>')
+    expect(
+      requests.map((request) =>
+        request.imageAttachments?.map((attachment) => attachment.id),
+      ),
+    ).toEqual([
+      ['ref-initial', 'ref-current'],
+      ['ref-initial', 'ref-current'],
+    ])
+  })
+
   it('surfaces missing-key unavailable state without recording attempts or changing the scene', async () => {
     const sceneStore = createSceneStore(emptyScene)
     const client: ManifestProviderClient = {
