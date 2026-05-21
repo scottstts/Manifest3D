@@ -15,6 +15,7 @@ import {
 import type { ManifestAsset } from '../engine/schema/manifestTypes'
 
 type ViewportToolbarProps = {
+  apiKeyNoticeId: number | null
   isApiKeyLoaded: boolean
   canRedoCompose: boolean
   canUndoCompose: boolean
@@ -32,6 +33,7 @@ type ViewportToolbarProps = {
 }
 
 export function ViewportToolbar({
+  apiKeyNoticeId,
   isApiKeyLoaded,
   canRedoCompose,
   canUndoCompose,
@@ -202,29 +204,45 @@ export function ViewportToolbar({
           </div>
         )}
       </div>
-      <button
-        aria-label={
-          hasSessionApiKey
-            ? 'Update in-memory provider API key'
-            : isApiKeyLoaded
-              ? 'Provider API key loaded'
-              : 'Add provider API key'
-        }
-        className="viewport-toolbar__button viewport-toolbar__button--api-key"
-        type="button"
-        onClick={onApiKeyRequested}
-      >
-        <KeyRound aria-hidden="true" />
-        <span>API Key</span>
-        <span
-          aria-hidden="true"
-          className={
-            isApiKeyLoaded
-              ? 'viewport-toolbar__api-key-dot is-loaded'
-              : 'viewport-toolbar__api-key-dot'
+      <div className="viewport-toolbar__api-key">
+        <button
+          aria-describedby={
+            apiKeyNoticeId !== null ? 'api-key-required-notice' : undefined
           }
-        />
-      </button>
+          aria-label={
+            hasSessionApiKey
+              ? 'Update in-memory provider API key'
+              : isApiKeyLoaded
+                ? 'Provider API key loaded'
+                : 'Add provider API key'
+          }
+          className={`viewport-toolbar__button viewport-toolbar__button--api-key${apiKeyNoticeId !== null ? ' is-attention' : ''}`}
+          key={`api-key-${apiKeyNoticeId ?? 'idle'}`}
+          type="button"
+          onClick={onApiKeyRequested}
+        >
+          <KeyRound aria-hidden="true" />
+          <span>API Key</span>
+          <span
+            aria-hidden="true"
+            className={
+              isApiKeyLoaded
+                ? 'viewport-toolbar__api-key-dot is-loaded'
+                : 'viewport-toolbar__api-key-dot'
+            }
+          />
+        </button>
+        {apiKeyNoticeId !== null && (
+          <div
+            className="viewport-toolbar__api-key-notice"
+            id="api-key-required-notice"
+            key={apiKeyNoticeId}
+            role="status"
+          >
+            Please provide the API keys first
+          </div>
+        )}
+      </div>
       <a
         aria-label="Open Manifest3D GitHub repository"
         className="viewport-toolbar__button viewport-toolbar__button--github"

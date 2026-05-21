@@ -5,6 +5,7 @@ import { ViewportToolbar } from './ViewportToolbar'
 
 type FrameChromeProps = {
   activeWorkspace: WorkspaceMode
+  apiKeyNoticeId: number | null
   isApiKeyLoaded: boolean
   canRedoCompose: boolean
   canUndoCompose: boolean
@@ -24,6 +25,7 @@ type FrameChromeProps = {
 
 export function FrameChrome({
   activeWorkspace,
+  apiKeyNoticeId,
   isApiKeyLoaded,
   canRedoCompose,
   canUndoCompose,
@@ -188,6 +190,7 @@ export function FrameChrome({
         </button>
       </div>
       <ViewportToolbar
+        apiKeyNoticeId={apiKeyNoticeId}
         isApiKeyLoaded={isApiKeyLoaded}
         canRedoCompose={canRedoCompose}
         canUndoCompose={canUndoCompose}

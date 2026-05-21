@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import type { AgentImageAttachment } from '../engine/agent/providerClient'
 import type { AgentTimelineItem } from '../engine/agent/validationTimeline'
 import type { ValidationReport } from '../engine/schema/validationTypes'
@@ -276,7 +277,11 @@ function ImagePreviewModal({
   attachment: AgentImageAttachment
   onClose: () => void
 }) {
-  return (
+  if (typeof document === 'undefined') {
+    return null
+  }
+
+  return createPortal(
     <div
       aria-label={attachment.name ?? 'Prompt reference'}
       aria-modal="true"
@@ -299,7 +304,8 @@ function ImagePreviewModal({
         </button>
         <img alt={attachment.name ?? 'Prompt reference'} src={attachment.imageUrl} />
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

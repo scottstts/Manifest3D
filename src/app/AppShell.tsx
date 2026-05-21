@@ -155,6 +155,7 @@ export function AppShell() {
   )
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false)
   const [isHistoryPanelCollapsed, setIsHistoryPanelCollapsed] = useState(true)
+  const [apiKeyNoticeId, setApiKeyNoticeId] = useState<number | null>(null)
   const [rightPanelOcclusionWidth, setRightPanelOcclusionWidth] = useState(0)
   const [leftPanelOcclusionWidth, setLeftPanelOcclusionWidth] = useState(0)
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
@@ -195,6 +196,7 @@ export function AppShell() {
   const agentRunAbortControllersRef = useRef<Map<string, AbortController>>(
     new Map(),
   )
+  const apiKeyNoticeTimeoutRef = useRef<number | null>(null)
   const jointAnimationDirectionByKeyRef = useRef<Record<string, number>>({})
   const agentHistoryRef = useRef(createCandidateHistory())
   const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
@@ -357,6 +359,10 @@ export function AppShell() {
     () => () => {
       if (exportToastTimeoutRef.current !== null) {
         window.clearTimeout(exportToastTimeoutRef.current)
+      }
+
+      if (apiKeyNoticeTimeoutRef.current !== null) {
+        window.clearTimeout(apiKeyNoticeTimeoutRef.current)
       }
     },
     [],
@@ -658,6 +664,18 @@ export function AppShell() {
     setActiveAgentRunId(null)
   }, [])
 
+  const showMissingApiKeyNotice = useCallback(() => {
+    if (apiKeyNoticeTimeoutRef.current !== null) {
+      window.clearTimeout(apiKeyNoticeTimeoutRef.current)
+    }
+
+    setApiKeyNoticeId(Date.now())
+    apiKeyNoticeTimeoutRef.current = window.setTimeout(() => {
+      setApiKeyNoticeId(null)
+      apiKeyNoticeTimeoutRef.current = null
+    }, 3000)
+  }, [])
+
   const activateAgentRunView = useCallback(
     (run: AgentRunView) => {
       activeAgentRunIdRef.current = run.runId
@@ -740,6 +758,11 @@ export function AppShell() {
       imageAttachments: readonly AgentImageAttachment[],
     ) => {
       if (isActiveAgentRunRunning || sceneSnapshot.activeWorkspace !== 'create') {
+        return
+      }
+
+      if (!isApiKeyLoaded) {
+        showMissingApiKeyNotice()
         return
       }
 
@@ -999,12 +1022,14 @@ export function AppShell() {
       assetLibraryStore,
       handleJointResetAll,
       isActiveAgentRunRunning,
+      isApiKeyLoaded,
       librarySnapshot.library,
       providerClient,
       removeAgentRunView,
       sceneSnapshot.activeWorkspace,
       sceneStore,
       selectionStore,
+      showMissingApiKeyNotice,
       updateAgentRunView,
     ],
   )
@@ -1573,6 +1598,7 @@ export function AppShell() {
       />
       <FrameChrome
         activeWorkspace={sceneSnapshot.activeWorkspace}
+        apiKeyNoticeId={apiKeyNoticeId}
         isApiKeyLoaded={isApiKeyLoaded}
         canRedoCompose={canRedoCompose}
         canUndoCompose={canUndoCompose}
