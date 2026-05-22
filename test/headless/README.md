@@ -28,7 +28,7 @@ Useful overrides:
 HEADLESS_AGENT_PROMPT='a hinged toolbox with opening lid' npm run test:headless
 HEADLESS_AGENT_PROMPT='a compact espresso machine based on the reference' HEADLESS_AGENT_IMAGE_PATHS=tmp/reference.png npm run test:headless
 HEADLESS_AGENT_EXPECT_READY=0 npm run test:headless
-HEADLESS_AGENT_MAX_REPAIR_TURNS=6 npm run test:headless
+HEADLESS_AGENT_MAX_REPAIR_TURNS=10 npm run test:headless
 HEADLESS_AGENT_FETCH_TIMEOUT_MS=3630000 npm run test:headless
 HEADLESS_AGENT_ARTIFACT_DIR=/tmp/manifest3d-headless npm run test:headless
 ```
@@ -44,3 +44,4 @@ them into each run's `reference-images/` artifact folder.
 The default agent-run timeout is one hour so stress runs can behave like real
 pipeline runs; recent live runs completed in roughly 12-15 minutes but need
 enough margin for slower repair turns.
+The default repair cap is ten repair turns, matching the app runtime.

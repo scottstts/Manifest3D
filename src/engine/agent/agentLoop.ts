@@ -90,7 +90,7 @@ export type AgentLoopResult =
       status: 'failed' | 'cancelled' | 'unavailable'
     }
 
-const defaultRepairTurnCap = 4
+export const defaultRepairTurnCap = 10
 
 export async function runManifestAgentLoop(
   input: RunManifestAgentLoopInput,

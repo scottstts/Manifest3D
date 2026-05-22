@@ -2,7 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { request as httpsRequest } from 'node:https'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { runManifestAgentLoop, type AgentLoopEvent } from '../../src/engine/agent/agentLoop'
+import {
+  defaultRepairTurnCap,
+  runManifestAgentLoop,
+  type AgentLoopEvent,
+} from '../../src/engine/agent/agentLoop'
 import { createOpenAIManifestClient } from '../../src/engine/agent/openAiManifestClient'
 import type {
   AgentImageAttachment,
@@ -126,7 +130,10 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       try {
         result = await runManifestAgentLoop(
           {
-            maxRepairTurns: readNumberEnv('HEADLESS_AGENT_MAX_REPAIR_TURNS', 4),
+            maxRepairTurns: readNumberEnv(
+              'HEADLESS_AGENT_MAX_REPAIR_TURNS',
+              defaultRepairTurnCap,
+            ),
             imageAttachments,
             mode: 'create',
             runId,

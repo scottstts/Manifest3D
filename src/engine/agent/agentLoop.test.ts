@@ -6,6 +6,7 @@ import {
 import { createSceneStore } from '../scene/sceneStore'
 import type { ManifestScene } from '../schema/manifestTypes'
 import {
+  defaultRepairTurnCap,
   runManifestAgentLoop,
   type AgentLoopEvent,
 } from './agentLoop'
@@ -118,6 +119,37 @@ describe('runManifestAgentLoop', () => {
     expect(result.status).toBe('failed')
     expect(sceneStore.getSnapshot().scene.assets).toHaveLength(0)
     expect(result.history.attempts).toHaveLength(2)
+    expect(result.history.canReportReady).toBe(false)
+  })
+
+  it('uses ten repair turns by default before failing', async () => {
+    const sceneStore = createSceneStore(emptyScene)
+    const client = createQueuedClient(
+      Array.from({ length: defaultRepairTurnCap + 1 }, (_, index) => ({
+        candidate: createInvalidValidationFixtureAsset(),
+        rawText: '{}',
+        responseId: `resp_invalid_${index + 1}`,
+        status: 'ok' as const,
+      })),
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        runId: 'run-default-cap',
+        scene: emptyScene,
+        userPrompt: 'Create a hinged utility crate.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(defaultRepairTurnCap).toBe(10)
+    expect(result.status).toBe('failed')
+    expect(sceneStore.getSnapshot().scene.assets).toHaveLength(0)
+    expect(result.history.attempts).toHaveLength(defaultRepairTurnCap + 1)
     expect(result.history.canReportReady).toBe(false)
   })
 

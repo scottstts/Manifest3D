@@ -861,7 +861,7 @@ Loop:
 Initial repair turn cap:
 
 ```text
-4
+10
 ```
 
 The agent loop must not hardcode model settings. It must not apply malformed or invalid candidates to the main scene.
