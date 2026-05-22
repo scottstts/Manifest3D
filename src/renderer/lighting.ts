@@ -1,11 +1,26 @@
 import * as THREE from 'three/webgpu'
+import {
+  getViewportWorldEnvironment,
+  type ViewportWorldMode,
+} from './viewportWorld'
 
-export function addLighting(scene: THREE.Scene) {
-  const hemisphere = new THREE.HemisphereLight(0xffffff, 0xd9dbee, 1.35)
+export function addLighting(
+  scene: THREE.Scene,
+  mode: ViewportWorldMode = 'light',
+) {
+  const environment = getViewportWorldEnvironment(mode)
+  const hemisphere = new THREE.HemisphereLight(
+    environment.lights.hemisphere.skyColor,
+    environment.lights.hemisphere.groundColor,
+    environment.lights.hemisphere.intensity,
+  )
   scene.add(hemisphere)
 
-  const key = new THREE.DirectionalLight(0xffffff, 1.9)
-  key.position.set(-4.4, 6.5, 3.6)
+  const key = new THREE.DirectionalLight(
+    environment.lights.key.color,
+    environment.lights.key.intensity,
+  )
+  key.position.set(...environment.lights.key.position)
   key.castShadow = true
   key.shadow.mapSize.set(2048, 2048)
   key.shadow.camera.near = 0.5
@@ -16,7 +31,10 @@ export function addLighting(scene: THREE.Scene) {
   key.shadow.camera.bottom = -6
   scene.add(key)
 
-  const fill = new THREE.DirectionalLight(0xcbd5ff, 0.62)
-  fill.position.set(4.2, 3.2, -4.5)
+  const fill = new THREE.DirectionalLight(
+    environment.lights.fill.color,
+    environment.lights.fill.intensity,
+  )
+  fill.position.set(...environment.lights.fill.position)
   scene.add(fill)
 }

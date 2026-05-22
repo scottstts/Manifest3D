@@ -13,6 +13,8 @@ The app currently starts with an empty Manifest3D scene. `src/engine/examples/re
 
 Renderer material side is asset-authored. Manifest material `side: "front" | "back" | "double"` maps directly to the Three material side on `MeshStandardNodeMaterial`, with missing legacy values treated as `front`. Do not paper over disappearing thin/open geometry by forcing all renderer materials to `DoubleSide`; validation and authored `expect_material_side` checks are responsible for making that choice explicit.
 
+Viewport world lighting is explicit in `src/renderer/viewportWorld.ts`. Light mode is the existing bright background/fog/ground/light setup; dark mode only changes renderer-owned world colors and light intensities. It must not mutate asset materials or app chrome, though assets will naturally render under the selected world lights.
+
 ## Selection And Camera
 
 Picking selects the top-level asset and stores the selected asset/part IDs. Repeatedly selecting the same asset increments a selection revision so the renderer treats it as a new focus request.
@@ -27,7 +29,7 @@ Shift-drag clears selection before OrbitControls handles the gesture, so panning
 
 The main WebGPU canvas and separate gizmo overlay use `frameloop="demand"`. Idle scenes should not render continuously.
 
-Any future animated renderer behavior must explicitly call Fiber `invalidate()` while motion is active. Current invalidation points are controls changes, selection emphasis, selection snap frames, effective viewport projection updates, and gizmo camera quaternion changes.
+Any future animated renderer behavior must explicitly call Fiber `invalidate()` while motion is active. Current invalidation points are controls changes, selection emphasis, selection snap frames, effective viewport projection updates, viewport world mode changes, and gizmo camera quaternion changes.
 
 ## UI Coupling
 

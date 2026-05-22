@@ -25,11 +25,13 @@ import { AssetHistoryPanel } from '../ui/AssetHistoryPanel'
 import { ApiKeyModal } from '../ui/ApiKeyModal'
 import { FrameChrome } from '../ui/FrameChrome'
 import { JointPreviewPanel } from '../ui/JointPreviewPanel'
+import { ViewportWorldModeControl } from '../ui/ViewportWorldModeControl'
 import { WebGPUCanvas, type TransformTool } from '../renderer/WebGPUCanvas'
 import {
   getLeftSidePanelOcclusionWidth,
   getRightSidePanelOcclusionWidth,
 } from '../renderer/effectiveViewport'
+import type { ViewportWorldMode } from '../renderer/viewportWorld'
 import { validateManifestAssetCandidate } from '../engine/validation/validateManifest'
 import {
   runManifestAgentLoop,
@@ -158,6 +160,8 @@ export function AppShell() {
   const [apiKeyNoticeId, setApiKeyNoticeId] = useState<number | null>(null)
   const [rightPanelOcclusionWidth, setRightPanelOcclusionWidth] = useState(0)
   const [leftPanelOcclusionWidth, setLeftPanelOcclusionWidth] = useState(0)
+  const [viewportWorldMode, setViewportWorldMode] =
+    useState<ViewportWorldMode>('light')
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
   const [agentEvents, setAgentEvents] = useState<AgentLoopEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
@@ -1590,6 +1594,7 @@ export function AppShell() {
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
         selectedTargetId={selection.targetId}
         selectionRevision={selectionRevision}
+        worldMode={viewportWorldMode}
         onAssetSelected={selectionStore.selectAsset}
         onSelectionCleared={selectionStore.clearSelection}
         onTransformChanged={handleTransformChanged}
@@ -1630,6 +1635,11 @@ export function AppShell() {
             Exported
           </div>
         )}
+        <ViewportWorldModeControl
+          isHistoryPanelCollapsed={isHistoryPanelCollapsed}
+          mode={viewportWorldMode}
+          onModeChange={setViewportWorldMode}
+        />
         <AssetHistoryPanel
           activeAssetId={assetPanelActiveState.activeAssetId}
           activeRunId={assetPanelActiveState.activeRunId}

@@ -23,6 +23,10 @@ import type {
 import { getProjectionViewOffset } from './effectiveViewport'
 import { CameraQuaternionBridge } from './ViewportGizmo'
 import type { TransformTool } from './WebGPUCanvas'
+import {
+  getViewportWorldEnvironment,
+  type ViewportWorldMode,
+} from './viewportWorld'
 
 type WebGPUSceneProps = {
   activeTransformTool: TransformTool
@@ -37,6 +41,7 @@ type WebGPUSceneProps = {
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
   selectionRevision: number
+  worldMode: ViewportWorldMode
   onAssetSelected: (
     targetId: string,
     assetId?: string | null,
@@ -103,6 +108,7 @@ export function WebGPUScene({
   rightPanelOcclusionWidth,
   selectedTargetId,
   selectionRevision,
+  worldMode,
   onAssetSelected,
   onSelectionCleared,
   onTransformChanged,
@@ -164,29 +170,7 @@ export function WebGPUScene({
         onTransformStarted={onTransformStarted}
       />
       <SceneEffectsPipeline object={selectedTransformHandle?.group ?? null} />
-      <color attach="background" args={['#f7f7fb']} />
-      <fogExp2 attach="fog" args={['#efeff9', 0.018]} />
-
-      <hemisphereLight args={['#ffffff', '#d9dbee', 1.35]} />
-      <directionalLight
-        castShadow
-        intensity={1.9}
-        position={[-4.4, 6.5, 3.6]}
-        shadow-camera-bottom={-6}
-        shadow-camera-far={18}
-        shadow-camera-left={-6}
-        shadow-camera-near={0.5}
-        shadow-camera-right={6}
-        shadow-camera-top={6}
-        shadow-mapSize-height={2048}
-        shadow-mapSize-width={2048}
-      />
-      <directionalLight color="#cbd5ff" intensity={0.62} position={[4.2, 3.2, -4.5]} />
-
-      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[500, 500]} />
-        <meshStandardMaterial color="#f4f3fb" metalness={0.05} roughness={0.36} />
-      </mesh>
+      <ViewportWorld mode={worldMode} />
 
       {assets.map((asset) => (
         <ManifestAssetObject
@@ -217,6 +201,65 @@ export function WebGPUScene({
         onChange={() => invalidate()}
         target={[0, 0, -0.2]}
       />
+    </>
+  )
+}
+
+type ViewportWorldProps = {
+  mode: ViewportWorldMode
+}
+
+function ViewportWorld({ mode }: ViewportWorldProps) {
+  const invalidate = useThree((state) => state.invalidate)
+  const environment = getViewportWorldEnvironment(mode)
+
+  useEffect(() => {
+    invalidate()
+  }, [invalidate, mode])
+
+  return (
+    <>
+      <color attach="background" args={[environment.backgroundColor]} />
+      <fogExp2
+        attach="fog"
+        args={[environment.fog.color, environment.fog.density]}
+      />
+
+      <hemisphereLight
+        args={[
+          environment.lights.hemisphere.skyColor,
+          environment.lights.hemisphere.groundColor,
+          environment.lights.hemisphere.intensity,
+        ]}
+      />
+      <directionalLight
+        castShadow
+        color={environment.lights.key.color}
+        intensity={environment.lights.key.intensity}
+        position={environment.lights.key.position}
+        shadow-camera-bottom={-6}
+        shadow-camera-far={18}
+        shadow-camera-left={-6}
+        shadow-camera-near={0.5}
+        shadow-camera-right={6}
+        shadow-camera-top={6}
+        shadow-mapSize-height={2048}
+        shadow-mapSize-width={2048}
+      />
+      <directionalLight
+        color={environment.lights.fill.color}
+        intensity={environment.lights.fill.intensity}
+        position={environment.lights.fill.position}
+      />
+
+      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[500, 500]} />
+        <meshStandardMaterial
+          color={environment.ground.color}
+          metalness={environment.ground.metalness}
+          roughness={environment.ground.roughness}
+        />
+      </mesh>
     </>
   )
 }

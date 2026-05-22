@@ -15,6 +15,7 @@
 - The viewport DPR budget must keep using the project cap of `1_650_000` pixels and max DPR `1.5`.
 - The XYZ gizmo uses Drei's built-in `GizmoHelper` and `GizmoViewport` in a small WebGPU overlay canvas so its sprite labels can render at normal device density. Do not reintroduce custom gizmo geometry, CSS-only gizmos, or scaled-up Drei sprite heads.
 - The gizmo is fixed in the top-right of the open viewport. When the side panel collapses, it slides to the top-right of the overall viewport.
+- The viewport world mode control is an icon-only two-button group fixed at the top-left of the effective viewport. It slides with the left asset panel and changes only renderer world lighting, not the UI theme.
 
 ## Chrome And Brand
 

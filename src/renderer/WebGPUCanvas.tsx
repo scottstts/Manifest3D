@@ -12,6 +12,7 @@ import { UnsupportedWebGPU } from '../ui/UnsupportedWebGPU'
 import { computeRendererDpr, createFiberWebGPURenderer } from './createRenderer'
 import { ViewportGizmoOverlay } from './ViewportGizmo'
 import { WebGPUScene } from './WebGPUScene'
+import type { ViewportWorldMode } from './viewportWorld'
 
 type CanvasStatus =
   | { type: 'checking' }
@@ -30,6 +31,7 @@ type WebGPUCanvasProps = {
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
   selectionRevision: number
+  worldMode: ViewportWorldMode
   onAssetSelected: (
     targetId: string,
     assetId?: string | null,
@@ -58,6 +60,7 @@ export function WebGPUCanvas({
   rightPanelOcclusionWidth,
   selectedTargetId,
   selectionRevision,
+  worldMode,
   onAssetSelected,
   onSelectionCleared,
   onTransformChanged,
@@ -181,6 +184,7 @@ export function WebGPUCanvas({
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             selectedTargetId={selectedTargetId}
             selectionRevision={selectionRevision}
+            worldMode={worldMode}
             onAssetSelected={onAssetSelected}
             onSelectionCleared={onSelectionCleared}
             onTransformChanged={onTransformChanged}
