@@ -40,4 +40,13 @@ describe('formatPathTracingSampleCounter', () => {
       `18 / ${pathTracingViewportConfig.maxSamples} samples`,
     )
   })
+
+  it('adds denoise progress labels only when the final denoise pass is active or complete', () => {
+    expect(formatPathTracingSampleCounter(100, 'denoising')).toBe(
+      `100 / ${pathTracingViewportConfig.maxSamples} samples (denoising)`,
+    )
+    expect(formatPathTracingSampleCounter(100, 'denoised')).toBe(
+      `100 / ${pathTracingViewportConfig.maxSamples} samples (denoised)`,
+    )
+  })
 })

@@ -41,10 +41,20 @@ The viewport has two render modes: the default WebGPU/TSL renderer and an option
 
 The path tracer pipeline is isolated in `src/renderer/pathtracer/`. It rebuilds a path-tracing-specific Three scene from the same scene snapshot, applies the same world lighting/ground settings, converts Manifest3D node materials to plain `MeshStandardMaterial`, and then uses `three-gpu-pathtracer` for progressive emissive-lighting render samples. Render tuning such as bounces, bloom, emission gain, texture size, tile layout, and max sample count is intentionally code-only in `pathTracingConfig.ts`.
 
-The live path tracer viewport uses a 1x1 tile layout so early convergence fills the whole viewport instead of showing only one tile/quadrant. The path tracer sample counter is viewport UI, not a user tuning knob, and displays current accumulated samples against the code-level max sample cap.
+The live path tracer viewport uses a 1x1 tile layout so early convergence fills the whole viewport instead of showing only one tile/quadrant. The path tracer sample counter is viewport UI, not a user tuning knob, and displays current accumulated samples against the code-level max sample cap. During the final-frame denoise pass it may append `(denoising)`, then persists `(denoised)` once the denoised texture is feeding the bloom/output chain.
 
 Animation preview playback belongs only to the default WebGPU viewport. Path tracer mode hides the animation panel and clears active preview playback when entered so the path-traced view remains a still progressive render rather than an animation preview surface.
 
 Path tracer mode also has renderer-mode-specific navigation behavior: OrbitControls damping is disabled and selected-asset target centering snaps immediately. The hidden WebGPU canvas still owns picking and camera state, but path tracer mode should not leave residual inertia after pan/orbit input because any lingering camera movement delays progressive sample accumulation. Default mode keeps the existing damped camera behavior.
 
 The path tracer mirrors the hidden WebGPU camera snapshot and applies the same `PerspectiveCamera.setViewOffset()` projection from `src/renderer/effectiveViewport.ts` as the default WebGPU viewport. Keep this projection-offset path shared between the two render modes; a prior path-tracer-specific look-target shift did not visually match default centering because it depended on the controls target rather than applying the same screen-space projection shift. Because the hidden WebGPU canvas runs on demand in path tracer mode, camera snapshots must be pushed directly from OrbitControls changes and selection-target snaps instead of relying only on passive frame polling.
+
+## Path Tracer Final-Frame Denoising
+
+The WebGL2 path tracer has a renderer-local final-frame denoise pass in `src/renderer/pathtracer/pathTracingDenoisePipeline.ts`. It is intentionally not part of the default WebGPU/TSL renderer and should stay isolated with the rest of the path tracer code.
+
+Denoising runs only after progressive accumulation reaches `pathTracingViewportConfig.maxSamples`. Before that point, `PathTracingCanvas` continues to feed the raw `WebGLPathTracer` target into the existing post stack so progressive updates stay responsive and unchanged. On the final sample, the path-traced HDR target is sent through the denoise pipeline, then the existing `TexturePass -> UnrealBloomPass -> OutputPass` chain continues, so bloom is still applied after denoise.
+
+The denoise pipeline is a non-ML GPU postprocess with no npm dependency. It rasterizes auxiliary normal/depth buffers from the path-tracing scene and camera, runs a small firefly clamp pass, then applies a bounded 1/2/4/8 à-trous edge-aware filter. The filter weights neighbor samples by luminance, rasterized view normal, and depth similarity. Config lives in `pathTracingConfig.ts` and should remain conservative because the pipeline is designed as a high-ROI final-frame cleanup pass, not a heavy offline denoiser.
+
+Reset denoise state whenever path tracer samples reset: camera changes, viewport/DPR changes, scene rebuilds, world-mode changes, pose/material preview changes, or path-tracer scene upload. The final denoised texture should be treated as stale after any such reset.

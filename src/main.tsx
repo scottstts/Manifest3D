@@ -1,4 +1,7 @@
 import { desktopOnlyMessage, isMobileBrowser } from './app/desktopGate'
+import { installConsoleWarningFilter } from './app/consoleWarningFilter'
+
+installConsoleWarningFilter(console)
 
 if (isMobileBrowser(window.navigator, (query) => window.matchMedia(query).matches)) {
   renderDesktopOnlyMessage()

@@ -23,8 +23,14 @@ import {
 } from './pathTracingCamera'
 import { pathTracingViewportConfig } from './pathTracingConfig'
 import {
+  createPathTracingDenoisePipeline,
+  shouldUsePathTracingDenoise,
+  type PathTracingDenoisePipeline,
+} from './pathTracingDenoisePipeline'
+import {
   formatPathTracingSampleCounter,
   shouldScheduleNextPathTracingFrame,
+  type PathTracingSampleCounterDenoiseStatus,
 } from './pathTracingFrameScheduler'
 import { rebuildPathTracingViewportScene } from './pathTracingScene'
 import { resetRendererViewportToCanvasCssSize } from './pathTracingRendererViewport'
@@ -43,6 +49,7 @@ type PathTracingRuntime = {
   bloomPass: UnrealBloomPass
   camera: THREE.PerspectiveCamera
   composer: EffectComposer
+  denoisePipeline: PathTracingDenoisePipeline
   pathTracer: WebGLPathTracer
   renderer: THREE.WebGLRenderer
   scene: THREE.Scene
@@ -60,7 +67,8 @@ type SampleCounterHandle = {
 }
 
 type PublishSampleCountOptions = {
-  lastPublishedSampleCountRef: MutableRefObject<number>
+  denoiseStatus?: PathTracingSampleCounterDenoiseStatus
+  lastPublishedSampleCounterTextRef: MutableRefObject<string | null>
   sampleCount: number
   sampleCounterRef: MutableRefObject<SampleCounterHandle | null>
 }
@@ -84,7 +92,7 @@ export function PathTracingCanvas({
   const runtimeRef = useRef<PathTracingRuntime | null>(null)
   const sceneCleanupRef = useRef<(() => void) | null>(null)
   const needsSceneUploadRef = useRef(false)
-  const lastPublishedSampleCountRef = useRef(0)
+  const lastPublishedSampleCounterTextRef = useRef<string | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const requestFrameRef = useRef<(() => void) | null>(null)
   const currentCameraSnapshotRef = useRef<ViewportCameraSnapshot>(
@@ -156,6 +164,7 @@ export function PathTracingCanvas({
     )
     const outputPass = new OutputPass()
     const composer = new EffectComposer(renderer)
+    const denoisePipeline = createPathTracingDenoisePipeline()
 
     renderer.autoClear = true
     renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -186,6 +195,7 @@ export function PathTracingCanvas({
       bloomPass,
       camera,
       composer,
+      denoisePipeline,
       pathTracer,
       renderer,
       scene,
@@ -200,6 +210,7 @@ export function PathTracingCanvas({
       runtimeRef.current = null
       pathTracer.dispose()
       composer.dispose()
+      denoisePipeline.dispose()
       texturePass.dispose()
       bloomPass.dispose()
       outputPass.dispose()
@@ -218,7 +229,7 @@ export function PathTracingCanvas({
 
     syncPathTracingRendererSize(runtime, viewportSize, rendererDpr)
     resetPathTracingCameraAndSamples({
-      lastPublishedSampleCountRef,
+      lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth: currentLeftPanelOcclusionWidthRef.current,
       rightPanelOcclusionWidth: currentRightPanelOcclusionWidthRef.current,
       runtime,
@@ -241,7 +252,7 @@ export function PathTracingCanvas({
     }
 
     resetPathTracingCameraAndSamples({
-      lastPublishedSampleCountRef,
+      lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth,
       rightPanelOcclusionWidth,
       runtime,
@@ -269,7 +280,7 @@ export function PathTracingCanvas({
     })
     needsSceneUploadRef.current = true
     publishPathTracingSampleCount({
-      lastPublishedSampleCountRef,
+      lastPublishedSampleCounterTextRef,
       sampleCount: 0,
       sampleCounterRef,
     })
@@ -314,7 +325,7 @@ export function PathTracingCanvas({
         uploadSceneToPathTracer(runtime)
         needsSceneUploadRef.current = false
         publishPathTracingSampleCount({
-          lastPublishedSampleCountRef,
+          lastPublishedSampleCounterTextRef,
           sampleCount: 0,
           sampleCounterRef,
         })
@@ -324,15 +335,34 @@ export function PathTracingCanvas({
         runtime.pathTracer.renderSample()
       }
 
+      const displayedSampleCount = Math.min(
+        pathTracingViewportConfig.maxSamples,
+        Math.floor(runtime.pathTracer.samples),
+      )
+      const willUseDenoise = shouldUsePathTracingDenoise({
+        enabled: pathTracingViewportConfig.denoise.enabled,
+        maxSamples: pathTracingViewportConfig.maxSamples,
+        sampleCount: runtime.pathTracer.samples,
+      })
+
+      if (willUseDenoise) {
+        publishPathTracingSampleCount({
+          denoiseStatus: 'denoising',
+          lastPublishedSampleCounterTextRef,
+          sampleCount: displayedSampleCount,
+          sampleCounterRef,
+        })
+      }
+
+      const textureMap = getPathTracingTexturePassMap(runtime)
+
       resetRendererViewportToCanvasCssSize(runtime.renderer)
-      runtime.texturePass.map = runtime.pathTracer.target.texture
+      runtime.texturePass.map = textureMap
       runtime.composer.render()
       publishPathTracingSampleCount({
-        lastPublishedSampleCountRef,
-        sampleCount: Math.min(
-          pathTracingViewportConfig.maxSamples,
-          Math.floor(runtime.pathTracer.samples),
-        ),
+        denoiseStatus: willUseDenoise ? 'denoised' : 'idle',
+        lastPublishedSampleCounterTextRef,
+        sampleCount: displayedSampleCount,
         sampleCounterRef,
       })
 
@@ -375,18 +405,21 @@ export function PathTracingCanvas({
   )
 }
 function publishPathTracingSampleCount({
-  lastPublishedSampleCountRef,
+  denoiseStatus = 'idle',
+  lastPublishedSampleCounterTextRef,
   sampleCount,
   sampleCounterRef,
 }: PublishSampleCountOptions) {
-  if (lastPublishedSampleCountRef.current === sampleCount) {
+  const textContent = formatPathTracingSampleCounter(sampleCount, denoiseStatus)
+
+  if (lastPublishedSampleCounterTextRef.current === textContent) {
     return
   }
 
-  lastPublishedSampleCountRef.current = sampleCount
+  lastPublishedSampleCounterTextRef.current = textContent
 
   if (sampleCounterRef.current) {
-    sampleCounterRef.current.textContent = formatPathTracingSampleCounter(sampleCount)
+    sampleCounterRef.current.textContent = textContent
   }
 }
 
@@ -407,10 +440,12 @@ function syncPathTracingRendererSize(
   runtime.composer.setPixelRatio(rendererDpr)
   runtime.composer.setSize(width, height)
   runtime.bloomPass.setSize(width * rendererDpr, height * rendererDpr)
+  runtime.denoisePipeline.setSize(width, height, rendererDpr)
 }
 
+
 function resetPathTracingCameraAndSamples({
-  lastPublishedSampleCountRef,
+  lastPublishedSampleCounterTextRef,
   leftPanelOcclusionWidth,
   rightPanelOcclusionWidth,
   runtime,
@@ -418,7 +453,7 @@ function resetPathTracingCameraAndSamples({
   snapshot,
   viewportSize,
 }: {
-  lastPublishedSampleCountRef: MutableRefObject<number>
+  lastPublishedSampleCounterTextRef: MutableRefObject<string | null>
   leftPanelOcclusionWidth: number
   rightPanelOcclusionWidth: number
   runtime: PathTracingRuntime
@@ -435,8 +470,9 @@ function resetPathTracingCameraAndSamples({
   )
   runtime.pathTracer.updateCamera()
   runtime.pathTracer.reset()
+  runtime.denoisePipeline.reset()
   publishPathTracingSampleCount({
-    lastPublishedSampleCountRef,
+    lastPublishedSampleCounterTextRef,
     sampleCount: 0,
     sampleCounterRef,
   })
@@ -462,6 +498,27 @@ function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
   runtime.scene.updateMatrixWorld(true)
   runtime.pathTracer.setScene(runtime.scene, runtime.camera)
   runtime.pathTracer.reset()
+  runtime.denoisePipeline.reset()
 }
+
+function getPathTracingTexturePassMap(runtime: PathTracingRuntime) {
+  if (
+    !shouldUsePathTracingDenoise({
+      enabled: pathTracingViewportConfig.denoise.enabled,
+      maxSamples: pathTracingViewportConfig.maxSamples,
+      sampleCount: runtime.pathTracer.samples,
+    })
+  ) {
+    return runtime.pathTracer.target.texture
+  }
+
+  return runtime.denoisePipeline.render({
+    camera: runtime.camera,
+    inputTexture: runtime.pathTracer.target.texture,
+    renderer: runtime.renderer,
+    scene: runtime.scene,
+  })
+}
+
 
 export default PathTracingCanvas

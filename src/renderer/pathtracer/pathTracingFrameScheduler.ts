@@ -5,8 +5,26 @@ export type PathTracingFrameState = {
   sampleCount: number
 }
 
-export function formatPathTracingSampleCounter(sampleCount: number) {
-  return `${sampleCount} / ${pathTracingViewportConfig.maxSamples} samples`
+export type PathTracingSampleCounterDenoiseStatus =
+  | 'idle'
+  | 'denoised'
+  | 'denoising'
+
+export function formatPathTracingSampleCounter(
+  sampleCount: number,
+  denoiseStatus: PathTracingSampleCounterDenoiseStatus = 'idle',
+) {
+  const baseText = `${sampleCount} / ${pathTracingViewportConfig.maxSamples} samples`
+
+  if (denoiseStatus === 'denoising') {
+    return `${baseText} (denoising)`
+  }
+
+  if (denoiseStatus === 'denoised') {
+    return `${baseText} (denoised)`
+  }
+
+  return baseText
 }
 
 export function shouldScheduleNextPathTracingFrame({

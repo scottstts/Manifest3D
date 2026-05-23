@@ -9,13 +9,13 @@ type ViewportRenderModeControlProps = {
 const modeOptions = [
   {
     ariaLabel: 'Use default WebGPU viewport renderer',
-    iconClassName: 'fa-solid fa-cubes',
+    iconClassName: 'fa-solid fa-bolt',
     mode: 'default',
     title: 'Default renderer',
   },
   {
     ariaLabel: 'Use path traced viewport renderer',
-    iconClassName: 'fa-solid fa-arrow-trend-down',
+    iconClassName: 'fa-solid fa-camera',
     mode: 'pathtracer',
     title: 'Path tracer renderer',
   },
