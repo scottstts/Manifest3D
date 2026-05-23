@@ -1425,7 +1425,7 @@ a.viewport-toolbar__button {
   align-items: center;
   max-width: 100%;
   min-height: 54px;
-  padding: 2px 2px 6px;
+  padding: 10px 10px 6px 2px;
   overflow-x: auto;
   overflow-y: visible;
 }
@@ -1447,6 +1447,37 @@ a.viewport-toolbar__button {
   height: 100%;
   object-fit: cover;
   border-radius: inherit;
+}
+
+.prompt-composer .prompt-composer__preview-open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: inherit;
+  box-shadow: none;
+}
+
+.prompt-composer .prompt-composer__preview-open:hover {
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.prompt-composer .prompt-composer__preview-open:focus-visible {
+  outline: 2px solid #7772ea;
+  outline-offset: 2px;
+}
+
+.prompt-composer .prompt-composer__preview-open:hover img,
+.prompt-composer .prompt-composer__preview-open:focus-visible img {
+  box-shadow: 0 10px 22px rgb(85 80 220 / 0.16);
 }
 
 .prompt-composer textarea {

@@ -205,6 +205,7 @@ export function ChatPanel({
           disabled={isWorkspaceDisabled}
           disabledReason={isWorkspaceDisabled ? 'Compose mode' : null}
           isSubmitting={isRunning}
+          onImagePreviewRequested={setPreviewAttachment}
           onStop={onStop}
           onSubmit={onPromptSubmit}
         />

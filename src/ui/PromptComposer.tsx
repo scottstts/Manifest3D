@@ -13,6 +13,7 @@ type PromptComposerProps = {
   disabled?: boolean
   disabledReason?: string | null
   isSubmitting?: boolean
+  onImagePreviewRequested?: (attachment: AgentImageAttachment) => void
   onStop?: () => void
   onSubmit: (
     userPrompt: string,
@@ -24,6 +25,7 @@ export function PromptComposer({
   disabled = false,
   disabledReason = null,
   isSubmitting = false,
+  onImagePreviewRequested,
   onStop,
   onSubmit,
 }: PromptComposerProps) {
@@ -129,10 +131,17 @@ export function PromptComposer({
         <div className="prompt-composer__previews" aria-label="Attached images">
           {attachments.map((attachment) => (
             <div className="prompt-composer__preview" key={attachment.id}>
-              <img
-                alt={attachment.name ?? 'Attached reference'}
-                src={attachment.imageUrl}
-              />
+              <button
+                aria-label={`Preview ${attachment.name ?? 'attached reference'}`}
+                className="prompt-composer__preview-open"
+                type="button"
+                onClick={() => onImagePreviewRequested?.(attachment)}
+              >
+                <img
+                  alt={attachment.name ?? 'Attached reference'}
+                  src={attachment.imageUrl}
+                />
+              </button>
               <button
                 aria-label={`Remove ${attachment.name ?? 'attached image'}`}
                 className="prompt-composer__preview-remove"
