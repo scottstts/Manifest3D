@@ -89,6 +89,7 @@
   display: inline-flex;
   gap: 8px;
   align-items: center;
+  justify-content: center;
   height: 38px;
   padding: 0 14px;
   color: #40469f;
@@ -1850,12 +1851,10 @@ a.viewport-toolbar__button {
 
   .workspace-tabs__label,
   .viewport-toolbar__button span,
+  .viewport-toolbar__button .viewport-toolbar__api-key-dot,
+  .viewport-toolbar__button .viewport-toolbar__chevron,
   .version-toolbar__label {
     display: none;
-  }
-
-  .viewport-toolbar__button .viewport-toolbar__api-key-dot {
-    display: inline-block;
   }
 
   .viewport-toolbar__button {
@@ -1864,7 +1863,7 @@ a.viewport-toolbar__button {
   }
 
   .viewport-toolbar__button.viewport-toolbar__button--export-menu {
-    width: 46px;
+    width: 38px;
   }
 
   .viewport-toolbar__button--github {
@@ -1929,7 +1928,7 @@ a.viewport-toolbar__button {
   }
 
   .viewport-toolbar__button.viewport-toolbar__button--export-menu {
-    width: 46px;
+    width: 38px;
   }
 
   .viewport-toolbar__button--github {
@@ -1963,7 +1962,7 @@ a.viewport-toolbar__button {
   }
 
   .viewport-toolbar__button.viewport-toolbar__button--export-menu {
-    width: 46px;
+    width: 38px;
   }
 
   .viewport-toolbar__button--github {

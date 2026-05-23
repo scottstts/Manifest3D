@@ -43,7 +43,7 @@ const lightWorldEnvironment: ViewportWorldEnvironment = {
     fill: {
       color: '#cbd5ff',
       intensity: 0.62,
-      position: [4.2, 3.2, -4.5],
+      position: [-4.4, 6.5, 3.6],
     },
     hemisphere: {
       groundColor: '#d9dbee',
@@ -53,7 +53,7 @@ const lightWorldEnvironment: ViewportWorldEnvironment = {
     key: {
       color: '#ffffff',
       intensity: 1.9,
-      position: [-4.4, 6.5, 3.6],
+      position: [4.2, 3.2, -4.5],
     },
   },
 }
@@ -73,7 +73,7 @@ const darkWorldEnvironment: ViewportWorldEnvironment = {
     fill: {
       color: '#66709c',
       intensity: 0.1,
-      position: [4.2, 3.2, -4.5],
+      position: [-4.4, 6.5, 3.6],
     },
     hemisphere: {
       groundColor: '#242737',
@@ -83,7 +83,7 @@ const darkWorldEnvironment: ViewportWorldEnvironment = {
     key: {
       color: '#bfc8ff',
       intensity: 0.34,
-      position: [-4.4, 6.5, 3.6],
+      position: [4.2, 3.2, -4.5],
     },
   },
 }
