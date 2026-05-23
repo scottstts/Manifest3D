@@ -95,8 +95,8 @@
 
 .viewport-render-mode-control {
   position: absolute;
-  right: calc(14px + clamp(320px, 24vw, 420px) + 28px);
-  bottom: 28px;
+  top: 118px;
+  left: calc(14px + 274px + 28px + 84px);
   z-index: 3;
   display: inline-flex;
   gap: 4px;
@@ -112,12 +112,12 @@
   box-shadow:
     0 12px 28px rgb(73 76 152 / 0.11),
     inset 0 1px 0 rgb(255 255 255 / 0.86);
-  transition: right 220ms ease;
+  transition: left 220ms ease;
   backdrop-filter: blur(18px);
 }
 
 .viewport-render-mode-control.is-panel-collapsed {
-  right: 28px;
+  left: 112px;
 }
 
 .viewport-render-mode-control button {
@@ -160,7 +160,7 @@
 @media (max-width: 980px) {
   .viewport-render-mode-control,
   .viewport-render-mode-control.is-panel-collapsed {
-    right: 20px;
-    bottom: 20px;
+    top: 94px;
+    left: 104px;
   }
 }

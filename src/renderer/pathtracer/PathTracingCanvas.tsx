@@ -1,7 +1,5 @@
 import {
-  type Dispatch,
   type MutableRefObject,
-  type SetStateAction,
   useEffect,
   useMemo,
   useRef,
@@ -24,6 +22,10 @@ import {
   createDefaultPathTracingCameraSnapshot,
 } from './pathTracingCamera'
 import { pathTracingViewportConfig } from './pathTracingConfig'
+import {
+  formatPathTracingSampleCounter,
+  shouldScheduleNextPathTracingFrame,
+} from './pathTracingFrameScheduler'
 import { rebuildPathTracingViewportScene } from './pathTracingScene'
 import { resetRendererViewportToCanvasCssSize } from './pathTracingRendererViewport'
 
@@ -52,6 +54,19 @@ type ViewportSize = {
   width: number
 }
 
+
+type SampleCounterHandle = {
+  textContent: string | null
+}
+
+type PublishSampleCountOptions = {
+  lastPublishedSampleCountRef: MutableRefObject<number>
+  sampleCount: number
+  sampleCounterRef: MutableRefObject<SampleCounterHandle | null>
+}
+
+type RequestFrameRef = MutableRefObject<(() => void) | null>
+
 const fallbackCameraSnapshot = createDefaultPathTracingCameraSnapshot()
 
 export function PathTracingCanvas({
@@ -65,11 +80,22 @@ export function PathTracingCanvas({
 }: PathTracingCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const sampleCounterRef = useRef<HTMLDivElement | null>(null)
   const runtimeRef = useRef<PathTracingRuntime | null>(null)
   const sceneCleanupRef = useRef<(() => void) | null>(null)
   const needsSceneUploadRef = useRef(false)
   const lastPublishedSampleCountRef = useRef(0)
-  const [renderedSamples, setRenderedSamples] = useState(0)
+  const animationFrameRef = useRef<number | null>(null)
+  const requestFrameRef = useRef<(() => void) | null>(null)
+  const currentCameraSnapshotRef = useRef<ViewportCameraSnapshot>(
+    cameraSnapshot ?? fallbackCameraSnapshot,
+  )
+  const currentLeftPanelOcclusionWidthRef = useRef(leftPanelOcclusionWidth)
+  const currentRightPanelOcclusionWidthRef = useRef(rightPanelOcclusionWidth)
+  const currentViewportSizeRef = useRef<ViewportSize>({
+    height: 1,
+    width: 1,
+  })
   const [viewportSize, setViewportSize] = useState<ViewportSize>({
     height: 1,
     width: 1,
@@ -166,6 +192,7 @@ export function PathTracingCanvas({
       texturePass,
     }
     needsSceneUploadRef.current = true
+    requestPathTracingFrame(requestFrameRef)
 
     return () => {
       sceneCleanupRef.current?.()
@@ -181,41 +208,49 @@ export function PathTracingCanvas({
   }, [])
 
   useEffect(() => {
+    currentViewportSizeRef.current = viewportSize
+
     const runtime = runtimeRef.current
 
     if (!runtime) {
       return
     }
 
-    const width = viewportSize.width
-    const height = viewportSize.height
-
-    runtime.renderer.setPixelRatio(rendererDpr)
-    runtime.renderer.setSize(width, height, false)
-    runtime.composer.setPixelRatio(rendererDpr)
-    runtime.composer.setSize(width, height)
-    runtime.bloomPass.setSize(width * rendererDpr, height * rendererDpr)
-    applyCameraSnapshotToPathTracingCamera(
-      runtime.camera,
-      cameraSnapshot ?? fallbackCameraSnapshot,
+    syncPathTracingRendererSize(runtime, viewportSize, rendererDpr)
+    resetPathTracingCameraAndSamples({
+      lastPublishedSampleCountRef,
+      leftPanelOcclusionWidth: currentLeftPanelOcclusionWidthRef.current,
+      rightPanelOcclusionWidth: currentRightPanelOcclusionWidthRef.current,
+      runtime,
+      sampleCounterRef,
+      snapshot: currentCameraSnapshotRef.current,
       viewportSize,
+    })
+    requestPathTracingFrame(requestFrameRef)
+  }, [rendererDpr, viewportSize])
+
+  useEffect(() => {
+    currentCameraSnapshotRef.current = cameraSnapshot ?? fallbackCameraSnapshot
+    currentLeftPanelOcclusionWidthRef.current = leftPanelOcclusionWidth
+    currentRightPanelOcclusionWidthRef.current = rightPanelOcclusionWidth
+
+    const runtime = runtimeRef.current
+
+    if (!runtime) {
+      return
+    }
+
+    resetPathTracingCameraAndSamples({
+      lastPublishedSampleCountRef,
       leftPanelOcclusionWidth,
       rightPanelOcclusionWidth,
-    )
-    runtime.pathTracer.updateCamera()
-    runtime.pathTracer.reset()
-    publishPathTracingSampleCount({
-      lastPublishedSampleCountRef,
-      sampleCount: 0,
-      setRenderedSamples,
+      runtime,
+      sampleCounterRef,
+      snapshot: currentCameraSnapshotRef.current,
+      viewportSize: currentViewportSizeRef.current,
     })
-  }, [
-    cameraSnapshot,
-    leftPanelOcclusionWidth,
-    rendererDpr,
-    rightPanelOcclusionWidth,
-    viewportSize,
-  ])
+    requestPathTracingFrame(requestFrameRef)
+  }, [cameraSnapshot, leftPanelOcclusionWidth, rightPanelOcclusionWidth])
 
   useEffect(() => {
     const runtime = runtimeRef.current
@@ -236,8 +271,9 @@ export function PathTracingCanvas({
     publishPathTracingSampleCount({
       lastPublishedSampleCountRef,
       sampleCount: 0,
-      setRenderedSamples,
+      sampleCounterRef,
     })
+    requestPathTracingFrame(requestFrameRef)
 
     return undefined
   }, [
@@ -248,10 +284,19 @@ export function PathTracingCanvas({
   ])
 
   useEffect(() => {
-    let animationFrame = 0
     let isDisposed = false
 
+    function requestFrame() {
+      if (isDisposed || animationFrameRef.current !== null) {
+        return
+      }
+
+      animationFrameRef.current = requestAnimationFrame(render)
+    }
+
     function render() {
+      animationFrameRef.current = null
+
       const runtime = runtimeRef.current
 
       if (!runtime || isDisposed) {
@@ -261,13 +306,18 @@ export function PathTracingCanvas({
       if (needsSceneUploadRef.current) {
         applyCameraSnapshotToPathTracingCamera(
           runtime.camera,
-          cameraSnapshot ?? fallbackCameraSnapshot,
-          viewportSize,
-          leftPanelOcclusionWidth,
-          rightPanelOcclusionWidth,
+          currentCameraSnapshotRef.current,
+          currentViewportSizeRef.current,
+          currentLeftPanelOcclusionWidthRef.current,
+          currentRightPanelOcclusionWidthRef.current,
         )
         uploadSceneToPathTracer(runtime)
         needsSceneUploadRef.current = false
+        publishPathTracingSampleCount({
+          lastPublishedSampleCountRef,
+          sampleCount: 0,
+          sampleCounterRef,
+        })
       }
 
       if (runtime.pathTracer.samples < pathTracingViewportConfig.maxSamples) {
@@ -283,23 +333,32 @@ export function PathTracingCanvas({
           pathTracingViewportConfig.maxSamples,
           Math.floor(runtime.pathTracer.samples),
         ),
-        setRenderedSamples,
+        sampleCounterRef,
       })
-      animationFrame = requestAnimationFrame(render)
+
+      if (
+        shouldScheduleNextPathTracingFrame({
+          needsSceneUpload: needsSceneUploadRef.current,
+          sampleCount: runtime.pathTracer.samples,
+        })
+      ) {
+        requestFrame()
+      }
     }
 
-    animationFrame = requestAnimationFrame(render)
+    requestFrameRef.current = requestFrame
+    requestFrame()
 
     return () => {
       isDisposed = true
-      cancelAnimationFrame(animationFrame)
+      requestFrameRef.current = null
+
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
+      }
     }
-  }, [
-    cameraSnapshot,
-    leftPanelOcclusionWidth,
-    rightPanelOcclusionWidth,
-    viewportSize,
-  ])
+  }, [])
 
   return (
     <div className="pathtracing-stage" ref={containerRef}>
@@ -307,32 +366,80 @@ export function PathTracingCanvas({
       <div
         aria-live="polite"
         className="pathtracing-sample-counter"
+        ref={sampleCounterRef}
         role="status"
       >
-        {renderedSamples} / {pathTracingViewportConfig.maxSamples} samples
+        {formatPathTracingSampleCounter(0)}
       </div>
     </div>
   )
 }
-
-
-type PublishSampleCountOptions = {
-  lastPublishedSampleCountRef: MutableRefObject<number>
-  sampleCount: number
-  setRenderedSamples: Dispatch<SetStateAction<number>>
-}
-
 function publishPathTracingSampleCount({
   lastPublishedSampleCountRef,
   sampleCount,
-  setRenderedSamples,
+  sampleCounterRef,
 }: PublishSampleCountOptions) {
   if (lastPublishedSampleCountRef.current === sampleCount) {
     return
   }
 
   lastPublishedSampleCountRef.current = sampleCount
-  setRenderedSamples(sampleCount)
+
+  if (sampleCounterRef.current) {
+    sampleCounterRef.current.textContent = formatPathTracingSampleCounter(sampleCount)
+  }
+}
+
+function requestPathTracingFrame(requestFrameRef: RequestFrameRef) {
+  requestFrameRef.current?.()
+}
+
+function syncPathTracingRendererSize(
+  runtime: PathTracingRuntime,
+  viewportSize: ViewportSize,
+  rendererDpr: number,
+) {
+  const width = viewportSize.width
+  const height = viewportSize.height
+
+  runtime.renderer.setPixelRatio(rendererDpr)
+  runtime.renderer.setSize(width, height, false)
+  runtime.composer.setPixelRatio(rendererDpr)
+  runtime.composer.setSize(width, height)
+  runtime.bloomPass.setSize(width * rendererDpr, height * rendererDpr)
+}
+
+function resetPathTracingCameraAndSamples({
+  lastPublishedSampleCountRef,
+  leftPanelOcclusionWidth,
+  rightPanelOcclusionWidth,
+  runtime,
+  sampleCounterRef,
+  snapshot,
+  viewportSize,
+}: {
+  lastPublishedSampleCountRef: MutableRefObject<number>
+  leftPanelOcclusionWidth: number
+  rightPanelOcclusionWidth: number
+  runtime: PathTracingRuntime
+  sampleCounterRef: MutableRefObject<SampleCounterHandle | null>
+  snapshot: ViewportCameraSnapshot
+  viewportSize: ViewportSize
+}) {
+  applyCameraSnapshotToPathTracingCamera(
+    runtime.camera,
+    snapshot,
+    viewportSize,
+    leftPanelOcclusionWidth,
+    rightPanelOcclusionWidth,
+  )
+  runtime.pathTracer.updateCamera()
+  runtime.pathTracer.reset()
+  publishPathTracingSampleCount({
+    lastPublishedSampleCountRef,
+    sampleCount: 0,
+    sampleCounterRef,
+  })
 }
 
 function applyCameraSnapshotToPathTracingCamera(
@@ -356,6 +463,5 @@ function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
   runtime.pathTracer.setScene(runtime.scene, runtime.camera)
   runtime.pathTracer.reset()
 }
-
 
 export default PathTracingCanvas

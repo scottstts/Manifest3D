@@ -1,7 +1,7 @@
 import type { ViewportRenderMode } from '../renderer/viewportRenderMode'
 
 type ViewportRenderModeControlProps = {
-  isSidePanelCollapsed: boolean
+  isHistoryPanelCollapsed: boolean
   mode: ViewportRenderMode
   onModeChange: (mode: ViewportRenderMode) => void
 }
@@ -22,7 +22,7 @@ const modeOptions = [
 ] as const
 
 export function ViewportRenderModeControl({
-  isSidePanelCollapsed,
+  isHistoryPanelCollapsed,
   mode,
   onModeChange,
 }: ViewportRenderModeControlProps) {
@@ -30,7 +30,7 @@ export function ViewportRenderModeControl({
     <div
       aria-label="Viewport render mode"
       className={`viewport-render-mode-control${
-        isSidePanelCollapsed ? ' is-panel-collapsed' : ''
+        isHistoryPanelCollapsed ? ' is-panel-collapsed' : ''
       }`}
       role="group"
     >

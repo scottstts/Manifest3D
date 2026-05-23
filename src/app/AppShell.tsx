@@ -1661,7 +1661,7 @@ export function AppShell() {
           onModeChange={setViewportWorldMode}
         />
         <ViewportRenderModeControl
-          isSidePanelCollapsed={isSidePanelCollapsed}
+          isHistoryPanelCollapsed={isHistoryPanelCollapsed}
           mode={viewportRenderMode}
           onModeChange={handleViewportRenderModeChange}
         />
