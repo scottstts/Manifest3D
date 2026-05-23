@@ -22,6 +22,13 @@ import type {
 } from '../engine/scene/sceneStore'
 import { getProjectionViewOffset } from './effectiveViewport'
 import { CameraQuaternionBridge } from './ViewportGizmo'
+import {
+  createViewportCameraSnapshot,
+  defaultViewportCameraConfig,
+  getViewportCameraSnapshotSignature,
+  type ViewportCameraSnapshot,
+} from './viewportCamera'
+import type { ViewportNavigationBehavior } from './viewportRenderMode'
 import type { TransformTool } from './WebGPUCanvas'
 import {
   getViewportWorldEnvironment,
@@ -36,8 +43,10 @@ type WebGPUSceneProps = {
   materialAnimationValuesByInstance: Readonly<
     Record<string, MaterialAnimationValues>
   >
+  navigationBehavior: ViewportNavigationBehavior
   leftPanelOcclusionWidth: number
   onCameraQuaternionChange: () => void
+  onCameraSnapshotChange?: (snapshot: ViewportCameraSnapshot) => void
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
   selectionRevision: number
@@ -103,8 +112,10 @@ export function WebGPUScene({
   cameraQuaternionRef,
   jointPreviewPosesByInstance,
   materialAnimationValuesByInstance,
+  navigationBehavior,
   leftPanelOcclusionWidth,
   onCameraQuaternionChange,
+  onCameraSnapshotChange,
   rightPanelOcclusionWidth,
   selectedTargetId,
   selectionRevision,
@@ -117,6 +128,11 @@ export function WebGPUScene({
 }: WebGPUSceneProps) {
   const assetGroupsRef = useRef(new Map<string, AssetGroupHandle>())
   const controlsRef = useRef<OrbitControlsHandle | null>(null)
+  const fallbackCameraTargetRef = useRef(
+    new THREE.Vector3(...defaultViewportCameraConfig.target),
+  )
+  const previousCameraSnapshotSignatureRef = useRef('')
+  const camera = useThree((state) => state.camera)
   const invalidate = useThree((state) => state.invalidate)
   const [assetGroupHandles, setAssetGroupHandles] = useState(
     new Map<string, AssetGroupHandle>(),
@@ -142,6 +158,22 @@ export function WebGPUScene({
       }
     }
   }, [])
+  const publishCameraSnapshot = useCallback((force = false) => {
+    if (!onCameraSnapshotChange || !isPerspectiveCamera(camera)) {
+      return
+    }
+
+    const target = controlsRef.current?.target ?? fallbackCameraTargetRef.current
+    const snapshot = createViewportCameraSnapshot(camera, target)
+    const signature = getViewportCameraSnapshotSignature(snapshot)
+
+    if (!force && signature === previousCameraSnapshotSignatureRef.current) {
+      return
+    }
+
+    previousCameraSnapshotSignatureRef.current = signature
+    onCameraSnapshotChange(snapshot)
+  }, [camera, onCameraSnapshotChange])
 
   return (
     <>
@@ -153,11 +185,14 @@ export function WebGPUScene({
         leftPanelOcclusionWidth={leftPanelOcclusionWidth}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
       />
+      <CameraSnapshotBridge publishCameraSnapshot={publishCameraSnapshot} />
       <SelectionCameraTarget
         controlsRef={controlsRef}
         selectedObject={selectedTransformHandle?.group ?? null}
         selectedTargetId={selectedTargetId}
         selectionRevision={selectionRevision}
+        snapImmediately={navigationBehavior.snapSelectionImmediately}
+        onCameraChanged={publishCameraSnapshot}
       />
       <SelectedTransformControls
         activeTransformTool={activeTransformTool}
@@ -192,14 +227,17 @@ export function WebGPUScene({
 
       <OrbitControls
         ref={controlsRef}
-        dampingFactor={0.06}
-        enableDamping
+        dampingFactor={navigationBehavior.enableDamping ? 0.06 : 0}
+        enableDamping={navigationBehavior.enableDamping}
         makeDefault
         maxDistance={orbitDistanceLimits.maxDistance}
         maxPolarAngle={Math.PI * 0.49}
         minDistance={orbitDistanceLimits.minDistance}
-        onChange={() => invalidate()}
-        target={[0, 0, -0.2]}
+        onChange={() => {
+          invalidate()
+          publishCameraSnapshot()
+        }}
+        target={[...defaultViewportCameraConfig.target]}
       />
     </>
   )
@@ -446,6 +484,8 @@ type SelectionCameraTargetProps = {
   selectedObject: THREE.Object3D | null
   selectedTargetId: string | null
   selectionRevision: number
+  snapImmediately: boolean
+  onCameraChanged: (force?: boolean) => void
 }
 
 function SelectionCameraTarget({
@@ -453,6 +493,8 @@ function SelectionCameraTarget({
   selectedObject,
   selectedTargetId,
   selectionRevision,
+  snapImmediately,
+  onCameraChanged,
 }: SelectionCameraTargetProps) {
   const invalidate = useThree((state) => state.invalidate)
   const isSnappingRef = useRef(false)
@@ -476,16 +518,43 @@ function SelectionCameraTarget({
 
     if (!bounds.isEmpty()) {
       bounds.getCenter(targetRef.current)
+
+      if (snapImmediately && controlsRef.current) {
+        controlsRef.current.target.copy(targetRef.current)
+        controlsRef.current.update()
+        onCameraChanged(true)
+        isSnappingRef.current = false
+        invalidate()
+        return
+      }
+
       isSnappingRef.current = true
     }
 
     invalidate()
-  }, [invalidate, selectedObject, selectedTargetId, selectionRevision])
+  }, [
+    controlsRef,
+    invalidate,
+    onCameraChanged,
+    selectedObject,
+    selectedTargetId,
+    selectionRevision,
+    snapImmediately,
+  ])
 
   useFrame(() => {
     const controls = controlsRef.current
 
     if (!selectedTargetId || !controls || !isSnappingRef.current) {
+      return
+    }
+
+    if (snapImmediately) {
+      controls.target.copy(targetRef.current)
+      controls.update()
+      onCameraChanged(true)
+      isSnappingRef.current = false
+      invalidate()
       return
     }
 
@@ -496,6 +565,7 @@ function SelectionCameraTarget({
 
     controls.target.lerp(targetRef.current, 0.12)
     controls.update()
+    onCameraChanged()
     invalidate()
   })
 
@@ -827,6 +897,29 @@ function computeOrbitDistanceLimits(
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
+}
+
+
+type CameraSnapshotBridgeProps = {
+  publishCameraSnapshot: (force?: boolean) => void
+}
+
+function CameraSnapshotBridge({
+  publishCameraSnapshot,
+}: CameraSnapshotBridgeProps) {
+  useEffect(() => {
+    const animationFrame = requestAnimationFrame(() => {
+      publishCameraSnapshot(true)
+    })
+
+    return () => cancelAnimationFrame(animationFrame)
+  }, [publishCameraSnapshot])
+
+  useFrame(() => {
+    publishCameraSnapshot()
+  })
+
+  return null
 }
 
 type EffectiveViewportProjectionProps = {

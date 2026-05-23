@@ -1,6 +1,14 @@
 import { Canvas } from '@react-three/fiber'
 import type { ComponentProps } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Quaternion } from 'three'
 import type {
   SceneAssetInstance,
@@ -12,6 +20,14 @@ import { UnsupportedWebGPU } from '../ui/UnsupportedWebGPU'
 import { computeRendererDpr, createFiberWebGPURenderer } from './createRenderer'
 import { ViewportGizmoOverlay } from './ViewportGizmo'
 import { WebGPUScene } from './WebGPUScene'
+import {
+  defaultViewportCameraConfig,
+  type ViewportCameraSnapshot,
+} from './viewportCamera'
+import {
+  getViewportNavigationBehavior,
+  type ViewportRenderMode,
+} from './viewportRenderMode'
 import type { ViewportWorldMode } from './viewportWorld'
 
 type CanvasStatus =
@@ -28,6 +44,7 @@ type WebGPUCanvasProps = {
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
   materialAnimationValuesByInstance: Readonly<Record<string, MaterialAnimationValues>>
   leftPanelOcclusionWidth: number
+  renderMode: ViewportRenderMode
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
   selectionRevision: number
@@ -50,6 +67,8 @@ const webgpuRendererFactory =
     ComponentProps<typeof Canvas>['gl']
   >
 
+const PathTracingCanvas = lazy(() => import('./pathtracer/PathTracingCanvas'))
+
 export function WebGPUCanvas({
   activeTransformTool,
   assets,
@@ -57,6 +76,7 @@ export function WebGPUCanvas({
   jointPreviewPosesByInstance,
   materialAnimationValuesByInstance,
   leftPanelOcclusionWidth,
+  renderMode,
   rightPanelOcclusionWidth,
   selectedTargetId,
   selectionRevision,
@@ -71,7 +91,14 @@ export function WebGPUCanvas({
   const cameraQuaternionRef = useRef(new Quaternion())
   const [status, setStatus] = useState<CanvasStatus>({ type: 'checking' })
   const [cameraQuaternionRevision, setCameraQuaternionRevision] = useState(0)
+  const [cameraSnapshot, setCameraSnapshot] =
+    useState<ViewportCameraSnapshot | null>(null)
   const [viewportSize, setViewportSize] = useState({ height: 1, width: 1 })
+
+  const navigationBehavior = useMemo(
+    () => getViewportNavigationBehavior(renderMode),
+    [renderMode],
+  )
 
   const rendererDpr = useMemo(
     () =>
@@ -149,16 +176,26 @@ export function WebGPUCanvas({
     setCameraQuaternionRevision((revision) => revision + 1)
   }, [])
 
+  const handleCameraSnapshotChange = useCallback(
+    (snapshot: ViewportCameraSnapshot) => {
+      setCameraSnapshot(snapshot)
+    },
+    [],
+  )
+
   return (
-    <div className="webgpu-stage" ref={containerRef}>
+    <div
+      className={`webgpu-stage${renderMode === 'pathtracer' ? ' is-pathtracing' : ''}`}
+      ref={containerRef}
+    >
       {shouldRenderCanvas && (
         <Canvas
           aria-label="Manifest3D WebGPU viewport"
           camera={{
-            far: 80,
-            fov: 38,
-            near: 0.1,
-            position: [3.65, 2.5, 4.45],
+            far: defaultViewportCameraConfig.far,
+            fov: defaultViewportCameraConfig.fov,
+            near: defaultViewportCameraConfig.near,
+            position: [...defaultViewportCameraConfig.position],
           }}
           className="webgpu-stage__canvas"
           dpr={rendererDpr}
@@ -179,8 +216,10 @@ export function WebGPUCanvas({
             cameraQuaternionRef={cameraQuaternionRef}
             jointPreviewPosesByInstance={jointPreviewPosesByInstance}
             materialAnimationValuesByInstance={materialAnimationValuesByInstance}
+            navigationBehavior={navigationBehavior}
             leftPanelOcclusionWidth={leftPanelOcclusionWidth}
             onCameraQuaternionChange={handleCameraQuaternionChange}
+            onCameraSnapshotChange={handleCameraSnapshotChange}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             selectedTargetId={selectedTargetId}
             selectionRevision={selectionRevision}
@@ -192,6 +231,19 @@ export function WebGPUCanvas({
             onTransformStarted={onTransformStarted}
           />
         </Canvas>
+      )}
+      {status.type === 'ready' && renderMode === 'pathtracer' && (
+        <Suspense fallback={null}>
+          <PathTracingCanvas
+            assets={assets}
+            cameraSnapshot={cameraSnapshot}
+            jointPreviewPosesByInstance={jointPreviewPosesByInstance}
+            leftPanelOcclusionWidth={leftPanelOcclusionWidth}
+            materialAnimationValuesByInstance={materialAnimationValuesByInstance}
+            rightPanelOcclusionWidth={rightPanelOcclusionWidth}
+            worldMode={worldMode}
+          />
+        </Suspense>
       )}
       {status.type === 'ready' && (
         <ViewportGizmoOverlay

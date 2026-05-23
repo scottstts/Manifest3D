@@ -34,3 +34,17 @@ Any future animated renderer behavior must explicitly call Fiber `invalidate()` 
 ## UI Coupling
 
 The export control lives inside the top chrome on the right. It remains visible at all times and is enabled only when the active Create workspace has a viewed asset loaded. Static assets export directly as GLB; assets with movable joints expose static and dynamic GLB choices.
+
+## Viewport render modes
+
+The viewport has two render modes: the default WebGPU/TSL renderer and an optional WebGL2 path tracer. The default WebGPU renderer remains the authoritative interactive viewport. In path tracer mode, the WebGPU canvas stays mounted but is visually hidden so existing camera controls, selection, and transform flows continue to run unchanged. A separate `PathTracingCanvas` overlays the viewport with `pointer-events: none` and mirrors the current camera, world settings, and renderable assets.
+
+The path tracer pipeline is isolated in `src/renderer/pathtracer/`. It rebuilds a path-tracing-specific Three scene from the same scene snapshot, applies the same world lighting/ground settings, converts Manifest3D node materials to plain `MeshStandardMaterial`, and then uses `three-gpu-pathtracer` for progressive emissive-lighting render samples. Render tuning such as bounces, bloom, emission gain, texture size, tile layout, and max sample count is intentionally code-only in `pathTracingConfig.ts`.
+
+The live path tracer viewport uses a 1x1 tile layout so early convergence fills the whole viewport instead of showing only one tile/quadrant. The path tracer sample counter is viewport UI, not a user tuning knob, and displays current accumulated samples against the code-level max sample cap.
+
+Animation preview playback belongs only to the default WebGPU viewport. Path tracer mode hides the animation panel and clears active preview playback when entered so the path-traced view remains a still progressive render rather than an animation preview surface.
+
+Path tracer mode also has renderer-mode-specific navigation behavior: OrbitControls damping is disabled and selected-asset target centering snaps immediately. The hidden WebGPU canvas still owns picking and camera state, but path tracer mode should not leave residual inertia after pan/orbit input because any lingering camera movement delays progressive sample accumulation. Default mode keeps the existing damped camera behavior.
+
+The path tracer mirrors the hidden WebGPU camera snapshot and applies the same `PerspectiveCamera.setViewOffset()` projection from `src/renderer/effectiveViewport.ts` as the default WebGPU viewport. Keep this projection-offset path shared between the two render modes; a prior path-tracer-specific look-target shift did not visually match default centering because it depended on the controls target rather than applying the same screen-space projection shift. Because the hidden WebGPU canvas runs on demand in path tracer mode, camera snapshots must be pushed directly from OrbitControls changes and selection-target snaps instead of relying only on passive frame polling.

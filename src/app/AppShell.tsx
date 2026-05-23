@@ -25,12 +25,17 @@ import { AssetHistoryPanel } from '../ui/AssetHistoryPanel'
 import { ApiKeyModal } from '../ui/ApiKeyModal'
 import { FrameChrome } from '../ui/FrameChrome'
 import { JointPreviewPanel } from '../ui/JointPreviewPanel'
+import { ViewportRenderModeControl } from '../ui/ViewportRenderModeControl'
 import { ViewportWorldModeControl } from '../ui/ViewportWorldModeControl'
 import { WebGPUCanvas, type TransformTool } from '../renderer/WebGPUCanvas'
 import {
   getLeftSidePanelOcclusionWidth,
   getRightSidePanelOcclusionWidth,
 } from '../renderer/effectiveViewport'
+import {
+  allowsAnimationPreviewPlayback,
+  type ViewportRenderMode,
+} from '../renderer/viewportRenderMode'
 import type { ViewportWorldMode } from '../renderer/viewportWorld'
 import { validateManifestAssetCandidate } from '../engine/validation/validateManifest'
 import {
@@ -162,6 +167,8 @@ export function AppShell() {
   const [leftPanelOcclusionWidth, setLeftPanelOcclusionWidth] = useState(0)
   const [viewportWorldMode, setViewportWorldMode] =
     useState<ViewportWorldMode>('light')
+  const [viewportRenderMode, setViewportRenderMode] =
+    useState<ViewportRenderMode>('default')
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
   const [agentEvents, setAgentEvents] = useState<AgentLoopEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
@@ -234,6 +241,8 @@ export function AppShell() {
           kind: preview.kind,
         }))
     : []
+  const animationPreviewPlaybackEnabled =
+    allowsAnimationPreviewPlayback(viewportRenderMode)
   const exportableCreateAsset =
     sceneSnapshot.activeWorkspace === 'create' && sceneSnapshot.createInstance
       ? sceneSnapshot.createInstance.asset
@@ -338,6 +347,16 @@ export function AppShell() {
     startupProviderApiKeyStatus,
     sessionApiKeys,
   )
+
+
+  const handleViewportRenderModeChange = useCallback((mode: ViewportRenderMode) => {
+    if (!allowsAnimationPreviewPlayback(mode)) {
+      jointAnimationDirectionByKeyRef.current = {}
+      setPlayingAnimationPreviews([])
+    }
+
+    setViewportRenderMode(mode)
+  }, [])
 
   useEffect(() => {
     void assetLibraryStore.load()
@@ -1591,6 +1610,7 @@ export function AppShell() {
         jointPreviewPosesByInstance={jointPreviewByInstance}
         materialAnimationValuesByInstance={materialAnimationByInstance}
         leftPanelOcclusionWidth={leftPanelOcclusionWidth}
+        renderMode={viewportRenderMode}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
         selectedTargetId={selection.targetId}
         selectionRevision={selectionRevision}
@@ -1640,6 +1660,11 @@ export function AppShell() {
           mode={viewportWorldMode}
           onModeChange={setViewportWorldMode}
         />
+        <ViewportRenderModeControl
+          isSidePanelCollapsed={isSidePanelCollapsed}
+          mode={viewportRenderMode}
+          onModeChange={handleViewportRenderModeChange}
+        />
         <AssetHistoryPanel
           activeAssetId={assetPanelActiveState.activeAssetId}
           activeRunId={assetPanelActiveState.activeRunId}
@@ -1666,22 +1691,24 @@ export function AppShell() {
             onToolChange={setActiveTransformTool}
           />
         )}
-        <JointPreviewPanel
-          instance={selectedInstance ?? null}
-          jointPoses={selectedJointPreviewPoses}
-          materialAnimationValues={selectedMaterialAnimationValues}
-          playingPreviews={selectedPlayingPreviews}
-          rightOffset={composeToolbarRightOffset}
-          onJointPoseChange={handleJointPoseChange}
-          onJointReset={handleJointReset}
-          onMaterialAnimationReset={handleMaterialAnimationReset}
-          onMaterialAnimationTimeChange={handleMaterialAnimationTimeChange}
-          onMaterialAnimationTogglePlayback={
-            handleMaterialAnimationTogglePlayback
-          }
-          onResetAll={handleJointResetAll}
-          onTogglePlayback={handleJointTogglePlayback}
-        />
+        {animationPreviewPlaybackEnabled && (
+          <JointPreviewPanel
+            instance={selectedInstance ?? null}
+            jointPoses={selectedJointPreviewPoses}
+            materialAnimationValues={selectedMaterialAnimationValues}
+            playingPreviews={selectedPlayingPreviews}
+            rightOffset={composeToolbarRightOffset}
+            onJointPoseChange={handleJointPoseChange}
+            onJointReset={handleJointReset}
+            onMaterialAnimationReset={handleMaterialAnimationReset}
+            onMaterialAnimationTimeChange={handleMaterialAnimationTimeChange}
+            onMaterialAnimationTogglePlayback={
+              handleMaterialAnimationTogglePlayback
+            }
+            onResetAll={handleJointResetAll}
+            onTogglePlayback={handleJointTogglePlayback}
+          />
+        )}
         <ChatPanel
           agentStatus={agentStatus}
           isCollapsed={isSidePanelCollapsed}

@@ -18,7 +18,7 @@ const dpr = Math.min(
 renderer.setPixelRatio(Math.max(1, dpr));
 ```
 
-- This project is WebGPU with TSL only, no WebGL
+- The default viewport renderer must remain WebGPU with TSL. The path tracer viewport render mode is the single approved WebGL2 exception, and its code should stay in a separate modular renderer pipeline rather than being mixed into the default WebGPU renderer.
 - always run test, typecheck, lint, and build after code changes, but Don't run dev server
 - code file structure should be modular, well designed, optimized for ease of maintainability (generally speak try not to exceed 2000 loc per file). If you see a file about to exceed 2000 loc, **Don't** keep piling it on, bring it up to me for a potential local refactor to split code out more modularly before the new implementation
 - if there are ambiguities or issues during implementation that you can't solve or you need to clarify, stop the job and ask me and report issues so i can help you (like fundamental tradeoffs of the approach, unclear design choices, installing packages, look for assets, etc.). DO NOT fall back to any inferior choices without asking me first!
