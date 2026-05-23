@@ -412,7 +412,15 @@ type SceneEffectsPipelineProps = {
 function SceneEffectsPipeline({ object }: SceneEffectsPipelineProps) {
   const { camera, gl, scene } = useThree()
   const invalidate = useThree((state) => state.invalidate)
+  const size = useThree((state) => state.size)
+  const dpr = useThree((state) => state.viewport.dpr)
+  const sizeSignature = `${size.width}x${size.height}@${dpr}`
   const pipelineHandle = useMemo<SceneEffectsPipelineHandle>(() => {
+    // RenderPipeline owns size-sensitive render targets internally, so the
+    // signature is intentionally part of this memo even though the graph setup
+    // reads the current size through the renderer rather than from this string.
+    void sizeSignature
+
     const selectedObjects = object ? [object] : []
     const scenePass = pass(scene, camera)
     scenePass.setMRT(mrt({ output, emissive }))
@@ -457,7 +465,7 @@ function SceneEffectsPipeline({ object }: SceneEffectsPipelineProps) {
       ],
       pipeline,
     }
-  }, [camera, gl, object, scene])
+  }, [camera, gl, object, scene, sizeSignature])
 
   useEffect(() => {
     invalidate()
