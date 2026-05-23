@@ -9,6 +9,7 @@ export type PathTracingSampleCounterDenoiseStatus =
   | 'idle'
   | 'denoised'
   | 'denoising'
+  | 'not-denoised'
 
 export function formatPathTracingSampleCounter(
   sampleCount: number,
@@ -22,6 +23,10 @@ export function formatPathTracingSampleCounter(
 
   if (denoiseStatus === 'denoised') {
     return `${baseText} (denoised)`
+  }
+
+  if (denoiseStatus === 'not-denoised') {
+    return `${baseText} (not denoised)`
   }
 
   return baseText

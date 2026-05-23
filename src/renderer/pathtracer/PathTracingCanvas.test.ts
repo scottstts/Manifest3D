@@ -49,4 +49,10 @@ describe('formatPathTracingSampleCounter', () => {
       `100 / ${pathTracingViewportConfig.maxSamples} samples (denoised)`,
     )
   })
+
+  it('marks the completed final image when the user leaves denoising off', () => {
+    expect(formatPathTracingSampleCounter(100, 'not-denoised')).toBe(
+      `100 / ${pathTracingViewportConfig.maxSamples} samples (not denoised)`,
+    )
+  })
 })

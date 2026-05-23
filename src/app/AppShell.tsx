@@ -25,9 +25,14 @@ import { AssetHistoryPanel } from '../ui/AssetHistoryPanel'
 import { ApiKeyModal } from '../ui/ApiKeyModal'
 import { FrameChrome } from '../ui/FrameChrome'
 import { JointPreviewPanel } from '../ui/JointPreviewPanel'
+import { ViewportDenoiseControl } from '../ui/ViewportDenoiseControl'
 import { ViewportRenderModeControl } from '../ui/ViewportRenderModeControl'
 import { ViewportWorldModeControl } from '../ui/ViewportWorldModeControl'
 import { WebGPUCanvas, type TransformTool } from '../renderer/WebGPUCanvas'
+import {
+  readPathTracingDenoisePreference,
+  writePathTracingDenoisePreference,
+} from '../renderer/pathtracer/pathTracingDenoisePreference'
 import {
   getLeftSidePanelOcclusionWidth,
   getRightSidePanelOcclusionWidth,
@@ -169,6 +174,8 @@ export function AppShell() {
     useState<ViewportWorldMode>('light')
   const [viewportRenderMode, setViewportRenderMode] =
     useState<ViewportRenderMode>('default')
+  const [isPathTracingDenoiseEnabled, setIsPathTracingDenoiseEnabled] =
+    useState(() => readPathTracingDenoisePreference())
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
   const [agentEvents, setAgentEvents] = useState<AgentLoopEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
@@ -356,6 +363,11 @@ export function AppShell() {
     }
 
     setViewportRenderMode(mode)
+  }, [])
+
+  const handlePathTracingDenoiseEnabledChange = useCallback((isEnabled: boolean) => {
+    setIsPathTracingDenoiseEnabled(isEnabled)
+    writePathTracingDenoisePreference(isEnabled)
   }, [])
 
   useEffect(() => {
@@ -1610,6 +1622,7 @@ export function AppShell() {
         jointPreviewPosesByInstance={jointPreviewByInstance}
         materialAnimationValuesByInstance={materialAnimationByInstance}
         leftPanelOcclusionWidth={leftPanelOcclusionWidth}
+        pathTracingDenoiseEnabled={isPathTracingDenoiseEnabled}
         renderMode={viewportRenderMode}
         rightPanelOcclusionWidth={rightPanelOcclusionWidth}
         selectedTargetId={selection.targetId}
@@ -1664,6 +1677,12 @@ export function AppShell() {
           isHistoryPanelCollapsed={isHistoryPanelCollapsed}
           mode={viewportRenderMode}
           onModeChange={handleViewportRenderModeChange}
+        />
+        <ViewportDenoiseControl
+          isEnabled={isPathTracingDenoiseEnabled}
+          isHistoryPanelCollapsed={isHistoryPanelCollapsed}
+          isPathTracerMode={viewportRenderMode === 'pathtracer'}
+          onEnabledChange={handlePathTracingDenoiseEnabledChange}
         />
         <AssetHistoryPanel
           activeAssetId={assetPanelActiveState.activeAssetId}

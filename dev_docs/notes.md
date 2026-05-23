@@ -83,3 +83,5 @@
 - 2026-05-23: The runtime installs a narrow console warning filter for the harmless upstream `THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.` message. Keep the filter exact so real Three.js warnings, especially WebGL shader/program errors, still surface during renderer debugging.
 
 - 2026-05-23: Path tracer sample counter text can change without the numeric sample count changing, e.g. final `max / max samples (denoising)` to `(denoised)`. Keep the imperative publisher keyed by full text content rather than sample count only so status-only overlay updates are not skipped.
+
+2026-05-23: Path tracer final-frame denoising is now a user preference, not automatic. The top-viewport Denoiser toggle is disabled outside path tracer mode, defaults off, persists via `manifest3d:pathtracer-denoiser-enabled`, and only gates the final denoise pass after max samples; raw max-sample output should be labeled `(not denoised)` when the toggle is off.

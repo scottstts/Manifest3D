@@ -38,6 +38,7 @@ import { resetRendererViewportToCanvasCssSize } from './pathTracingRendererViewp
 export type PathTracingCanvasProps = {
   assets: readonly SceneAssetInstance[]
   cameraSnapshot: ViewportCameraSnapshot | null
+  denoiseEnabled: boolean
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
   leftPanelOcclusionWidth: number
   materialAnimationValuesByInstance: Readonly<Record<string, MaterialAnimationValues>>
@@ -80,6 +81,7 @@ const fallbackCameraSnapshot = createDefaultPathTracingCameraSnapshot()
 export function PathTracingCanvas({
   assets,
   cameraSnapshot,
+  denoiseEnabled,
   jointPreviewPosesByInstance,
   leftPanelOcclusionWidth,
   materialAnimationValuesByInstance,
@@ -104,6 +106,7 @@ export function PathTracingCanvas({
     height: 1,
     width: 1,
   })
+  const currentDenoiseEnabledRef = useRef(denoiseEnabled)
   const [viewportSize, setViewportSize] = useState<ViewportSize>({
     height: 1,
     width: 1,
@@ -295,6 +298,11 @@ export function PathTracingCanvas({
   ])
 
   useEffect(() => {
+    currentDenoiseEnabledRef.current = denoiseEnabled
+    requestPathTracingFrame(requestFrameRef)
+  }, [denoiseEnabled])
+
+  useEffect(() => {
     let isDisposed = false
 
     function requestFrame() {
@@ -339,8 +347,12 @@ export function PathTracingCanvas({
         pathTracingViewportConfig.maxSamples,
         Math.floor(runtime.pathTracer.samples),
       )
+      const finalSampleReached =
+        runtime.pathTracer.samples >= pathTracingViewportConfig.maxSamples
       const willUseDenoise = shouldUsePathTracingDenoise({
-        enabled: pathTracingViewportConfig.denoise.enabled,
+        enabled:
+          pathTracingViewportConfig.denoise.enabled &&
+          currentDenoiseEnabledRef.current,
         maxSamples: pathTracingViewportConfig.maxSamples,
         sampleCount: runtime.pathTracer.samples,
       })
@@ -354,13 +366,20 @@ export function PathTracingCanvas({
         })
       }
 
-      const textureMap = getPathTracingTexturePassMap(runtime)
+      const textureMap = getPathTracingTexturePassMap(
+        runtime,
+        currentDenoiseEnabledRef.current,
+      )
 
       resetRendererViewportToCanvasCssSize(runtime.renderer)
       runtime.texturePass.map = textureMap
       runtime.composer.render()
       publishPathTracingSampleCount({
-        denoiseStatus: willUseDenoise ? 'denoised' : 'idle',
+        denoiseStatus: willUseDenoise
+          ? 'denoised'
+          : finalSampleReached
+            ? 'not-denoised'
+            : 'idle',
         lastPublishedSampleCounterTextRef,
         sampleCount: displayedSampleCount,
         sampleCounterRef,
@@ -501,10 +520,13 @@ function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
   runtime.denoisePipeline.reset()
 }
 
-function getPathTracingTexturePassMap(runtime: PathTracingRuntime) {
+function getPathTracingTexturePassMap(
+  runtime: PathTracingRuntime,
+  denoiseEnabled: boolean,
+) {
   if (
     !shouldUsePathTracingDenoise({
-      enabled: pathTracingViewportConfig.denoise.enabled,
+      enabled: pathTracingViewportConfig.denoise.enabled && denoiseEnabled,
       maxSamples: pathTracingViewportConfig.maxSamples,
       sampleCount: runtime.pathTracer.samples,
     })

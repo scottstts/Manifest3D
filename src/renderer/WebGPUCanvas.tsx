@@ -44,6 +44,7 @@ type WebGPUCanvasProps = {
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
   materialAnimationValuesByInstance: Readonly<Record<string, MaterialAnimationValues>>
   leftPanelOcclusionWidth: number
+  pathTracingDenoiseEnabled: boolean
   renderMode: ViewportRenderMode
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
@@ -76,6 +77,7 @@ export function WebGPUCanvas({
   jointPreviewPosesByInstance,
   materialAnimationValuesByInstance,
   leftPanelOcclusionWidth,
+  pathTracingDenoiseEnabled,
   renderMode,
   rightPanelOcclusionWidth,
   selectedTargetId,
@@ -240,6 +242,7 @@ export function WebGPUCanvas({
             jointPreviewPosesByInstance={jointPreviewPosesByInstance}
             leftPanelOcclusionWidth={leftPanelOcclusionWidth}
             materialAnimationValuesByInstance={materialAnimationValuesByInstance}
+            denoiseEnabled={pathTracingDenoiseEnabled}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             worldMode={worldMode}
           />
