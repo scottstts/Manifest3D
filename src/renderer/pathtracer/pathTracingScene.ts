@@ -51,6 +51,7 @@ type MaterialWithCommonPbrFields = THREE.Material & {
 
 const defaultJointPoseValues: JointPoseValues = {}
 const defaultMaterialAnimationValues: MaterialAnimationValues = {}
+const pathTracingBloomRoleUserDataKey = 'manifest3dPathTracingBloomRole'
 
 export function rebuildPathTracingViewportScene({
   assets,
@@ -244,6 +245,7 @@ function addPathTracingAssetToScene(
   const centeredAsset = new THREE.Group()
 
   assetRoot.name = `${instance.asset.name} path tracing viewport root`
+  assetRoot.userData[pathTracingBloomRoleUserDataKey] = 'asset'
   assetRoot.position.set(
     instance.transform.position[0] + localPlacement.anchorOffset.x,
     instance.transform.position[1] + localPlacement.anchorOffset.y,
@@ -360,4 +362,18 @@ function isBlackColor(color: THREE.Color) {
 
 function isMeshLike(object: THREE.Object3D): object is MeshLike {
   return (object as MeshLike).isMesh === true
+}
+
+export function isPathTracingAssetBloomObject(object: THREE.Object3D) {
+  let current: THREE.Object3D | null = object
+
+  while (current) {
+    if (current.userData[pathTracingBloomRoleUserDataKey] === 'asset') {
+      return true
+    }
+
+    current = current.parent
+  }
+
+  return false
 }

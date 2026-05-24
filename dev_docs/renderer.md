@@ -49,6 +49,8 @@ Path tracer mode also has renderer-mode-specific navigation behavior: OrbitContr
 
 The path tracer mirrors the hidden WebGPU camera snapshot and applies the same `PerspectiveCamera.setViewOffset()` projection from `src/renderer/effectiveViewport.ts` as the default WebGPU viewport. Keep this projection-offset path shared between the two render modes; a prior path-tracer-specific look-target shift did not visually match default centering because it depended on the controls target rather than applying the same screen-space projection shift. Because the hidden WebGPU canvas runs on demand in path tracer mode, camera snapshots must be pushed directly from OrbitControls changes and selection-target snaps instead of relying only on passive frame polling.
 
+Path tracer bloom is asset-scoped. `src/renderer/pathtracer/pathTracingAssetBloomPipeline.ts` builds an asset visibility mask, blooms only the masked path-traced asset color, then composites that bloom over the full path-traced base before the output pass. The viewport world/background/ground should not feed bloom, even when light mode world surfaces are bright.
+
 ## Path Tracer Final-Frame Denoising
 
 The WebGL2 path tracer has a renderer-local final-frame denoise pass in `src/renderer/pathtracer/pathTracingDenoisePipeline.ts`. It is intentionally not part of the default WebGPU/TSL renderer and should stay isolated with the rest of the path tracer code.

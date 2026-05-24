@@ -9,7 +9,6 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { TexturePass } from 'three/examples/jsm/postprocessing/TexturePass.js'
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { WebGLPathTracer } from 'three-gpu-pathtracer'
 import type { JointPoseValues } from '../../engine/geometry/jointPoses'
 import type { MaterialAnimationValues } from '../../engine/geometry/materialAnimations'
@@ -22,6 +21,10 @@ import {
   createDefaultPathTracingCameraSnapshot,
 } from './pathTracingCamera'
 import { pathTracingViewportConfig } from './pathTracingConfig'
+import {
+  createPathTracingAssetBloomPipeline,
+  type PathTracingAssetBloomPipeline,
+} from './pathTracingAssetBloomPipeline'
 import {
   createPathTracingDenoisePipeline,
   shouldUsePathTracingDenoise,
@@ -47,7 +50,7 @@ export type PathTracingCanvasProps = {
 }
 
 type PathTracingRuntime = {
-  bloomPass: UnrealBloomPass
+  assetBloomPipeline: PathTracingAssetBloomPipeline
   camera: THREE.PerspectiveCamera
   composer: EffectComposer
   denoisePipeline: PathTracingDenoisePipeline
@@ -164,15 +167,10 @@ export function PathTracingCanvas({
     const scene = new THREE.Scene()
     const pathTracer = new WebGLPathTracer(renderer)
     const texturePass = new TexturePass()
-    const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(1, 1),
-      pathTracingViewportConfig.bloom.strength,
-      pathTracingViewportConfig.bloom.radius,
-      pathTracingViewportConfig.bloom.threshold,
-    )
     const outputPass = new OutputPass()
     const composer = new EffectComposer(renderer)
     const denoisePipeline = createPathTracingDenoisePipeline()
+    const assetBloomPipeline = createPathTracingAssetBloomPipeline()
 
     renderer.autoClear = true
     renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -196,11 +194,10 @@ export function PathTracingCanvas({
     )
 
     composer.addPass(texturePass)
-    composer.addPass(bloomPass)
     composer.addPass(outputPass)
 
     runtimeRef.current = {
-      bloomPass,
+      assetBloomPipeline,
       camera,
       composer,
       denoisePipeline,
@@ -219,8 +216,8 @@ export function PathTracingCanvas({
       pathTracer.dispose()
       composer.dispose()
       denoisePipeline.dispose()
+      assetBloomPipeline.dispose()
       texturePass.dispose()
-      bloomPass.dispose()
       outputPass.dispose()
       renderer.dispose()
     }
@@ -377,7 +374,12 @@ export function PathTracingCanvas({
       )
 
       resetRendererViewportToCanvasCssSize(runtime.renderer)
-      runtime.texturePass.map = texturePassResult.texture
+      runtime.texturePass.map = runtime.assetBloomPipeline.render({
+        camera: runtime.camera,
+        inputTexture: texturePassResult.texture,
+        renderer: runtime.renderer,
+        scene: runtime.scene,
+      })
       runtime.composer.render()
       publishPathTracingSampleCount({
         denoiseStatus:
@@ -461,7 +463,7 @@ function syncPathTracingRendererSize(
   runtime.renderer.setSize(width, height, false)
   runtime.composer.setPixelRatio(rendererDpr)
   runtime.composer.setSize(width, height)
-  runtime.bloomPass.setSize(width * rendererDpr, height * rendererDpr)
+  runtime.assetBloomPipeline.setSize(width, height, rendererDpr)
   runtime.denoisePipeline.setSize(width, height, rendererDpr)
 }
 

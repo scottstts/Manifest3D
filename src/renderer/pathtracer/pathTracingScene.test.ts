@@ -5,6 +5,7 @@ import type { SceneAssetInstance } from '../../engine/scene/sceneStore'
 import {
   convertManifestGroupMaterialsForPathTracing,
   createPathTracingStandardMaterial,
+  isPathTracingAssetBloomObject,
   rebuildPathTracingViewportScene,
 } from './pathTracingScene'
 
@@ -200,5 +201,30 @@ describe('rebuildPathTracingViewportScene', () => {
     expect(directionalLights[0]?.castShadow).toBe(true)
     expect(scene.environment?.isTexture).toBe(true)
     expect(scene.environmentIntensity).toBeGreaterThan(0)
+  })
+
+  it('marks asset objects, but not the viewport world, as bloom contributors', () => {
+    const scene = new THREE.Scene()
+    const asset = createOffsetFixtureAsset()
+
+    rebuildPathTracingViewportScene({
+      assets: [createSceneInstance(asset)],
+      jointPreviewPosesByInstance: {},
+      materialAnimationValuesByInstance: {},
+      scene,
+      worldMode: 'light',
+    })
+
+    const mesh = findFirstMesh(scene)
+    const ground = scene.children.find(
+      (object) => object.name === 'Manifest3D path tracing ground plane',
+    )
+
+    if (!mesh || !ground) {
+      throw new Error('Expected rebuilt scene to contain asset and ground.')
+    }
+
+    expect(isPathTracingAssetBloomObject(mesh)).toBe(true)
+    expect(isPathTracingAssetBloomObject(ground)).toBe(false)
   })
 })
