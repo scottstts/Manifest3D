@@ -35,6 +35,12 @@ import {
   shouldScheduleNextPathTracingFrame,
   type PathTracingSampleCounterDenoiseStatus,
 } from './pathTracingFrameScheduler'
+import {
+  getPathTracingMaxSampleOptions,
+  readPathTracingMaxSamplePreference,
+  writePathTracingMaxSamplePreference,
+  type PathTracingMaxSampleCount,
+} from './pathTracingSampleCountPreference'
 import { rebuildPathTracingViewportScene } from './pathTracingScene'
 import { resetRendererViewportToCanvasCssSize } from './pathTracingRendererViewport'
 
@@ -73,6 +79,7 @@ type SampleCounterHandle = {
 type PublishSampleCountOptions = {
   denoiseStatus?: PathTracingSampleCounterDenoiseStatus
   lastPublishedSampleCounterTextRef: MutableRefObject<string | null>
+  maxSamples: number
   sampleCount: number
   sampleCounterRef: MutableRefObject<SampleCounterHandle | null>
 }
@@ -98,13 +105,20 @@ export function PathTracingCanvas({
 }: PathTracingCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const sampleCounterRef = useRef<HTMLDivElement | null>(null)
+  const sampleMenuRef = useRef<HTMLDetailsElement | null>(null)
+  const sampleCounterRef = useRef<HTMLSpanElement | null>(null)
   const runtimeRef = useRef<PathTracingRuntime | null>(null)
   const sceneCleanupRef = useRef<(() => void) | null>(null)
   const needsSceneUploadRef = useRef(false)
   const lastPublishedSampleCounterTextRef = useRef<string | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const requestFrameRef = useRef<(() => void) | null>(null)
+  const sampleOptions = useMemo(() => getPathTracingMaxSampleOptions(), [])
+  const [selectedMaxSamples, setSelectedMaxSamples] =
+    useState<PathTracingMaxSampleCount>(() =>
+      readPathTracingMaxSamplePreference(),
+    )
+  const currentMaxSamplesRef = useRef<number>(selectedMaxSamples)
   const currentCameraSnapshotRef = useRef<ViewportCameraSnapshot>(
     cameraSnapshot ?? fallbackCameraSnapshot,
   )
@@ -236,6 +250,7 @@ export function PathTracingCanvas({
     resetPathTracingCameraAndSamples({
       lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth: currentLeftPanelOcclusionWidthRef.current,
+      maxSamples: currentMaxSamplesRef.current,
       rightPanelOcclusionWidth: currentRightPanelOcclusionWidthRef.current,
       runtime,
       sampleCounterRef,
@@ -259,6 +274,7 @@ export function PathTracingCanvas({
     resetPathTracingCameraAndSamples({
       lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth,
+      maxSamples: currentMaxSamplesRef.current,
       rightPanelOcclusionWidth,
       runtime,
       sampleCounterRef,
@@ -286,6 +302,7 @@ export function PathTracingCanvas({
     needsSceneUploadRef.current = true
     publishPathTracingSampleCount({
       lastPublishedSampleCounterTextRef,
+      maxSamples: currentMaxSamplesRef.current,
       sampleCount: 0,
       sampleCounterRef,
     })
@@ -303,6 +320,23 @@ export function PathTracingCanvas({
     currentDenoiseEnabledRef.current = denoiseEnabled
     requestPathTracingFrame(requestFrameRef)
   }, [denoiseEnabled])
+
+  useEffect(() => {
+    currentMaxSamplesRef.current = selectedMaxSamples
+    writePathTracingMaxSamplePreference(selectedMaxSamples)
+
+    const runtime = runtimeRef.current
+
+    publishPathTracingSampleCount({
+      lastPublishedSampleCounterTextRef,
+      maxSamples: selectedMaxSamples,
+      sampleCount: runtime
+        ? Math.min(selectedMaxSamples, Math.floor(runtime.pathTracer.samples))
+        : 0,
+      sampleCounterRef,
+    })
+    requestPathTracingFrame(requestFrameRef)
+  }, [selectedMaxSamples])
 
   useEffect(() => {
     let isDisposed = false
@@ -336,26 +370,28 @@ export function PathTracingCanvas({
         needsSceneUploadRef.current = false
         publishPathTracingSampleCount({
           lastPublishedSampleCounterTextRef,
+          maxSamples: currentMaxSamplesRef.current,
           sampleCount: 0,
           sampleCounterRef,
         })
       }
 
-      if (runtime.pathTracer.samples < pathTracingViewportConfig.maxSamples) {
+      const maxSamples = currentMaxSamplesRef.current
+
+      if (runtime.pathTracer.samples < maxSamples) {
         runtime.pathTracer.renderSample()
       }
 
       const displayedSampleCount = Math.min(
-        pathTracingViewportConfig.maxSamples,
+        maxSamples,
         Math.floor(runtime.pathTracer.samples),
       )
-      const finalSampleReached =
-        runtime.pathTracer.samples >= pathTracingViewportConfig.maxSamples
+      const finalSampleReached = runtime.pathTracer.samples >= maxSamples
       const willUseDenoise = shouldUsePathTracingDenoise({
         enabled:
           pathTracingViewportConfig.denoise.enabled &&
           currentDenoiseEnabledRef.current,
-        maxSamples: pathTracingViewportConfig.maxSamples,
+        maxSamples,
         sampleCount: runtime.pathTracer.samples,
       })
 
@@ -363,6 +399,7 @@ export function PathTracingCanvas({
         publishPathTracingSampleCount({
           denoiseStatus: 'denoising',
           lastPublishedSampleCounterTextRef,
+          maxSamples,
           sampleCount: displayedSampleCount,
           sampleCounterRef,
         })
@@ -371,6 +408,7 @@ export function PathTracingCanvas({
       const texturePassResult = getPathTracingTexturePassMap(
         runtime,
         currentDenoiseEnabledRef.current,
+        maxSamples,
       )
 
       resetRendererViewportToCanvasCssSize(runtime.renderer)
@@ -386,12 +424,14 @@ export function PathTracingCanvas({
           texturePassResult.denoiseStatus ??
           (finalSampleReached ? 'not-denoised' : 'idle'),
         lastPublishedSampleCounterTextRef,
+        maxSamples,
         sampleCount: displayedSampleCount,
         sampleCounterRef,
       })
 
       if (
         shouldScheduleNextPathTracingFrame({
+          maxSamples,
           needsSceneUpload: needsSceneUploadRef.current,
           sampleCount: runtime.pathTracer.samples,
         })
@@ -417,24 +457,66 @@ export function PathTracingCanvas({
   return (
     <div className="pathtracing-stage" ref={containerRef}>
       <canvas ref={canvasRef} />
-      <div
-        aria-live="polite"
+      <details
         className="pathtracing-sample-counter"
-        ref={sampleCounterRef}
-        role="status"
+        onBlur={(event) => {
+          const nextTarget = event.relatedTarget
+
+          if (
+            !(nextTarget instanceof Node) ||
+            !event.currentTarget.contains(nextTarget)
+          ) {
+            event.currentTarget.open = false
+          }
+        }}
+        ref={sampleMenuRef}
       >
-        {formatPathTracingSampleCounter(0)}
-      </div>
+        <summary
+          aria-haspopup="menu"
+          className="pathtracing-sample-counter__button"
+        >
+          <span aria-live="polite" ref={sampleCounterRef} role="status">
+            {formatPathTracingSampleCounter(0, selectedMaxSamples)}
+          </span>
+        </summary>
+        <div className="pathtracing-sample-counter__menu" role="menu">
+          {sampleOptions.map((option) => (
+            <button
+              aria-checked={option === selectedMaxSamples}
+              className={
+                option === selectedMaxSamples ? 'is-selected' : undefined
+              }
+              key={option}
+              onClick={() => {
+                setSelectedMaxSamples(option)
+
+                if (sampleMenuRef.current) {
+                  sampleMenuRef.current.open = false
+                }
+              }}
+              role="menuitemradio"
+              type="button"
+            >
+              {option} samples
+            </button>
+          ))}
+        </div>
+      </details>
     </div>
   )
 }
 function publishPathTracingSampleCount({
   denoiseStatus = 'idle',
   lastPublishedSampleCounterTextRef,
+  maxSamples,
   sampleCount,
   sampleCounterRef,
 }: PublishSampleCountOptions) {
-  const textContent = formatPathTracingSampleCounter(sampleCount, denoiseStatus)
+  const textContent = formatPathTracingSampleCounter(
+    sampleCount,
+    maxSamples,
+    denoiseStatus,
+  )
 
   if (lastPublishedSampleCounterTextRef.current === textContent) {
     return
@@ -471,6 +553,7 @@ function syncPathTracingRendererSize(
 function resetPathTracingCameraAndSamples({
   lastPublishedSampleCounterTextRef,
   leftPanelOcclusionWidth,
+  maxSamples,
   rightPanelOcclusionWidth,
   runtime,
   sampleCounterRef,
@@ -479,6 +562,7 @@ function resetPathTracingCameraAndSamples({
 }: {
   lastPublishedSampleCounterTextRef: MutableRefObject<string | null>
   leftPanelOcclusionWidth: number
+  maxSamples: number
   rightPanelOcclusionWidth: number
   runtime: PathTracingRuntime
   sampleCounterRef: MutableRefObject<SampleCounterHandle | null>
@@ -497,6 +581,7 @@ function resetPathTracingCameraAndSamples({
   runtime.denoisePipeline.reset()
   publishPathTracingSampleCount({
     lastPublishedSampleCounterTextRef,
+    maxSamples,
     sampleCount: 0,
     sampleCounterRef,
   })
@@ -528,11 +613,12 @@ function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
 function getPathTracingTexturePassMap(
   runtime: PathTracingRuntime,
   denoiseEnabled: boolean,
+  maxSamples: number,
 ): PathTracingTexturePassResult {
   if (
     !shouldUsePathTracingDenoise({
       enabled: pathTracingViewportConfig.denoise.enabled && denoiseEnabled,
-      maxSamples: pathTracingViewportConfig.maxSamples,
+      maxSamples,
       sampleCount: runtime.pathTracer.samples,
     })
   ) {

@@ -86,7 +86,11 @@
 }
 
 @media (max-width: 980px) {
-  .viewport-world-mode-control,
+  .viewport-world-mode-control {
+    top: 94px;
+    left: calc(14px + 274px + 28px);
+  }
+
   .viewport-world-mode-control.is-panel-collapsed {
     top: 94px;
     left: 20px;
@@ -158,7 +162,11 @@
 }
 
 @media (max-width: 980px) {
-  .viewport-render-mode-control,
+  .viewport-render-mode-control {
+    top: 94px;
+    left: calc(14px + 274px + 28px + 84px);
+  }
+
   .viewport-render-mode-control.is-panel-collapsed {
     top: 94px;
     left: 104px;
@@ -239,7 +247,11 @@
 }
 
 @media (max-width: 980px) {
-  .viewport-denoise-control,
+  .viewport-denoise-control {
+    top: 94px;
+    left: calc(14px + 274px + 28px + 84px + 84px);
+  }
+
   .viewport-denoise-control.is-panel-collapsed {
     top: 94px;
     left: 188px;

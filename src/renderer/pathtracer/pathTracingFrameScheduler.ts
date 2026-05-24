@@ -1,6 +1,5 @@
-import { pathTracingViewportConfig } from './pathTracingConfig'
-
 export type PathTracingFrameState = {
+  maxSamples: number
   needsSceneUpload: boolean
   sampleCount: number
 }
@@ -14,9 +13,10 @@ export type PathTracingSampleCounterDenoiseStatus =
 
 export function formatPathTracingSampleCounter(
   sampleCount: number,
+  maxSamples: number,
   denoiseStatus: PathTracingSampleCounterDenoiseStatus = 'idle',
 ) {
-  const baseText = `${sampleCount} / ${pathTracingViewportConfig.maxSamples} samples`
+  const baseText = `${sampleCount} / ${maxSamples} samples`
 
   if (denoiseStatus === 'denoising') {
     return `${baseText} (denoising)`
@@ -38,8 +38,9 @@ export function formatPathTracingSampleCounter(
 }
 
 export function shouldScheduleNextPathTracingFrame({
+  maxSamples,
   needsSceneUpload,
   sampleCount,
 }: PathTracingFrameState) {
-  return needsSceneUpload || sampleCount < pathTracingViewportConfig.maxSamples
+  return needsSceneUpload || sampleCount < maxSamples
 }

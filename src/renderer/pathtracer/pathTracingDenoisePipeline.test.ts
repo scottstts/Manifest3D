@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getPathTracingDenoiseNormalizedDepthPhi,
+  getPathTracingDenoiseObjectKey,
   getPathTracingDenoiseStepWidths,
   isRecoverablePathTracingDenoiseGlError,
   shouldUsePathTracingDenoise,
@@ -53,5 +55,24 @@ describe('isRecoverablePathTracingDenoiseGlError', () => {
   it('treats WebGL no-error as healthy and all concrete errors as denoise fallback triggers', () => {
     expect(isRecoverablePathTracingDenoiseGlError(0)).toBe(false)
     expect(isRecoverablePathTracingDenoiseGlError(1282)).toBe(true)
+  })
+})
+
+describe('path tracing denoise guide helpers', () => {
+  it('keeps object guide keys inside the non-background range', () => {
+    expect(getPathTracingDenoiseObjectKey(1)).toBeGreaterThan(0)
+    expect(getPathTracingDenoiseObjectKey(1)).toBeLessThanOrEqual(1)
+    expect(getPathTracingDenoiseObjectKey(1)).not.toBe(
+      getPathTracingDenoiseObjectKey(2),
+    )
+  })
+
+  it('normalizes world-space depth tolerance by camera far distance', () => {
+    expect(getPathTracingDenoiseNormalizedDepthPhi(0.08, 80)).toBeCloseTo(
+      0.001,
+    )
+    expect(getPathTracingDenoiseNormalizedDepthPhi(Number.NaN, 80)).toBe(
+      0.001,
+    )
   })
 })
