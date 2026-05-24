@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getPathTracingDenoiseDiffuseStepWidths,
   getPathTracingDenoiseNormalizedDepthPhi,
   getPathTracingDenoiseObjectKey,
   getPathTracingDenoiseStepWidths,
@@ -47,6 +48,11 @@ describe('getPathTracingDenoiseStepWidths', () => {
   it('clamps pass counts to the supported low-risk range', () => {
     expect(getPathTracingDenoiseStepWidths(-1)).toEqual([])
     expect(getPathTracingDenoiseStepWidths(99)).toEqual([1, 2, 4, 8])
+  })
+
+  it('allows one extra bounded low-frequency pass for diffuse illumination', () => {
+    expect(getPathTracingDenoiseDiffuseStepWidths(3)).toEqual([1, 2, 4, 8])
+    expect(getPathTracingDenoiseDiffuseStepWidths(99)).toEqual([1, 2, 4, 8])
   })
 })
 

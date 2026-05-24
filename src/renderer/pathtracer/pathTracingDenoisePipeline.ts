@@ -36,15 +36,19 @@ type MeshLike = THREE.Object3D & {
 type MaterialWithDenoiseGuideFields = THREE.Material & {
   alphaMap?: THREE.Texture | null
   alphaTest?: number
+  color?: THREE.Color
   emissive?: THREE.Color
   emissiveIntensity?: number
   map?: THREE.Texture | null
+  metalness?: number
+  metalnessMap?: THREE.Texture | null
   opacity: number
   roughness?: number
   transparent: boolean
 }
 
 type GuideMaterialPair = {
+  albedo: THREE.ShaderMaterial
   geometry: THREE.ShaderMaterial
   material: THREE.ShaderMaterial
 }
@@ -54,7 +58,7 @@ type MaterialSnapshot = {
   object: MeshLike
 }
 
-type GuideRenderMode = 'geometry' | 'material'
+type GuideRenderMode = 'albedo' | 'geometry' | 'material'
 
 const maxDenoisePasses = 4
 const denoiseObjectKeyModulo = 997
@@ -150,6 +154,31 @@ const guideMaterialFragmentShader = /* glsl */ `
   }
 `
 
+const guideAlbedoFragmentShader = /* glsl */ `
+  ${guidePreludeFragmentShader}
+  uniform sampler2D tMetalnessMap;
+  uniform float uMetalness;
+  uniform float uUsesMetalnessMap;
+  uniform vec3 uBaseColor;
+
+  void main() {
+    denoiseDiscardTransparentCutout();
+
+    vec3 albedo = uBaseColor;
+    float metalness = uMetalness;
+
+    if (uUsesColorMap > 0.5) {
+      albedo *= texture2D(tColorMap, vUv).rgb;
+    }
+
+    if (uUsesMetalnessMap > 0.5) {
+      metalness *= texture2D(tMetalnessMap, vUv).b;
+    }
+
+    gl_FragColor = vec4(max(albedo, vec3(0.0)), clamp(metalness, 0.0, 1.0));
+  }
+`
+
 const denoiseSharedShaderFunctions = /* glsl */ `
   float denoiseLuminance(vec3 color) {
     return dot(max(color, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
@@ -178,6 +207,28 @@ const denoiseSharedShaderFunctions = /* glsl */ `
       abs(centerMaterial.b - sampleMaterial.b) * 1.5;
 
     return exp(-materialDelta / max(materialPhi, 0.0001));
+  }
+
+  float denoiseAlbedoWeight(vec4 centerAlbedo, vec4 sampleAlbedo) {
+    float albedoDelta =
+      length(centerAlbedo.rgb - sampleAlbedo.rgb) +
+      abs(centerAlbedo.a - sampleAlbedo.a) * 1.4;
+
+    return exp(-albedoDelta / 0.28);
+  }
+
+  float denoiseDiffuseConfidence(vec4 materialGuide, vec4 albedoGuide, float guideEdge) {
+    float opaque = 1.0 - materialGuide.r;
+    float rough = smoothstep(0.45, 0.92, materialGuide.g);
+    float dielectric = 1.0 - smoothstep(0.04, 0.36, albedoGuide.a);
+    float nonEmissive = 1.0 - materialGuide.b;
+    float broadSurface = 1.0 - guideEdge;
+
+    return clamp(opaque * rough * dielectric * nonEmissive * broadSurface, 0.0, 1.0);
+  }
+
+  float denoiseTransparentInteriorConfidence(vec4 materialGuide, float guideEdge) {
+    return clamp(materialGuide.r * (1.0 - guideEdge) * (1.0 - materialGuide.b), 0.0, 1.0);
   }
 
   float denoiseDepthWeight(float centerDepth, float sampleDepth, float depthPhi, float depthRelativePhi) {
@@ -236,9 +287,15 @@ const denoiseSharedShaderFunctions = /* glsl */ `
     vec4 materialGuide,
     float guideEdge,
     float detailProtection,
+    float transparencyInteriorProtection,
     float transparencyProtection
   ) {
-    float transparentProtection = materialGuide.r * transparencyProtection;
+    float transparentEdge = smoothstep(0.12, 0.85, guideEdge);
+    float transparentProtection = materialGuide.r * mix(
+      transparencyInteriorProtection,
+      transparencyProtection,
+      transparentEdge
+    );
     float emissiveProtection = materialGuide.b * 0.85;
     float edgeProtection = guideEdge * detailProtection;
 
@@ -301,6 +358,7 @@ const fireflyClampFragmentShader = /* glsl */ `
 `
 
 const atrousFragmentShader = /* glsl */ `
+  uniform sampler2D tGuideAlbedo;
   uniform sampler2D tGuideGeometry;
   uniform sampler2D tGuideMaterial;
   uniform sampler2D tInput;
@@ -312,6 +370,7 @@ const atrousFragmentShader = /* glsl */ `
   uniform float uMaterialPhi;
   uniform float uNormalPhi;
   uniform float uStepWidth;
+  uniform float uTransparencyInteriorProtection;
   uniform float uTransparencyProtection;
   varying vec2 vUv;
 
@@ -333,6 +392,7 @@ const atrousFragmentShader = /* glsl */ `
 
   void main() {
     vec3 centerColor = texture2D(tInput, vUv).rgb;
+    vec4 centerAlbedo = texture2D(tGuideAlbedo, vUv);
     vec4 centerGeometry = texture2D(tGuideGeometry, vUv);
     vec4 centerMaterial = texture2D(tGuideMaterial, vUv);
     vec3 centerNormal = denoiseDecodeNormal(centerGeometry.rgb);
@@ -350,6 +410,7 @@ const atrousFragmentShader = /* glsl */ `
       centerMaterial,
       guideEdge,
       uDetailProtection,
+      uTransparencyInteriorProtection,
       uTransparencyProtection
     );
     vec3 sumColor = vec3(0.0);
@@ -360,6 +421,7 @@ const atrousFragmentShader = /* glsl */ `
         vec2 offset = vec2(float(x), float(y)) * uTexelSize * uStepWidth;
         vec2 sampleUv = clamp(vUv + offset, vec2(0.0), vec2(1.0));
         vec3 sampleColor = texture2D(tInput, sampleUv).rgb;
+        vec4 sampleAlbedo = texture2D(tGuideAlbedo, sampleUv);
         vec4 sampleGeometry = texture2D(tGuideGeometry, sampleUv);
         vec4 sampleMaterial = texture2D(tGuideMaterial, sampleUv);
         vec3 sampleNormal = denoiseDecodeNormal(sampleGeometry.rgb);
@@ -379,9 +441,10 @@ const atrousFragmentShader = /* glsl */ `
         );
         float objectWeight = denoiseObjectWeight(centerMaterial.a, sampleMaterial.a);
         float materialWeight = denoiseMaterialWeight(centerMaterial, sampleMaterial, uMaterialPhi);
+        float albedoWeight = denoiseAlbedoWeight(centerAlbedo, sampleAlbedo);
         float transparencyStepAttenuation = mix(
           1.0,
-          0.2,
+          0.34,
           max(centerMaterial.r, sampleMaterial.r) * smoothstep(1.0, 4.0, uStepWidth)
         );
         float weight =
@@ -391,6 +454,7 @@ const atrousFragmentShader = /* glsl */ `
           depthWeight *
           objectWeight *
           materialWeight *
+          albedoWeight *
           transparencyStepAttenuation;
 
         sumColor += sampleColor * weight;
@@ -403,9 +467,126 @@ const atrousFragmentShader = /* glsl */ `
   }
 `
 
+const diffuseIlluminationFragmentShader = /* glsl */ `
+  uniform sampler2D tGuideAlbedo;
+  uniform sampler2D tGuideGeometry;
+  uniform sampler2D tGuideMaterial;
+  uniform sampler2D tInput;
+  uniform vec2 uTexelSize;
+  uniform float uAlbedoFloor;
+  uniform float uDepthPhi;
+  uniform float uDepthRelativePhi;
+  uniform float uDiffuseBlend;
+  uniform float uDiffuseIlluminationPhi;
+  uniform float uMaterialPhi;
+  uniform float uNormalPhi;
+  uniform float uStepWidth;
+  varying vec2 vUv;
+
+  ${denoiseSharedShaderFunctions}
+
+  float denoiseDiffuseKernelWeight(int offset) {
+    int magnitude = abs(offset);
+
+    if (magnitude == 0) {
+      return 0.375;
+    }
+
+    if (magnitude == 1) {
+      return 0.25;
+    }
+
+    return 0.0625;
+  }
+
+  void main() {
+    vec3 centerColor = texture2D(tInput, vUv).rgb;
+    vec4 centerAlbedoGuide = texture2D(tGuideAlbedo, vUv);
+    vec4 centerGeometry = texture2D(tGuideGeometry, vUv);
+    vec4 centerMaterial = texture2D(tGuideMaterial, vUv);
+    vec3 centerAlbedo = max(centerAlbedoGuide.rgb, vec3(uAlbedoFloor));
+    vec3 centerNormal = denoiseDecodeNormal(centerGeometry.rgb);
+    vec3 centerIllumination = centerColor / centerAlbedo;
+    vec3 centerCompressedIllumination = denoiseCompressedColor(centerIllumination);
+    float centerDepth = centerGeometry.a;
+    float guideEdge = denoiseGeometryEdge(
+      tGuideGeometry,
+      tGuideMaterial,
+      vUv,
+      uTexelSize,
+      uDepthPhi,
+      uDepthRelativePhi
+    );
+    float diffuseConfidence = denoiseDiffuseConfidence(
+      centerMaterial,
+      centerAlbedoGuide,
+      guideEdge
+    );
+    vec3 sumIllumination = vec3(0.0);
+    float sumWeight = 0.0;
+
+    for (int y = -2; y <= 2; y++) {
+      for (int x = -2; x <= 2; x++) {
+        vec2 offset = vec2(float(x), float(y)) * uTexelSize * uStepWidth;
+        vec2 sampleUv = clamp(vUv + offset, vec2(0.0), vec2(1.0));
+        vec3 sampleColor = texture2D(tInput, sampleUv).rgb;
+        vec4 sampleAlbedoGuide = texture2D(tGuideAlbedo, sampleUv);
+        vec4 sampleGeometry = texture2D(tGuideGeometry, sampleUv);
+        vec4 sampleMaterial = texture2D(tGuideMaterial, sampleUv);
+        vec3 sampleAlbedo = max(sampleAlbedoGuide.rgb, vec3(uAlbedoFloor));
+        vec3 sampleNormal = denoiseDecodeNormal(sampleGeometry.rgb);
+        vec3 sampleIllumination = sampleColor / sampleAlbedo;
+        vec3 sampleCompressedIllumination = denoiseCompressedColor(sampleIllumination);
+        float spatialWeight = denoiseDiffuseKernelWeight(x) * denoiseDiffuseKernelWeight(y);
+        float illuminationWeight = exp(
+          -length(sampleCompressedIllumination - centerCompressedIllumination) /
+          max(uDiffuseIlluminationPhi, 0.0001)
+        );
+        float normalWeight = exp(
+          -(1.0 - max(dot(centerNormal, sampleNormal), 0.0)) / max(uNormalPhi, 0.0001)
+        );
+        float depthWeight = denoiseDepthWeight(
+          centerDepth,
+          sampleGeometry.a,
+          uDepthPhi,
+          uDepthRelativePhi
+        );
+        float objectWeight = denoiseObjectWeight(centerMaterial.a, sampleMaterial.a);
+        float materialWeight = denoiseMaterialWeight(centerMaterial, sampleMaterial, uMaterialPhi);
+        float albedoWeight = denoiseAlbedoWeight(centerAlbedoGuide, sampleAlbedoGuide);
+        float sampleDiffuseSurface =
+          (1.0 - sampleMaterial.r) *
+          smoothstep(0.45, 0.92, sampleMaterial.g) *
+          (1.0 - smoothstep(0.04, 0.36, sampleAlbedoGuide.a)) *
+          (1.0 - sampleMaterial.b);
+        float weight =
+          spatialWeight *
+          illuminationWeight *
+          normalWeight *
+          depthWeight *
+          objectWeight *
+          materialWeight *
+          albedoWeight *
+          sampleDiffuseSurface;
+
+        sumIllumination += sampleIllumination * weight;
+        sumWeight += weight;
+      }
+    }
+
+    vec3 filteredIllumination = sumIllumination / max(sumWeight, 0.0001);
+    vec3 diffuseColor = filteredIllumination * centerAlbedo;
+    float blendAmount = diffuseConfidence * uDiffuseBlend;
+
+    gl_FragColor = vec4(mix(centerColor, diffuseColor, blendAmount), 1.0);
+  }
+`
+
 const finalCompositeFragmentShader = /* glsl */ `
+  uniform sampler2D tDiffuse;
   uniform sampler2D tFiltered;
   uniform sampler2D tFirefly;
+  uniform sampler2D tGuideAlbedo;
   uniform sampler2D tGuideGeometry;
   uniform sampler2D tGuideMaterial;
   uniform sampler2D tRaw;
@@ -413,6 +594,8 @@ const finalCompositeFragmentShader = /* glsl */ `
   uniform float uDepthPhi;
   uniform float uDepthRelativePhi;
   uniform float uDetailProtection;
+  uniform float uResidualBlend;
+  uniform float uTransparencyInteriorProtection;
   uniform float uTransparencyProtection;
   varying vec2 vUv;
 
@@ -422,6 +605,8 @@ const finalCompositeFragmentShader = /* glsl */ `
     vec3 rawColor = texture2D(tRaw, vUv).rgb;
     vec3 fireflyColor = texture2D(tFirefly, vUv).rgb;
     vec3 filteredColor = texture2D(tFiltered, vUv).rgb;
+    vec3 diffuseColor = texture2D(tDiffuse, vUv).rgb;
+    vec4 albedoGuide = texture2D(tGuideAlbedo, vUv);
     vec4 materialGuide = texture2D(tGuideMaterial, vUv);
     float guideEdge = denoiseGeometryEdge(
       tGuideGeometry,
@@ -435,11 +620,17 @@ const finalCompositeFragmentShader = /* glsl */ `
       materialGuide,
       guideEdge,
       uDetailProtection,
+      uTransparencyInteriorProtection,
       uTransparencyProtection
     );
+    float diffuseConfidence = denoiseDiffuseConfidence(materialGuide, albedoGuide, guideEdge);
+    float residual = length(denoiseCompressedColor(fireflyColor) - denoiseCompressedColor(filteredColor));
+    float residualConfidence = smoothstep(0.025, 0.22, residual);
+    float diffuseBlend = diffuseConfidence * (0.35 + residualConfidence * 0.65) * uResidualBlend;
+    vec3 denoisedColor = mix(filteredColor, diffuseColor, diffuseBlend);
     vec3 protectedColor = mix(fireflyColor, rawColor, materialGuide.b);
 
-    gl_FragColor = vec4(mix(filteredColor, protectedColor, rawProtection), 1.0);
+    gl_FragColor = vec4(mix(denoisedColor, protectedColor, rawProtection), 1.0);
   }
 `
 
@@ -469,6 +660,7 @@ export function createPathTracingDenoisePipeline(
     fragmentShader: atrousFragmentShader,
     name: 'Manifest3D path tracing denoise adaptive à-trous material',
     uniforms: {
+      tGuideAlbedo: { value: null as THREE.Texture | null },
       tGuideGeometry: { value: null as THREE.Texture | null },
       tGuideMaterial: { value: null as THREE.Texture | null },
       tInput: { value: null as THREE.Texture | null },
@@ -480,7 +672,32 @@ export function createPathTracingDenoisePipeline(
       uNormalPhi: { value: config.normalPhi },
       uStepWidth: { value: 1 },
       uTexelSize: { value: new THREE.Vector2(1, 1) },
+      uTransparencyInteriorProtection: {
+        value: config.transparencyInteriorProtection,
+      },
       uTransparencyProtection: { value: config.transparencyProtection },
+    },
+    vertexShader: fullScreenVertexShader,
+  })
+  const diffuseMaterial = new THREE.ShaderMaterial({
+    depthTest: false,
+    depthWrite: false,
+    fragmentShader: diffuseIlluminationFragmentShader,
+    name: 'Manifest3D path tracing denoise diffuse illumination material',
+    uniforms: {
+      tGuideAlbedo: { value: null as THREE.Texture | null },
+      tGuideGeometry: { value: null as THREE.Texture | null },
+      tGuideMaterial: { value: null as THREE.Texture | null },
+      tInput: { value: null as THREE.Texture | null },
+      uAlbedoFloor: { value: config.albedoFloor },
+      uDepthPhi: { value: config.depthPhi },
+      uDepthRelativePhi: { value: config.depthRelativePhi },
+      uDiffuseBlend: { value: config.diffuseBlend },
+      uDiffuseIlluminationPhi: { value: config.diffuseIlluminationPhi },
+      uMaterialPhi: { value: config.materialPhi },
+      uNormalPhi: { value: config.normalPhi },
+      uStepWidth: { value: 1 },
+      uTexelSize: { value: new THREE.Vector2(1, 1) },
     },
     vertexShader: fullScreenVertexShader,
   })
@@ -490,15 +707,21 @@ export function createPathTracingDenoisePipeline(
     fragmentShader: finalCompositeFragmentShader,
     name: 'Manifest3D path tracing denoise final detail composite material',
     uniforms: {
+      tDiffuse: { value: null as THREE.Texture | null },
       tFiltered: { value: null as THREE.Texture | null },
       tFirefly: { value: null as THREE.Texture | null },
+      tGuideAlbedo: { value: null as THREE.Texture | null },
       tGuideGeometry: { value: null as THREE.Texture | null },
       tGuideMaterial: { value: null as THREE.Texture | null },
       tRaw: { value: null as THREE.Texture | null },
       uDepthPhi: { value: config.depthPhi },
       uDepthRelativePhi: { value: config.depthRelativePhi },
       uDetailProtection: { value: config.detailProtection },
+      uResidualBlend: { value: config.residualBlend },
       uTexelSize: { value: new THREE.Vector2(1, 1) },
+      uTransparencyInteriorProtection: {
+        value: config.transparencyInteriorProtection,
+      },
       uTransparencyProtection: { value: config.transparencyProtection },
     },
     vertexShader: fullScreenVertexShader,
@@ -510,16 +733,22 @@ export function createPathTracingDenoisePipeline(
   let targetHeight = 1
   let hasPipelineError = false
   const guideMaterials = new Map<THREE.Material, GuideMaterialPair>()
+  const guideAlbedoTarget = createGuideTarget(targetWidth, targetHeight, 'albedo')
   const guideGeometryTarget = createGuideTarget(targetWidth, targetHeight, 'geometry')
   const guideMaterialTarget = createGuideTarget(targetWidth, targetHeight, 'material')
+  const diffuseTargetA = createColorTarget(targetWidth, targetHeight, 'diffuse-a')
+  const diffuseTargetB = createColorTarget(targetWidth, targetHeight, 'diffuse-b')
   const fireflyTarget = createColorTarget(targetWidth, targetHeight, 'firefly')
   const pingTargetA = createColorTarget(targetWidth, targetHeight, 'ping-a')
   const pingTargetB = createColorTarget(targetWidth, targetHeight, 'ping-b')
   const compositeTarget = createColorTarget(targetWidth, targetHeight, 'composite')
 
   function disposeTargets() {
+    guideAlbedoTarget.dispose()
     guideGeometryTarget.dispose()
     guideMaterialTarget.dispose()
+    diffuseTargetA.dispose()
+    diffuseTargetB.dispose()
     fireflyTarget.dispose()
     pingTargetA.dispose()
     pingTargetB.dispose()
@@ -528,6 +757,7 @@ export function createPathTracingDenoisePipeline(
 
   function disposeGuideMaterials() {
     for (const pair of guideMaterials.values()) {
+      pair.albedo.dispose()
       pair.geometry.dispose()
       pair.material.dispose()
     }
@@ -545,14 +775,18 @@ export function createPathTracingDenoisePipeline(
 
     targetWidth = nextWidth
     targetHeight = nextHeight
+    guideAlbedoTarget.setSize(targetWidth, targetHeight)
     guideGeometryTarget.setSize(targetWidth, targetHeight)
     guideMaterialTarget.setSize(targetWidth, targetHeight)
+    diffuseTargetA.setSize(targetWidth, targetHeight)
+    diffuseTargetB.setSize(targetWidth, targetHeight)
     fireflyTarget.setSize(targetWidth, targetHeight)
     pingTargetA.setSize(targetWidth, targetHeight)
     pingTargetB.setSize(targetWidth, targetHeight)
     compositeTarget.setSize(targetWidth, targetHeight)
     fireflyMaterial.uniforms.uTexelSize.value.set(1 / targetWidth, 1 / targetHeight)
     atrousMaterial.uniforms.uTexelSize.value.set(1 / targetWidth, 1 / targetHeight)
+    diffuseMaterial.uniforms.uTexelSize.value.set(1 / targetWidth, 1 / targetHeight)
     finalCompositeMaterial.uniforms.uTexelSize.value.set(
       1 / targetWidth,
       1 / targetHeight,
@@ -569,6 +803,7 @@ export function createPathTracingDenoisePipeline(
     disposeGuideMaterials()
     fireflyMaterial.dispose()
     atrousMaterial.dispose()
+    diffuseMaterial.dispose()
     finalCompositeMaterial.dispose()
     quad.geometry.dispose()
   }
@@ -611,6 +846,13 @@ export function createPathTracingDenoisePipeline(
         return createDenoiseErrorResult(inputTexture)
       }
 
+      renderGuidePass(renderer, scene, camera, guideAlbedoTarget, 'albedo')
+
+      if (didWebGlPassFail(renderer)) {
+        hasPipelineError = true
+        return createDenoiseErrorResult(inputTexture)
+      }
+
       fireflyMaterial.uniforms.tGuideMaterial.value = guideMaterialTarget.texture
       fireflyMaterial.uniforms.tInput.value = inputTexture
       renderFullscreenPass(renderer, fireflyMaterial, fireflyTarget)
@@ -620,6 +862,31 @@ export function createPathTracingDenoisePipeline(
         return createDenoiseErrorResult(inputTexture)
       }
 
+      let diffuseReadTexture = fireflyTarget.texture
+      let diffuseWriteTarget = diffuseTargetA
+
+      diffuseMaterial.uniforms.tGuideAlbedo.value = guideAlbedoTarget.texture
+      diffuseMaterial.uniforms.tGuideGeometry.value = guideGeometryTarget.texture
+      diffuseMaterial.uniforms.tGuideMaterial.value = guideMaterialTarget.texture
+
+      for (const stepWidth of getPathTracingDenoiseDiffuseStepWidths(
+        config.atrousPasses,
+      )) {
+        diffuseMaterial.uniforms.tInput.value = diffuseReadTexture
+        diffuseMaterial.uniforms.uStepWidth.value = stepWidth
+        renderFullscreenPass(renderer, diffuseMaterial, diffuseWriteTarget)
+
+        if (didWebGlPassFail(renderer)) {
+          hasPipelineError = true
+          return createDenoiseErrorResult(inputTexture)
+        }
+
+        diffuseReadTexture = diffuseWriteTarget.texture
+        diffuseWriteTarget =
+          diffuseWriteTarget === diffuseTargetA ? diffuseTargetB : diffuseTargetA
+      }
+
+      atrousMaterial.uniforms.tGuideAlbedo.value = guideAlbedoTarget.texture
       atrousMaterial.uniforms.tGuideGeometry.value = guideGeometryTarget.texture
       atrousMaterial.uniforms.tGuideMaterial.value = guideMaterialTarget.texture
 
@@ -640,8 +907,10 @@ export function createPathTracingDenoisePipeline(
         writeTarget = writeTarget === pingTargetA ? pingTargetB : pingTargetA
       }
 
+      finalCompositeMaterial.uniforms.tDiffuse.value = diffuseReadTexture
       finalCompositeMaterial.uniforms.tFiltered.value = readTexture
       finalCompositeMaterial.uniforms.tFirefly.value = fireflyTarget.texture
+      finalCompositeMaterial.uniforms.tGuideAlbedo.value = guideAlbedoTarget.texture
       finalCompositeMaterial.uniforms.tGuideGeometry.value =
         guideGeometryTarget.texture
       finalCompositeMaterial.uniforms.tGuideMaterial.value =
@@ -674,11 +943,13 @@ export function createPathTracingDenoisePipeline(
     )
 
     for (const pair of guideMaterials.values()) {
+      pair.albedo.uniforms.uCameraFar.value = camera.far
       pair.geometry.uniforms.uCameraFar.value = camera.far
       pair.material.uniforms.uCameraFar.value = camera.far
     }
 
     atrousMaterial.uniforms.uDepthPhi.value = normalizedDepthPhi
+    diffuseMaterial.uniforms.uDepthPhi.value = normalizedDepthPhi
     finalCompositeMaterial.uniforms.uDepthPhi.value = normalizedDepthPhi
   }
 
@@ -694,6 +965,8 @@ export function createPathTracingDenoisePipeline(
     try {
       if (mode === 'geometry') {
         renderer.setClearColor(0x8080ff, 1)
+      } else if (mode === 'albedo') {
+        renderer.setClearColor(0xffffff, 1)
       } else {
         renderer.setClearColor(new THREE.Color(0, 1, 0), 0)
       }
@@ -741,7 +1014,11 @@ export function createPathTracingDenoisePipeline(
       guideMaterials.set(sourceMaterial, pair)
     }
 
-    return mode === 'geometry' ? pair.geometry : pair.material
+    if (mode === 'geometry') {
+      return pair.geometry
+    }
+
+    return mode === 'albedo' ? pair.albedo : pair.material
   }
 
   function renderFullscreenPass(
@@ -789,6 +1066,10 @@ export function getPathTracingDenoiseStepWidths(passCount: number) {
   )
 
   return Array.from({ length: normalizedPassCount }, (_, index) => 2 ** index)
+}
+
+export function getPathTracingDenoiseDiffuseStepWidths(passCount: number) {
+  return getPathTracingDenoiseStepWidths(passCount + 1)
 }
 
 export function getPathTracingDenoiseObjectKey(objectId: number) {
@@ -850,7 +1131,27 @@ function createGuideMaterialPair(
     vertexShader: guideVertexShader,
     visible: source.visible,
   })
+  const albedoMaterial = new THREE.ShaderMaterial({
+    depthTest: source.depthTest,
+    depthWrite: true,
+    fragmentShader: guideAlbedoFragmentShader,
+    name: 'Manifest3D path tracing denoise albedo guide material',
+    side: source.side,
+    transparent: false,
+    uniforms: THREE.UniformsUtils.clone({
+      ...commonUniforms,
+      tMetalnessMap: { value: source.metalnessMap ?? null },
+      uBaseColor: { value: getDenoiseGuideBaseColor(source) },
+      uMetalness: { value: source.metalness ?? 0 },
+      uUsesMetalnessMap: { value: source.metalnessMap ? 1 : 0 },
+    }),
+    vertexShader: guideVertexShader,
+    visible: source.visible,
+  })
 
+  albedoMaterial.onBeforeRender = (_renderer, _scene, camera) => {
+    albedoMaterial.uniforms.uCameraFar.value = getCameraFar(camera)
+  }
   geometryMaterial.onBeforeRender = (_renderer, _scene, camera) => {
     geometryMaterial.uniforms.uCameraFar.value = getCameraFar(camera)
   }
@@ -862,6 +1163,7 @@ function createGuideMaterialPair(
   }
 
   return {
+    albedo: albedoMaterial,
     geometry: geometryMaterial,
     material: materialMaterial,
   }
@@ -877,6 +1179,10 @@ function createGuideUniforms(source: MaterialWithDenoiseGuideFields) {
     uUsesAlphaMap: { value: source.alphaMap ? 1 : 0 },
     uUsesColorMap: { value: source.map ? 1 : 0 },
   }
+}
+
+function getDenoiseGuideBaseColor(source: MaterialWithDenoiseGuideFields) {
+  return source.color?.clone() ?? new THREE.Color(1, 1, 1)
 }
 
 function getEmissiveProtection(source: MaterialWithDenoiseGuideFields) {
