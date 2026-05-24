@@ -76,6 +76,11 @@ type PublishSampleCountOptions = {
 
 type RequestFrameRef = MutableRefObject<(() => void) | null>
 
+type PathTracingTexturePassResult = {
+  denoiseStatus?: PathTracingSampleCounterDenoiseStatus
+  texture: THREE.Texture
+}
+
 const fallbackCameraSnapshot = createDefaultPathTracingCameraSnapshot()
 
 export function PathTracingCanvas({
@@ -366,20 +371,18 @@ export function PathTracingCanvas({
         })
       }
 
-      const textureMap = getPathTracingTexturePassMap(
+      const texturePassResult = getPathTracingTexturePassMap(
         runtime,
         currentDenoiseEnabledRef.current,
       )
 
       resetRendererViewportToCanvasCssSize(runtime.renderer)
-      runtime.texturePass.map = textureMap
+      runtime.texturePass.map = texturePassResult.texture
       runtime.composer.render()
       publishPathTracingSampleCount({
-        denoiseStatus: willUseDenoise
-          ? 'denoised'
-          : finalSampleReached
-            ? 'not-denoised'
-            : 'idle',
+        denoiseStatus:
+          texturePassResult.denoiseStatus ??
+          (finalSampleReached ? 'not-denoised' : 'idle'),
         lastPublishedSampleCounterTextRef,
         sampleCount: displayedSampleCount,
         sampleCounterRef,
@@ -523,7 +526,7 @@ function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
 function getPathTracingTexturePassMap(
   runtime: PathTracingRuntime,
   denoiseEnabled: boolean,
-) {
+): PathTracingTexturePassResult {
   if (
     !shouldUsePathTracingDenoise({
       enabled: pathTracingViewportConfig.denoise.enabled && denoiseEnabled,
@@ -531,15 +534,23 @@ function getPathTracingTexturePassMap(
       sampleCount: runtime.pathTracer.samples,
     })
   ) {
-    return runtime.pathTracer.target.texture
+    return {
+      texture: runtime.pathTracer.target.texture,
+    }
   }
 
-  return runtime.denoisePipeline.render({
+  const result = runtime.denoisePipeline.render({
     camera: runtime.camera,
     inputTexture: runtime.pathTracer.target.texture,
     renderer: runtime.renderer,
     scene: runtime.scene,
   })
+
+  return {
+    denoiseStatus:
+      result.status === 'denoised' ? 'denoised' : 'not-denoised-error',
+    texture: result.texture,
+  }
 }
 
 

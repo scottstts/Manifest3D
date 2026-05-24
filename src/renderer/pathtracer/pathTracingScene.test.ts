@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import * as THREE from 'three'
 import type { ManifestAsset } from '../../engine/schema/manifestTypes'
 import type { SceneAssetInstance } from '../../engine/scene/sceneStore'
 import {
+  convertManifestGroupMaterialsForPathTracing,
   createPathTracingStandardMaterial,
   rebuildPathTracingViewportScene,
 } from './pathTracingScene'
@@ -44,6 +45,26 @@ describe('createPathTracingStandardMaterial', () => {
 
     expect(converted.emissive.getHexString()).toBe('000000')
     expect(converted.emissiveIntensity).toBe(0)
+  })
+
+  it('disposes replaced source materials after converting mesh materials', () => {
+    const source = new THREE.MeshStandardMaterial({ color: '#ffffff' })
+    const disposeSource = vi.spyOn(source, 'dispose')
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), source)
+    const group = new THREE.Group()
+
+    group.add(mesh)
+
+    const convertedMaterials = convertManifestGroupMaterialsForPathTracing(group)
+
+    expect(disposeSource).toHaveBeenCalledOnce()
+    expect(mesh.material).not.toBe(source)
+
+    for (const material of convertedMaterials) {
+      material.dispose()
+    }
+
+    mesh.geometry.dispose()
   })
 })
 

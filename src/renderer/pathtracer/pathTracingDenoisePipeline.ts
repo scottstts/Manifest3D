@@ -5,7 +5,7 @@ export type PathTracingDenoiseConfig = typeof pathTracingViewportConfig.denoise
 
 export type PathTracingDenoisePipeline = {
   dispose: () => void
-  render: (options: PathTracingDenoiseRenderOptions) => THREE.Texture
+  render: (options: PathTracingDenoiseRenderOptions) => PathTracingDenoiseResult
   reset: () => void
   setSize: (width: number, height: number, pixelRatio: number) => void
 }
@@ -21,6 +21,11 @@ export type PathTracingDenoiseReadiness = {
   enabled: boolean
   maxSamples: number
   sampleCount: number
+}
+
+export type PathTracingDenoiseResult = {
+  status: 'denoised' | 'error'
+  texture: THREE.Texture
 }
 
 const fullScreenVertexShader = /* glsl */ `
@@ -248,9 +253,9 @@ export function createPathTracingDenoisePipeline(
     inputTexture,
     renderer,
     scene,
-  }: PathTracingDenoiseRenderOptions) {
+  }: PathTracingDenoiseRenderOptions): PathTracingDenoiseResult {
     if (hasPipelineError) {
-      return inputTexture
+      return createDenoiseErrorResult(inputTexture)
     }
 
     const previousRenderTarget = renderer.getRenderTarget()
@@ -272,7 +277,7 @@ export function createPathTracingDenoisePipeline(
 
       if (didWebGlPassFail(renderer)) {
         hasPipelineError = true
-        return inputTexture
+        return createDenoiseErrorResult(inputTexture)
       }
 
       fireflyMaterial.uniforms.tInput.value = inputTexture
@@ -280,7 +285,7 @@ export function createPathTracingDenoisePipeline(
 
       if (didWebGlPassFail(renderer)) {
         hasPipelineError = true
-        return inputTexture
+        return createDenoiseErrorResult(inputTexture)
       }
 
       atrousMaterial.uniforms.tNormal.value = normalDepthTarget.texture
@@ -296,14 +301,17 @@ export function createPathTracingDenoisePipeline(
 
         if (didWebGlPassFail(renderer)) {
           hasPipelineError = true
-          return inputTexture
+          return createDenoiseErrorResult(inputTexture)
         }
 
         readTexture = writeTarget.texture
         writeTarget = writeTarget === pingTargetA ? pingTargetB : pingTargetA
       }
 
-      return readTexture
+      return {
+        status: 'denoised',
+        texture: readTexture,
+      }
     } finally {
       scene.overrideMaterial = previousOverrideMaterial
       renderer.setRenderTarget(previousRenderTarget)
@@ -328,6 +336,13 @@ export function createPathTracingDenoisePipeline(
     render,
     reset,
     setSize,
+  }
+}
+
+function createDenoiseErrorResult(texture: THREE.Texture): PathTracingDenoiseResult {
+  return {
+    status: 'error',
+    texture,
   }
 }
 

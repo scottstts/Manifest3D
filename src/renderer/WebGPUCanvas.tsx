@@ -222,6 +222,7 @@ export function WebGPUCanvas({
             leftPanelOcclusionWidth={leftPanelOcclusionWidth}
             onCameraQuaternionChange={handleCameraQuaternionChange}
             onCameraSnapshotChange={handleCameraSnapshotChange}
+            renderMode={renderMode}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             selectedTargetId={selectedTargetId}
             selectionRevision={selectionRevision}

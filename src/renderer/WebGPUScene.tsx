@@ -28,7 +28,14 @@ import {
   getViewportCameraSnapshotSignature,
   type ViewportCameraSnapshot,
 } from './viewportCamera'
-import type { ViewportNavigationBehavior } from './viewportRenderMode'
+import type {
+  ViewportNavigationBehavior,
+  ViewportRenderMode,
+} from './viewportRenderMode'
+import {
+  createSelectionFocusRequestKey,
+  shouldSelectAssetFromViewportClick,
+} from './viewportSelection'
 import type { TransformTool } from './WebGPUCanvas'
 import {
   getViewportWorldEnvironment,
@@ -47,6 +54,7 @@ type WebGPUSceneProps = {
   leftPanelOcclusionWidth: number
   onCameraQuaternionChange: () => void
   onCameraSnapshotChange?: (snapshot: ViewportCameraSnapshot) => void
+  renderMode: ViewportRenderMode
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
   selectionRevision: number
@@ -116,6 +124,7 @@ export function WebGPUScene({
   leftPanelOcclusionWidth,
   onCameraQuaternionChange,
   onCameraSnapshotChange,
+  renderMode,
   rightPanelOcclusionWidth,
   selectedTargetId,
   selectionRevision,
@@ -140,6 +149,7 @@ export function WebGPUScene({
   const selectedTransformHandle = selectedTargetId
     ? assetGroupHandles.get(selectedTargetId) ?? null
     : null
+  const isPathTracingOverlay = renderMode === 'pathtracer'
   const orbitDistanceLimits = computeOrbitDistanceLimits(
     assetGroupHandles,
     selectedTargetId,
@@ -204,12 +214,19 @@ export function WebGPUScene({
         onTransformEnded={onTransformEnded}
         onTransformStarted={onTransformStarted}
       />
-      <SceneEffectsPipeline object={selectedTransformHandle?.group ?? null} />
-      <ViewportWorld mode={worldMode} />
+      {isPathTracingOverlay ? (
+        <PathTracingInteractionWorld />
+      ) : (
+        <>
+          <SceneEffectsPipeline object={selectedTransformHandle?.group ?? null} />
+          <ViewportWorld mode={worldMode} />
+        </>
+      )}
 
       {assets.map((asset) => (
         <ManifestAssetObject
           instance={asset}
+          isInteractionProxy={isPathTracingOverlay}
           isSelected={asset.instanceId === selectedTargetId}
           jointPreviewPoses={
             jointPreviewPosesByInstance[asset.instanceId] ?? emptyJointPoseValues
@@ -241,6 +258,23 @@ export function WebGPUScene({
       />
     </>
   )
+}
+
+function PathTracingInteractionWorld() {
+  const invalidate = useThree((state) => state.invalidate)
+  const scene = useThree((state) => state.scene)
+
+  useEffect(() => {
+    clearSceneWorld(scene)
+    invalidate()
+  }, [invalidate, scene])
+
+  return null
+}
+
+function clearSceneWorld(scene: THREE.Scene) {
+  scene.background = null
+  scene.fog = null
 }
 
 type ViewportWorldProps = {
@@ -304,6 +338,7 @@ function ViewportWorld({ mode }: ViewportWorldProps) {
 
 type ManifestAssetObjectProps = {
   instance: SceneAssetInstance
+  isInteractionProxy: boolean
   isSelected: boolean
   jointPreviewPoses: JointPoseValues
   materialAnimationValues: MaterialAnimationValues
@@ -321,6 +356,7 @@ type ManifestAssetObjectProps = {
 
 function ManifestAssetObject({
   instance,
+  isInteractionProxy,
   isSelected,
   jointPreviewPoses,
   materialAnimationValues,
@@ -342,6 +378,11 @@ function ManifestAssetObject({
     applyBuiltManifestMaterialAnimations(builtAsset, materialAnimationValues)
     invalidate()
   }, [builtAsset, invalidate, jointPreviewPoses, materialAnimationValues])
+
+  useEffect(() => {
+    setObjectMaterialColorWrite(builtAsset.group, !isInteractionProxy)
+    invalidate()
+  }, [builtAsset.group, invalidate, isInteractionProxy])
 
   useEffect(() => {
     const group = groupRef.current
@@ -372,6 +413,10 @@ function ManifestAssetObject({
 
   function handleClick(event: ThreeEvent<MouseEvent>) {
     event.stopPropagation()
+
+    if (!shouldSelectAssetFromViewportClick(event.delta)) {
+      return
+    }
 
     if (event.shiftKey) {
       onSelectionCleared()
@@ -506,11 +551,24 @@ function SelectionCameraTarget({
 }: SelectionCameraTargetProps) {
   const invalidate = useThree((state) => state.invalidate)
   const isSnappingRef = useRef(false)
+  const lastFocusRequestKeyRef = useRef<string | null>(null)
   const targetRef = useRef(new THREE.Vector3(0, 0, -0.2))
 
   useEffect(() => {
     if (!selectedTargetId) {
       isSnappingRef.current = false
+      lastFocusRequestKeyRef.current = null
+      invalidate()
+      return
+    }
+
+    const focusRequestKey = createSelectionFocusRequestKey({
+      selectedTargetId,
+      selectionRevision,
+      snapImmediately,
+    })
+
+    if (lastFocusRequestKeyRef.current === focusRequestKey) {
       invalidate()
       return
     }
@@ -526,6 +584,7 @@ function SelectionCameraTarget({
 
     if (!bounds.isEmpty()) {
       bounds.getCenter(targetRef.current)
+      lastFocusRequestKeyRef.current = focusRequestKey
 
       if (snapImmediately && controlsRef.current) {
         controlsRef.current.target.copy(targetRef.current)
@@ -858,6 +917,40 @@ function addVector3(
 
 function negateVector3(vector: THREE.Vector3): [number, number, number] {
   return [-vector.x, -vector.y, -vector.z]
+}
+
+function setObjectMaterialColorWrite(
+  object: THREE.Object3D,
+  colorWrite: boolean,
+) {
+  const materials = new Set<THREE.Material>()
+
+  object.traverse((child) => {
+    if (!isMesh(child)) {
+      return
+    }
+
+    const meshMaterials = Array.isArray(child.material)
+      ? child.material
+      : [child.material]
+
+    for (const material of meshMaterials) {
+      materials.add(material)
+    }
+  })
+
+  for (const material of materials) {
+    if (material.colorWrite === colorWrite) {
+      continue
+    }
+
+    material.colorWrite = colorWrite
+    material.needsUpdate = true
+  }
+}
+
+function isMesh(object: THREE.Object3D): object is THREE.Mesh {
+  return (object as THREE.Mesh).isMesh === true
 }
 
 function computeOrbitDistanceLimits(

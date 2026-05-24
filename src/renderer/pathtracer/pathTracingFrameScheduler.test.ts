@@ -55,4 +55,10 @@ describe('formatPathTracingSampleCounter', () => {
       `100 / ${pathTracingViewportConfig.maxSamples} samples (not denoised)`,
     )
   })
+
+  it('marks denoise fallback errors as not denoised', () => {
+    expect(formatPathTracingSampleCounter(100, 'not-denoised-error')).toBe(
+      `100 / ${pathTracingViewportConfig.maxSamples} samples (not denoised - error)`,
+    )
+  })
 })

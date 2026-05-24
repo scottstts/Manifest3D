@@ -264,8 +264,14 @@ function createImageAttachmentId(file: File, fallbackName?: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
+  const uniqueSuffix =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 
-  return `ref-${baseName || 'image'}-${file.size}-${file.lastModified || Date.now()}`
+  return `ref-${
+    baseName || 'image'
+  }-${file.size}-${file.lastModified || Date.now()}-${uniqueSuffix}`
 }
 
 function resizeTextarea(textarea: HTMLTextAreaElement | null) {

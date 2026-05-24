@@ -131,6 +131,7 @@ export function convertManifestGroupMaterialsForPathTracing(
   options: PathTracingMaterialOptions = {},
 ) {
   const convertedMaterials = new Map<THREE.Material, THREE.MeshStandardMaterial>()
+  const sourceMaterials = new Set<THREE.Material>()
 
   object.traverse((child) => {
     if (!isMeshLike(child)) {
@@ -138,18 +139,24 @@ export function convertManifestGroupMaterialsForPathTracing(
     }
 
     if (Array.isArray(child.material)) {
-      child.material = child.material.map((material) =>
-        getConvertedMaterial(material, convertedMaterials, options),
-      )
+      child.material = child.material.map((material) => {
+        sourceMaterials.add(material)
+        return getConvertedMaterial(material, convertedMaterials, options)
+      })
       return
     }
 
+    sourceMaterials.add(child.material)
     child.material = getConvertedMaterial(
       child.material,
       convertedMaterials,
       options,
     )
   })
+
+  for (const material of sourceMaterials) {
+    material.dispose()
+  }
 
   return [...convertedMaterials.values()]
 }
