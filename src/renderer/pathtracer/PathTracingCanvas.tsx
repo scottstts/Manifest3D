@@ -36,6 +36,10 @@ import {
   type PathTracingSampleCounterDenoiseStatus,
 } from './pathTracingFrameScheduler'
 import {
+  createPathTracingEmissiveMeshSamplingController,
+  type PathTracingEmissiveMeshSamplingController,
+} from './pathTracingEmissiveMeshSampling'
+import {
   getPathTracingMaxSampleOptions,
   readPathTracingMaxSamplePreference,
   writePathTracingMaxSamplePreference,
@@ -60,6 +64,7 @@ type PathTracingRuntime = {
   camera: THREE.PerspectiveCamera
   composer: EffectComposer
   denoisePipeline: PathTracingDenoisePipeline
+  emissiveMeshSampler: PathTracingEmissiveMeshSamplingController
   pathTracer: WebGLPathTracer
   renderer: THREE.WebGLRenderer
   scene: THREE.Scene
@@ -185,6 +190,8 @@ export function PathTracingCanvas({
     const composer = new EffectComposer(renderer)
     const denoisePipeline = createPathTracingDenoisePipeline()
     const assetBloomPipeline = createPathTracingAssetBloomPipeline()
+    const emissiveMeshSampler =
+      createPathTracingEmissiveMeshSamplingController(pathTracer)
 
     renderer.autoClear = true
     renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -215,6 +222,7 @@ export function PathTracingCanvas({
       camera,
       composer,
       denoisePipeline,
+      emissiveMeshSampler,
       pathTracer,
       renderer,
       scene,
@@ -227,6 +235,7 @@ export function PathTracingCanvas({
       sceneCleanupRef.current?.()
       sceneCleanupRef.current = null
       runtimeRef.current = null
+      emissiveMeshSampler.dispose()
       pathTracer.dispose()
       composer.dispose()
       denoisePipeline.dispose()
@@ -606,6 +615,7 @@ function applyCameraSnapshotToPathTracingCamera(
 function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
   runtime.scene.updateMatrixWorld(true)
   runtime.pathTracer.setScene(runtime.scene, runtime.camera)
+  runtime.emissiveMeshSampler.update(runtime.scene)
   runtime.pathTracer.reset()
   runtime.denoisePipeline.reset()
 }
