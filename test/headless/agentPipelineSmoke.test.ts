@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import {
@@ -27,7 +33,12 @@ import type {
   ManifestAsset,
   ManifestScene,
 } from '../../src/engine/schema/manifestTypes'
+import type {
+  ValidationReport,
+  ValidationSignal,
+} from '../../src/engine/schema/validationTypes'
 import { safeParseManifestAsset } from '../../src/engine/schema/manifestSchema'
+import { validateManifestAssetCandidate } from '../../src/engine/validation/validateManifest'
 
 type HeadlessAgentResult = Awaited<ReturnType<typeof runManifestAgentLoop>>
 type HeadlessAttempt = HeadlessAgentResult['history']['attempts'][number]
@@ -89,6 +100,34 @@ type HeadlessImageArtifact = {
   path: string
 }
 
+type HeadlessProgressLogger = {
+  logAgentEvent: (event: AgentLoopEvent) => void
+  logFinalResult: (result: HeadlessAgentResult) => void
+  logGlbExportComplete: (
+    attemptIndex: number,
+    artifact: HeadlessAttemptGlbArtifacts,
+  ) => void
+  logGlbExportStart: (attemptIndex: number, attemptCount: number) => void
+  logModelRequestFailed: (
+    index: number,
+    startedAt: Date,
+    error: unknown,
+  ) => void
+  logModelRequestStart: (
+    index: number,
+    request: AgentRequest,
+    metrics: ReturnType<typeof createRequestMetrics>,
+  ) => void
+  logModelRequestStillWaiting: (index: number, startedAt: Date) => void
+  logModelResponse: (exchange: CapturedExchange) => void
+  logRunConfigured: (input: {
+    imageAttachmentCount: number
+    prompt: string
+  }) => void
+  logValidationAttempt: (attemptIndex: number, report: ValidationReport) => void
+  path: string
+}
+
 // intentionally use a more difficult prompt to stress test the pipeline
 const defaultPrompt =
   'a silver boxy pickup truck with spinning wheels and front wheels that can turn left and right'
@@ -115,6 +154,10 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         'HEADLESS_AGENT_RUN_TIMEOUT_MS',
         defaultRunTimeoutMs,
       )
+      const maxRepairTurns = readNumberEnv(
+        'HEADLESS_AGENT_MAX_REPAIR_TURNS',
+        defaultRepairTurnCap,
+      )
       const abortController = new AbortController()
       const runTimeout = setTimeout(() => {
         abortController.abort()
@@ -124,6 +167,13 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const events: AgentLoopEvent[] = []
       const { artifacts: imageArtifacts, attachments: imageAttachments } =
         readHeadlessImageAttachments(artifactRoot)
+      const progress = createHeadlessProgressLogger({
+        artifactRoot,
+        maxRepairTurns,
+        provider,
+        runId,
+        runTimeoutMs,
+      })
       const sceneStore = createSceneStore(emptyScene)
       const assetLibraryStore = createAssetLibraryStore(
         createMemoryAssetLibraryRepository(),
@@ -131,9 +181,16 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const { client, exchanges } = createCapturedClient({
         apiKey,
         artifactRoot,
+        progress,
         provider,
       })
       const runStartedAt = new Date()
+      let validationAttemptCount = 0
+
+      progress.logRunConfigured({
+        imageAttachmentCount: imageAttachments.length,
+        prompt,
+      })
 
       await assetLibraryStore.load()
 
@@ -142,10 +199,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       try {
         result = await runManifestAgentLoop(
           {
-            maxRepairTurns: readNumberEnv(
-              'HEADLESS_AGENT_MAX_REPAIR_TURNS',
-              defaultRepairTurnCap,
-            ),
+            maxRepairTurns,
             imageAttachments,
             mode: 'create',
             runId,
@@ -157,8 +211,20 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
             client,
             onEvent: (event) => {
               events.push(event)
+              progress.logAgentEvent(event)
             },
             sceneStore,
+            validateCandidate: (candidate) => {
+              const validationResult = validateManifestAssetCandidate(candidate)
+
+              validationAttemptCount += 1
+              progress.logValidationAttempt(
+                validationAttemptCount,
+                validationResult.report,
+              )
+
+              return validationResult
+            },
           },
         )
       } catch (error) {
@@ -172,6 +238,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
           runStartedAt,
           runCompletedAt: new Date(),
           runTimeoutMs,
+          progressArtifact: progress.path,
         })
         throw error
       } finally {
@@ -183,6 +250,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const attemptGlbArtifacts = await writeAttemptGlbArtifacts(
         artifactRoot,
         result.history.attempts,
+        progress,
       )
 
       if (result.status === 'ready') {
@@ -217,8 +285,10 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         savedVersionId,
         scene: sceneStore.getSnapshot().scene,
         library: assetLibraryStore.getSnapshot().library,
+        progressArtifact: progress.path,
       })
 
+      progress.logFinalResult(result)
       logHeadlessSummary(artifactRoot, result)
 
       if (readBooleanEnv('HEADLESS_AGENT_EXPECT_READY', true)) {
@@ -236,10 +306,12 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 function createCapturedClient({
   apiKey,
   artifactRoot,
+  progress,
   provider,
 }: {
   apiKey: string
   artifactRoot: string
+  progress?: HeadlessProgressLogger
   provider: ModelProvider
 }) {
   const realClient = createManifestProviderClient({
@@ -253,6 +325,7 @@ function createCapturedClient({
       const exchangeDir = `exchanges/${String(index).padStart(2, '0')}`
       const startedAt = new Date()
       const requestMetrics = createRequestMetrics(request)
+      progress?.logModelRequestStart(index, request, requestMetrics)
       const requestJson = writeJsonArtifact(
         artifactRoot,
         `${exchangeDir}/request.json`,
@@ -271,7 +344,20 @@ function createCapturedClient({
         `${exchangeDir}/user-prompt.txt`,
         request.prompt.user,
       )
-      const response = await realClient.generateAsset(request)
+      const progressInterval = setInterval(() => {
+        progress?.logModelRequestStillWaiting(index, startedAt)
+      }, readNumberEnv('HEADLESS_AGENT_PROGRESS_INTERVAL_MS', 30_000))
+      let response: AgentResponse
+
+      try {
+        response = await realClient.generateAsset(request)
+      } catch (error) {
+        progress?.logModelRequestFailed(index, startedAt, error)
+        throw error
+      } finally {
+        clearInterval(progressInterval)
+      }
+
       const completedAt = new Date()
       const captured: CapturedExchange = {
         artifacts: {
@@ -322,6 +408,7 @@ function createCapturedClient({
       }
 
       exchanges.push(captured)
+      progress?.logModelResponse(captured)
 
       return response
     },
@@ -380,6 +467,7 @@ function writeHeadlessArtifacts({
   savedVersionId,
   scene,
   library,
+  progressArtifact,
 }: {
   artifactRoot: string
   attemptGlbArtifacts: readonly HeadlessAttemptGlbArtifacts[]
@@ -397,6 +485,7 @@ function writeHeadlessArtifacts({
   savedVersionId: string | null
   scene: ManifestScene
   library: unknown
+  progressArtifact: string
 }) {
   writeJsonArtifact(artifactRoot, 'events.json', events)
   writeJsonArtifact(artifactRoot, 'scene.json', scene)
@@ -429,6 +518,7 @@ function writeHeadlessArtifacts({
     runId,
     runStartedAt: runStartedAt.toISOString(),
     runTimeoutMs,
+    progressArtifact,
     glbExports,
     glbViewerUrls: glbExports
       .map((glbExport) => glbExport.viewerUrl)
@@ -463,6 +553,7 @@ function writeCrashArtifacts({
   runStartedAt,
   runCompletedAt,
   runTimeoutMs,
+  progressArtifact,
 }: {
   artifactRoot: string
   error: unknown
@@ -473,6 +564,7 @@ function writeCrashArtifacts({
   runStartedAt: Date
   runCompletedAt: Date
   runTimeoutMs: number
+  progressArtifact: string
 }) {
   writeJsonArtifact(artifactRoot, 'events.json', events)
   writeJsonArtifact(artifactRoot, 'summary.json', {
@@ -488,6 +580,7 @@ function writeCrashArtifacts({
     runId,
     runStartedAt: runStartedAt.toISOString(),
     runTimeoutMs,
+    progressArtifact,
   })
 }
 
@@ -634,6 +727,7 @@ async function writeHeadlessGlbExports(
 async function writeAttemptGlbArtifacts(
   artifactRoot: string,
   attempts: readonly HeadlessAttempt[],
+  progress?: HeadlessProgressLogger,
 ): Promise<HeadlessAttemptGlbArtifacts[]> {
   const artifacts: HeadlessAttemptGlbArtifacts[] = []
 
@@ -641,6 +735,8 @@ async function writeAttemptGlbArtifacts(
     const attemptIndex = index + 1
     const attemptDir = `attempts/${String(attemptIndex).padStart(2, '0')}`
     const parsed = safeParseManifestAsset(attempt.candidate)
+
+    progress?.logGlbExportStart(attemptIndex, attempts.length)
 
     if (!parsed.success) {
       const artifact: HeadlessAttemptGlbArtifacts = {
@@ -653,6 +749,7 @@ async function writeAttemptGlbArtifacts(
 
       writeJsonArtifact(artifactRoot, `${attemptDir}/glb-exports.json`, artifact)
       artifacts.push(artifact)
+      progress?.logGlbExportComplete(attemptIndex, artifact)
       continue
     }
 
@@ -670,6 +767,7 @@ async function writeAttemptGlbArtifacts(
 
       writeJsonArtifact(artifactRoot, `${attemptDir}/glb-exports.json`, artifact)
       artifacts.push(artifact)
+      progress?.logGlbExportComplete(attemptIndex, artifact)
     } catch (error) {
       const artifact: HeadlessAttemptGlbArtifacts = {
         attemptId: attempt.id,
@@ -681,10 +779,238 @@ async function writeAttemptGlbArtifacts(
 
       writeJsonArtifact(artifactRoot, `${attemptDir}/glb-exports.json`, artifact)
       artifacts.push(artifact)
+      progress?.logGlbExportComplete(attemptIndex, artifact)
     }
   }
 
   return artifacts
+}
+
+function createHeadlessProgressLogger({
+  artifactRoot,
+  maxRepairTurns,
+  provider,
+  runId,
+  runTimeoutMs,
+}: {
+  artifactRoot: string
+  maxRepairTurns: number
+  provider: ModelProvider
+  runId: string
+  runTimeoutMs: number
+}): HeadlessProgressLogger {
+  const startedAt = new Date()
+  const maxAttempts = maxRepairTurns + 1
+  const path = writeTextArtifact(artifactRoot, 'progress.jsonl', '')
+
+  function elapsedMs(now = new Date()) {
+    return now.getTime() - startedAt.getTime()
+  }
+
+  function record(type: string, data: Record<string, unknown>) {
+    appendFileSync(
+      path,
+      `${JSON.stringify({
+        at: new Date().toISOString(),
+        elapsedMs: elapsedMs(),
+        type,
+        ...data,
+      })}\n`,
+      'utf8',
+    )
+  }
+
+  function log(message: string, data: Record<string, unknown> = {}) {
+    console.info(`[headless] +${formatDuration(elapsedMs())} ${message}`)
+    record('progress', {
+      message,
+      ...data,
+    })
+  }
+
+  log(
+    `run started provider=${provider} maxAttempts=${maxAttempts} timeout=${formatDuration(runTimeoutMs)}`,
+    {
+      artifactRoot,
+      maxAttempts,
+      maxRepairTurns,
+      provider,
+      runId,
+      runTimeoutMs,
+    },
+  )
+
+  return {
+    logAgentEvent(event) {
+      record('agent_event', { event })
+
+      if (event.status === 'failed' && event.state !== 'validating_candidate') {
+        log(`agent event failed: ${event.label}${formatDetail(event.detail)}`, {
+          event,
+        })
+      }
+    },
+    logFinalResult(result) {
+      log(
+        `run finished status=${result.status} attempts=${result.history.attempts.length}`,
+        {
+          attemptCount: result.history.attempts.length,
+          status: result.status,
+        },
+      )
+    },
+    logGlbExportComplete(attemptIndex, artifact) {
+      log(
+        `attempt ${attemptIndex} GLB export ${artifact.status} exports=${artifact.glbExports.length}`,
+        {
+          artifact,
+          attemptIndex,
+        },
+      )
+    },
+    logGlbExportStart(attemptIndex, attemptCount) {
+      log(`exporting attempt GLBs ${attemptIndex}/${attemptCount}`, {
+        attemptCount,
+        attemptIndex,
+      })
+    },
+    logModelRequestFailed(index, requestStartedAt, error) {
+      log(
+        `exchange ${index}/${maxAttempts} model request threw after ${formatDuration(
+          new Date().getTime() - requestStartedAt.getTime(),
+        )}: ${error instanceof Error ? error.message : String(error)}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+          exchangeIndex: index,
+          maxAttempts,
+        },
+      )
+    },
+    logModelRequestStart(index, request, metrics) {
+      log(
+        `exchange ${index}/${maxAttempts} request start mode=${request.prompt.metadata.mode} input~${metrics.approximateInputTokens} tokens promptChars=${metrics.promptChars.total}`,
+        {
+          exchangeIndex: index,
+          maxAttempts,
+          metadata: request.prompt.metadata,
+          request: metrics,
+        },
+      )
+    },
+    logModelRequestStillWaiting(index, requestStartedAt) {
+      log(
+        `exchange ${index}/${maxAttempts} still waiting modelElapsed=${formatDuration(
+          new Date().getTime() - requestStartedAt.getTime(),
+        )}`,
+        {
+          exchangeIndex: index,
+          maxAttempts,
+        },
+      )
+    },
+    logModelResponse(exchange) {
+      log(
+        `exchange ${exchange.index}/${maxAttempts} response status=${exchange.response.status} duration=${formatDuration(exchange.response.durationMs)} output~${exchange.response.approximateOutputTokens ?? 'n/a'} tokens`,
+        {
+          exchange,
+          maxAttempts,
+        },
+      )
+    },
+    logRunConfigured({ imageAttachmentCount, prompt }) {
+      log(
+        `prompt configured chars=${prompt.length} imageAttachments=${imageAttachmentCount}`,
+        {
+          imageAttachmentCount,
+          prompt,
+        },
+      )
+    },
+    logValidationAttempt(attemptIndex, report) {
+      const summary = summarizeValidationReport(report)
+      const topFailures = summary.topFailures
+        .map((failure) => `${failure.count}x ${failure.label}`)
+        .join('; ')
+      const suffix = topFailures ? ` top=${topFailures}` : ''
+
+      log(
+        `attempt ${attemptIndex}/${maxAttempts} validation ${report.bundle.status} failures=${summary.failureCount} warnings=${summary.warningCount}${suffix}`,
+        {
+          attemptIndex,
+          maxAttempts,
+          validation: summary,
+        },
+      )
+    },
+    path,
+  }
+}
+
+function summarizeValidationReport(report: ValidationReport) {
+  const failures = report.bundle.signals.filter(
+    (signal) => signal.severity === 'failure',
+  )
+
+  return {
+    failureCount: report.summary.failureCount,
+    noteCount: report.summary.noteCount,
+    status: report.bundle.status,
+    topFailures: summarizeFailureClusters(failures),
+    valid: report.valid,
+    warningCount: report.summary.warningCount,
+  }
+}
+
+function summarizeFailureClusters(signals: readonly ValidationSignal[]) {
+  const clusters = new Map<string, { count: number; label: string }>()
+
+  for (const signal of signals) {
+    const label = formatFailureClusterLabel(signal)
+    const existing = clusters.get(label)
+
+    if (existing) {
+      existing.count += 1
+    } else {
+      clusters.set(label, { count: 1, label })
+    }
+  }
+
+  return [...clusters.values()]
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 5)
+}
+
+function formatFailureClusterLabel(signal: ValidationSignal) {
+  const refs = signal.refs ?? {}
+  const partPair = [refs.partAId, refs.partBId]
+    .filter((partId): partId is string => Boolean(partId))
+    .sort()
+    .join('<->')
+  const refSuffix = partPair ? ` ${partPair}` : ''
+
+  return `[${signal.stage}/${signal.code}]${refSuffix}`
+}
+
+function formatDetail(detail: string | null) {
+  return detail ? ` detail=${detail}` : ''
+}
+
+function formatDuration(ms: number) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000))
+  const seconds = totalSeconds % 60
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const minutes = totalMinutes % 60
+  const hours = Math.floor(totalMinutes / 60)
+
+  if (hours > 0) {
+    return `${hours}h${minutes}m${seconds}s`
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m${seconds}s`
+  }
+
+  return `${seconds}s`
 }
 
 function writeHeadlessGlbArtifact(
