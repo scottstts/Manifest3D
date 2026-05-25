@@ -4,6 +4,12 @@ export type PathTracingFrameState = {
   sampleCount: number
 }
 
+export type PathTracingSampleLimitState = {
+  interactionSampleLimit: number
+  isCameraInteractionActive: boolean
+  maxSamples: number
+}
+
 export type PathTracingSampleCounterDenoiseStatus =
   | 'idle'
   | 'denoised'
@@ -43,4 +49,16 @@ export function shouldScheduleNextPathTracingFrame({
   sampleCount,
 }: PathTracingFrameState) {
   return needsSceneUpload || sampleCount < maxSamples
+}
+
+export function getPathTracingSampleLimit({
+  interactionSampleLimit,
+  isCameraInteractionActive,
+  maxSamples,
+}: PathTracingSampleLimitState) {
+  if (!isCameraInteractionActive) {
+    return maxSamples
+  }
+
+  return Math.min(maxSamples, Math.max(1, Math.floor(interactionSampleLimit)))
 }

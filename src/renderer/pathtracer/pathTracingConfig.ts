@@ -60,6 +60,9 @@ export const pathTracingViewportConfig = {
   },
   environmentFillIntensity: 0.22,
   filterGlossyFactor: 0.55,
+  interaction: {
+    activeSampleLimit: 1,
+  },
   maxSamples: 128,
   maxSampleOptions: [128, 256, 512] as const,
   maxTextureSize: 1024,

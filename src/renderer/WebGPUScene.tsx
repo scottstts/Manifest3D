@@ -52,6 +52,8 @@ type WebGPUSceneProps = {
   >
   navigationBehavior: ViewportNavigationBehavior
   leftPanelOcclusionWidth: number
+  onCameraInteractionEnded?: () => void
+  onCameraInteractionStarted?: () => void
   onCameraQuaternionChange: () => void
   onCameraSnapshotChange?: (snapshot: ViewportCameraSnapshot) => void
   renderMode: ViewportRenderMode
@@ -122,6 +124,8 @@ export function WebGPUScene({
   materialAnimationValuesByInstance,
   navigationBehavior,
   leftPanelOcclusionWidth,
+  onCameraInteractionEnded,
+  onCameraInteractionStarted,
   onCameraQuaternionChange,
   onCameraSnapshotChange,
   renderMode,
@@ -254,6 +258,8 @@ export function WebGPUScene({
           invalidate()
           publishCameraSnapshot()
         }}
+        onEnd={onCameraInteractionEnded}
+        onStart={onCameraInteractionStarted}
         target={[...defaultViewportCameraConfig.target]}
       />
     </>

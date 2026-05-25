@@ -8,6 +8,7 @@ export function allowsAnimationPreviewPlayback(mode: ViewportRenderMode) {
   return mode === 'default'
 }
 export type ViewportNavigationBehavior = {
+  cameraInteractionSettleDelayMs: number
   enableDamping: boolean
   snapSelectionImmediately: boolean
 }
@@ -17,12 +18,14 @@ export function getViewportNavigationBehavior(
 ): ViewportNavigationBehavior {
   if (mode === 'pathtracer') {
     return {
+      cameraInteractionSettleDelayMs: 140,
       enableDamping: false,
       snapSelectionImmediately: true,
     }
   }
 
   return {
+    cameraInteractionSettleDelayMs: 0,
     enableDamping: true,
     snapSelectionImmediately: false,
   }

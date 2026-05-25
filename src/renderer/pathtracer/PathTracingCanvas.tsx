@@ -32,6 +32,7 @@ import {
 } from './pathTracingDenoisePipeline'
 import {
   formatPathTracingSampleCounter,
+  getPathTracingSampleLimit,
   shouldScheduleNextPathTracingFrame,
   type PathTracingSampleCounterDenoiseStatus,
 } from './pathTracingFrameScheduler'
@@ -52,6 +53,7 @@ export type PathTracingCanvasProps = {
   assets: readonly SceneAssetInstance[]
   cameraSnapshot: ViewportCameraSnapshot | null
   denoiseEnabled: boolean
+  isCameraInteractionActive: boolean
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
   leftPanelOcclusionWidth: number
   materialAnimationValuesByInstance: Readonly<Record<string, MaterialAnimationValues>>
@@ -102,6 +104,7 @@ export function PathTracingCanvas({
   assets,
   cameraSnapshot,
   denoiseEnabled,
+  isCameraInteractionActive,
   jointPreviewPosesByInstance,
   leftPanelOcclusionWidth,
   materialAnimationValuesByInstance,
@@ -134,6 +137,7 @@ export function PathTracingCanvas({
     width: 1,
   })
   const currentDenoiseEnabledRef = useRef(denoiseEnabled)
+  const currentCameraInteractionActiveRef = useRef(isCameraInteractionActive)
   const [viewportSize, setViewportSize] = useState<ViewportSize>({
     height: 1,
     width: 1,
@@ -331,6 +335,11 @@ export function PathTracingCanvas({
   }, [denoiseEnabled])
 
   useEffect(() => {
+    currentCameraInteractionActiveRef.current = isCameraInteractionActive
+    requestPathTracingFrame(requestFrameRef)
+  }, [isCameraInteractionActive])
+
+  useEffect(() => {
     currentMaxSamplesRef.current = selectedMaxSamples
     writePathTracingMaxSamplePreference(selectedMaxSamples)
 
@@ -386,8 +395,14 @@ export function PathTracingCanvas({
       }
 
       const maxSamples = currentMaxSamplesRef.current
+      const sampleLimit = getPathTracingSampleLimit({
+        interactionSampleLimit:
+          pathTracingViewportConfig.interaction.activeSampleLimit,
+        isCameraInteractionActive: currentCameraInteractionActiveRef.current,
+        maxSamples,
+      })
 
-      if (runtime.pathTracer.samples < maxSamples) {
+      if (runtime.pathTracer.samples < sampleLimit) {
         runtime.pathTracer.renderSample()
       }
 
@@ -395,9 +410,12 @@ export function PathTracingCanvas({
         maxSamples,
         Math.floor(runtime.pathTracer.samples),
       )
-      const finalSampleReached = runtime.pathTracer.samples >= maxSamples
+      const finalSampleReached =
+        !currentCameraInteractionActiveRef.current &&
+        runtime.pathTracer.samples >= maxSamples
       const willUseDenoise = shouldUsePathTracingDenoise({
         enabled:
+          !currentCameraInteractionActiveRef.current &&
           pathTracingViewportConfig.denoise.enabled &&
           currentDenoiseEnabledRef.current,
         maxSamples,
@@ -416,7 +434,8 @@ export function PathTracingCanvas({
 
       const texturePassResult = getPathTracingTexturePassMap(
         runtime,
-        currentDenoiseEnabledRef.current,
+        !currentCameraInteractionActiveRef.current &&
+          currentDenoiseEnabledRef.current,
         maxSamples,
       )
 
@@ -440,7 +459,7 @@ export function PathTracingCanvas({
 
       if (
         shouldScheduleNextPathTracingFrame({
-          maxSamples,
+          maxSamples: sampleLimit,
           needsSceneUpload: needsSceneUploadRef.current,
           sampleCount: runtime.pathTracer.samples,
         })

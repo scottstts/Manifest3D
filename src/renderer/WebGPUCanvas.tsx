@@ -91,10 +91,15 @@ export function WebGPUCanvas({
 }: WebGPUCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const cameraQuaternionRef = useRef(new Quaternion())
+  const cameraInteractionSettleTimeoutRef = useRef<number | null>(null)
   const [status, setStatus] = useState<CanvasStatus>({ type: 'checking' })
   const [cameraQuaternionRevision, setCameraQuaternionRevision] = useState(0)
   const [cameraSnapshot, setCameraSnapshot] =
     useState<ViewportCameraSnapshot | null>(null)
+  const [
+    isPathTracingCameraInteractionActive,
+    setIsPathTracingCameraInteractionActive,
+  ] = useState(false)
   const [viewportSize, setViewportSize] = useState({ height: 1, width: 1 })
 
   const navigationBehavior = useMemo(
@@ -184,6 +189,57 @@ export function WebGPUCanvas({
     },
     [],
   )
+  const clearCameraInteractionSettleTimeout = useCallback(() => {
+    if (cameraInteractionSettleTimeoutRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(cameraInteractionSettleTimeoutRef.current)
+    cameraInteractionSettleTimeoutRef.current = null
+  }, [])
+  const handleCameraInteractionStarted = useCallback(() => {
+    if (renderMode !== 'pathtracer') {
+      return
+    }
+
+    clearCameraInteractionSettleTimeout()
+    setIsPathTracingCameraInteractionActive(true)
+  }, [clearCameraInteractionSettleTimeout, renderMode])
+  const handleCameraInteractionEnded = useCallback(() => {
+    if (renderMode !== 'pathtracer') {
+      return
+    }
+
+    clearCameraInteractionSettleTimeout()
+    cameraInteractionSettleTimeoutRef.current = window.setTimeout(() => {
+      cameraInteractionSettleTimeoutRef.current = null
+      setIsPathTracingCameraInteractionActive(false)
+    }, navigationBehavior.cameraInteractionSettleDelayMs)
+  }, [
+    clearCameraInteractionSettleTimeout,
+    navigationBehavior.cameraInteractionSettleDelayMs,
+    renderMode,
+  ])
+
+  useEffect(() => {
+    if (renderMode === 'pathtracer') {
+      return undefined
+    }
+
+    clearCameraInteractionSettleTimeout()
+    const resetTimeout = window.setTimeout(() => {
+      setIsPathTracingCameraInteractionActive(false)
+    }, 0)
+
+    return () => window.clearTimeout(resetTimeout)
+  }, [clearCameraInteractionSettleTimeout, renderMode])
+
+  useEffect(
+    () => () => {
+      clearCameraInteractionSettleTimeout()
+    },
+    [clearCameraInteractionSettleTimeout],
+  )
 
   return (
     <div
@@ -220,6 +276,8 @@ export function WebGPUCanvas({
             materialAnimationValuesByInstance={materialAnimationValuesByInstance}
             navigationBehavior={navigationBehavior}
             leftPanelOcclusionWidth={leftPanelOcclusionWidth}
+            onCameraInteractionEnded={handleCameraInteractionEnded}
+            onCameraInteractionStarted={handleCameraInteractionStarted}
             onCameraQuaternionChange={handleCameraQuaternionChange}
             onCameraSnapshotChange={handleCameraSnapshotChange}
             renderMode={renderMode}
@@ -244,6 +302,7 @@ export function WebGPUCanvas({
             leftPanelOcclusionWidth={leftPanelOcclusionWidth}
             materialAnimationValuesByInstance={materialAnimationValuesByInstance}
             denoiseEnabled={pathTracingDenoiseEnabled}
+            isCameraInteractionActive={isPathTracingCameraInteractionActive}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             worldMode={worldMode}
           />

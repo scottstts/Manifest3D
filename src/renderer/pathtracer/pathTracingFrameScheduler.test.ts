@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatPathTracingSampleCounter,
+  getPathTracingSampleLimit,
   shouldScheduleNextPathTracingFrame,
 } from './pathTracingFrameScheduler'
 
@@ -33,6 +34,26 @@ describe('path tracing viewport frame scheduling', () => {
         sampleCount: 256,
       }),
     ).toBe(true)
+  })
+
+  it('caps live accumulation while direct camera input is active', () => {
+    expect(
+      getPathTracingSampleLimit({
+        interactionSampleLimit: 1,
+        isCameraInteractionActive: true,
+        maxSamples: 256,
+      }),
+    ).toBe(1)
+  })
+
+  it('uses the selected max sample count once camera input has settled', () => {
+    expect(
+      getPathTracingSampleLimit({
+        interactionSampleLimit: 1,
+        isCameraInteractionActive: false,
+        maxSamples: 256,
+      }),
+    ).toBe(256)
   })
 })
 

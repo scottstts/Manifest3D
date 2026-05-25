@@ -28,6 +28,7 @@ describe('allowsAnimationPreviewPlayback', () => {
 describe('getViewportNavigationBehavior', () => {
   it('keeps the default WebGPU viewport damping and animated selection target snapping', () => {
     expect(getViewportNavigationBehavior('default')).toEqual({
+      cameraInteractionSettleDelayMs: 0,
       enableDamping: true,
       snapSelectionImmediately: false,
     })
@@ -35,6 +36,7 @@ describe('getViewportNavigationBehavior', () => {
 
   it('disables inertia and snaps selection centering immediately in path tracer mode', () => {
     expect(getViewportNavigationBehavior('pathtracer')).toEqual({
+      cameraInteractionSettleDelayMs: 140,
       enableDamping: false,
       snapSelectionImmediately: true,
     })
