@@ -29,6 +29,25 @@ renderer.setPixelRatio(Math.max(1, dpr));
 - When asked to write implementation documentations, do NOT include verbose and irrelevant things like broad project rules, what text was used, etc. The point of documentation for a specific session of implementation is to capture only design choices that were discussed or surfaced during coding beyond what code alone can tell that could potentially impact future implementations, not to repeat what the code or AGENTS.md already says 
 - the dev docs will mention a "V2", but there isn't literal versioning in code or in docs, just treat it as the de facto current plan in effect--the only version
 
+# Headless Test
+
+inside test/headless/ is a headless test. the entire point of headless run test is to artificially pool all the exact same pipelines from the app src/ code and run the exact same engine and harness but run headlessly. That means:
+
+- what the headless test does is: pool existing pipelines in app src/, stitch them up as headless run, save intermediate run data for analysis
+- inside headless test code (/test/headless/agentPipelineSmoke.test.ts), don't recreate parts of the app src code that already exists in src/ (should directly import them), because that would mean you're not testing app src code, you're testing the recreated version of it in headless test, which defeats the purpose of having this test to begin with (remember: headless run === in-app run - GUI)
+- any wiring inconvenience created by pulling src/ pipelines into test code MUST be contained within the headless test code (test/headless/ ). code inside src/ is only to be modified for the benefit of improving app features, NOT for the benefit of making headless test run wiring easier
+
+Headless run is set to use default timeout 1 hr. do not interrupt it while it is running, let it finish, unless explicitly told otherwise. This is because a run typically takes a while (at least 10 mins, sometimes 2x-3x longer)
+
+Generally every headless run requires visually inspection of the output glb (unless explicitly told otherwise), as output asset visual is part of the pipeline evaluation factors (i.e., asset with bad visual means bad engine and harness no matter how smoothly they ran)
+
+For visual inspection, use the helper glb viewer tool: test/headless/glb_viewer.html. to use this:
+
+1. serve it: `zsh -ic 'cd test/headless && python -m http.server 3000'`. This does NOT count as "dev server" mentioned above, so it does not contradict with the "no dev server" rule
+2. open the asset inside the viewer in **Codex built-in browser** at http://localhost:3000/glb_viewer.html?src=artifacts/headless-agent/headless-run-id/glb/asset-for-inspection.glb
+3. view the asset
+4. kill the python server and close the tab in the codex built-in browser after inspection
+
 # Notes
 
 `dev_docs/notes.md` is a scratch pad that you will write to concisely about things you've notes and learned during the implementation, including but not limited to design choices. Whenever you feel like there's something that other coding agents after you will benefit from in later implementation, write to it
