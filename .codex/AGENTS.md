@@ -43,8 +43,8 @@ Generally every headless run requires visually inspection of the output glb (unl
 
 For visual inspection, use the helper glb viewer tool: test/headless/glb_viewer.html. to use this:
 
-1. serve it: `zsh -ic 'cd test/headless && python -m http.server 3000'`. This does NOT count as "dev server" mentioned above, so it does not contradict with the "no dev server" rule
-2. open the asset inside the viewer in **Codex built-in browser** at http://localhost:3000/glb_viewer.html?src=artifacts/headless-agent/headless-run-id/glb/asset-for-inspection.glb
+1. serve it: `zsh -ic 'cd test && python -m http.server 3000'`. This does NOT count as "dev server" mentioned above, so it does not contradict with the "no dev server" rule
+2. open the asset inside the viewer in **Codex built-in browser** at http://localhost:3000/glb_viewer.html?src=headless/artifacts/headless-agent/headless-run-id/glb/asset-for-inspection.glb
 3. view the asset
 4. kill the python server and close the tab in the codex built-in browser after inspection
 

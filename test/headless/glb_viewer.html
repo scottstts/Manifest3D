@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manifest3D Headless GLB Viewer</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: #9a9a9a;
+      color: #111;
+      font: 14px system-ui, sans-serif;
+    }
+
+    model-viewer {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #9a9a9a;
+    }
+
+    .status {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      z-index: 1;
+      max-width: calc(100vw - 32px);
+      padding: 8px 10px;
+      border: 1px solid rgb(0 0 0 / 18%);
+      border-radius: 6px;
+      background: rgb(255 255 255 / 78%);
+      color: #111;
+      overflow-wrap: anywhere;
+    }
+
+    .status:empty {
+      display: none;
+    }
+  </style>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+</head>
+<body>
+  <div id="status" class="status"></div>
+  <model-viewer
+    id="viewer"
+    autoplay
+    camera-controls
+    auto-rotate
+    exposure="0.9"
+    shadow-intensity="0.8"
+  ></model-viewer>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const src = params.get('src');
+    const viewer = document.querySelector('#viewer');
+    const status = document.querySelector('#status');
+
+    if (src) {
+      viewer.setAttribute('src', src);
+      viewer.src = src;
+      status.textContent = src;
+      viewer.addEventListener('load', () => {
+        status.textContent = '';
+      });
+      viewer.addEventListener('error', () => {
+        status.textContent = `Failed to load ${src}`;
+      });
+    } else {
+      status.textContent = 'Missing src query parameter.';
+    }
+  </script>
+</body>
+</html>

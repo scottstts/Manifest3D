@@ -39,6 +39,8 @@ describe('buildOpenAIResponsesRequestBody', () => {
     expect(body.reasoning).toEqual({ effort: 'high' })
     expect(body.temperature).toBe(1)
     expect(body.max_output_tokens).toBe(64_000)
+    expect(body.background).toBe(true)
+    expect(body.store).toBe(true)
     expect(body.text.format).toMatchObject({
       name: 'manifest3d_asset',
       strict: true,
@@ -134,6 +136,144 @@ describe('createOpenAIManifestClient', () => {
       status: 'unavailable',
     })
     expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('polls background responses until a candidate completes', async () => {
+    const prompt = compileManifestPrompt({
+      mode: 'create',
+      scene: emptyScene,
+      userPrompt: 'Create a small box.',
+    })
+    const candidate = createValidValidationFixtureAsset()
+    const endpoint = 'https://example.test/v1/responses'
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'resp_background',
+          status: 'queued',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'resp_background',
+          status: 'in_progress',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'resp_background',
+          output: [
+            {
+              content: [
+                {
+                  text: JSON.stringify(candidate),
+                  type: 'output_text',
+                },
+              ],
+            },
+          ],
+          status: 'completed',
+        }),
+      )
+    const client = createOpenAIManifestClient({
+      apiKey: 'sk-test',
+      endpoint,
+      fetcher,
+      pollIntervalMs: 0,
+    })
+
+    const result = await client.generateAsset({ prompt })
+
+    expect(result.status).toBe('ok')
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(fetcher.mock.calls[0][0]).toBe(endpoint)
+    expect(readRequestBody(fetcher.mock.calls[0][1])).toMatchObject({
+      background: true,
+      store: true,
+    })
+    expect(fetcher.mock.calls[1][0]).toBe(`${endpoint}/resp_background`)
+    expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'GET' })
+  })
+
+  it('retries transient polling failures without restarting generation', async () => {
+    const prompt = compileManifestPrompt({
+      mode: 'create',
+      scene: emptyScene,
+      userPrompt: 'Create a small box.',
+    })
+    const candidate = createValidValidationFixtureAsset()
+    const endpoint = 'https://example.test/v1/responses'
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'resp_retry',
+          status: 'in_progress',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              message: 'temporary gateway failure',
+            },
+          },
+          { status: 520, statusText: 'unknown' },
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'resp_retry',
+          output_text: JSON.stringify(candidate),
+          status: 'completed',
+        }),
+      )
+    const client = createOpenAIManifestClient({
+      apiKey: 'sk-test',
+      endpoint,
+      fetcher,
+      maxPollRetries: 1,
+      pollIntervalMs: 0,
+      retryDelayMs: 0,
+    })
+
+    const result = await client.generateAsset({ prompt })
+
+    expect(result.status).toBe('ok')
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(fetcher.mock.calls[0][0]).toBe(endpoint)
+    expect(fetcher.mock.calls[1][0]).toBe(`${endpoint}/resp_retry`)
+    expect(fetcher.mock.calls[2][0]).toBe(`${endpoint}/resp_retry`)
+  })
+
+  it('surfaces non-json OpenAI error bodies', async () => {
+    const prompt = compileManifestPrompt({
+      mode: 'create',
+      scene: emptyScene,
+      userPrompt: 'Create a small box.',
+    })
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('<html>cloudflare timeout</html>', {
+          status: 520,
+          statusText: 'unknown',
+        }),
+      )
+    const client = createOpenAIManifestClient({
+      apiKey: 'sk-test',
+      fetcher,
+      maxCreateRetries: 0,
+    })
+
+    const result = await client.generateAsset({ prompt })
+
+    expect(result).toMatchObject({
+      message: '<html>cloudflare timeout</html>',
+      status: 'error',
+      statusCode: 520,
+    })
   })
 
   it('parses JSON candidates from Responses API output content', () => {
@@ -277,6 +417,23 @@ function findStrictRequiredMismatches(
 
 function arraysEqual(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function jsonResponse(body: unknown, init?: ResponseInit) {
+  return new Response(JSON.stringify(body), {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    ...init,
+  })
+}
+
+function readRequestBody(init: RequestInit | undefined) {
+  if (!init || typeof init.body !== 'string') {
+    throw new Error('Expected a string request body.')
+  }
+
+  return JSON.parse(init.body) as unknown
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

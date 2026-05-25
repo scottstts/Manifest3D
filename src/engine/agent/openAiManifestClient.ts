@@ -17,9 +17,14 @@ type FetchLike = (
 
 export type CreateOpenAIManifestClientOptions = {
   apiKey?: string
+  background?: boolean
   endpoint?: string
   fetcher?: FetchLike
+  maxCreateRetries?: number
+  maxPollRetries?: number
   model?: ModelConfig
+  pollIntervalMs?: number
+  retryDelayMs?: number
 }
 
 export type OpenAIResponsesRequestBody = ReturnType<
@@ -27,6 +32,14 @@ export type OpenAIResponsesRequestBody = ReturnType<
 >
 
 const defaultEndpoint = 'https://api.openai.com/v1/responses'
+const defaultMaxCreateRetries = 1
+const defaultMaxPollRetries = 12
+const defaultPollIntervalMs = 5_000
+const defaultRetryDelayMs = 1_000
+const pendingOpenAIStatuses = new Set(['queued', 'in_progress'])
+const transientHttpStatuses = new Set([
+  408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524,
+])
 
 export function createOpenAIManifestClient(
   options: CreateOpenAIManifestClientOptions = {},
@@ -35,6 +48,11 @@ export function createOpenAIManifestClient(
   const fetcher = options.fetcher ?? fetch
   const config = options.model ?? modelConfig
   const apiKey = options.apiKey ?? ''
+  const background = options.background ?? true
+  const maxCreateRetries = options.maxCreateRetries ?? defaultMaxCreateRetries
+  const maxPollRetries = options.maxPollRetries ?? defaultMaxPollRetries
+  const pollIntervalMs = options.pollIntervalMs ?? defaultPollIntervalMs
+  const retryDelayMs = options.retryDelayMs ?? defaultRetryDelayMs
 
   return {
     async generateAsset(request) {
@@ -46,57 +64,77 @@ export function createOpenAIManifestClient(
         }
       }
 
-      const body = buildOpenAIResponsesRequestBody(request, config)
-      let response: Response
+      const body = buildOpenAIResponsesRequestBody(request, config, {
+        background,
+      })
+      const createResult = await sendOpenAIJsonRequestWithRetry({
+        apiKey,
+        body,
+        endpoint,
+        fetcher,
+        maxRetries: maxCreateRetries,
+        retryDelayMs,
+        signal: request.signal,
+      })
 
-      try {
-        response = await fetcher(endpoint, {
-          body: JSON.stringify(body),
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          method: 'POST',
-          signal: request.signal,
-        })
-      } catch (error) {
+      if (createResult.status === 'network_error') {
         return {
-          message:
-            error instanceof Error
-              ? error.message
-              : 'The OpenAI request could not be sent.',
+          message: createResult.message,
           responseId: null,
           status: 'error',
         }
       }
 
-      let json: unknown
-
-      try {
-        json = await response.json()
-      } catch {
-        json = null
-      }
-
-      if (!response.ok) {
+      if (!createResult.response.ok) {
         return {
-          message: extractErrorMessage(json) ?? response.statusText,
-          responseId: extractResponseId(json),
+          message: createOpenAIHttpErrorMessage(createResult),
+          responseId: extractResponseId(createResult.json),
           status: 'error',
-          statusCode: response.status,
+          statusCode: createResult.response.status,
         }
       }
 
-      return parseOpenAIManifestResponse(json)
+      if (!background || !isPendingOpenAIResponse(createResult.json)) {
+        return parseOpenAIManifestResponse(createResult.json)
+      }
+
+      const responseId = extractResponseId(createResult.json)
+
+      if (!responseId) {
+        return {
+          message: 'The OpenAI background response did not include an id.',
+          responseId: null,
+          status: 'error',
+        }
+      }
+
+      return pollOpenAIBackgroundResponse({
+        apiKey,
+        endpoint,
+        fetcher,
+        maxPollRetries,
+        pollIntervalMs,
+        responseId,
+        retryDelayMs,
+        signal: request.signal,
+      })
     },
   }
+}
+
+type OpenAIResponsesRequestOptions = {
+  background?: boolean
 }
 
 export function buildOpenAIResponsesRequestBody(
   request: AgentRequest,
   config: ModelConfig = modelConfig,
+  options: OpenAIResponsesRequestOptions = {},
 ) {
+  const background = options.background ?? true
+
   return {
+    background,
     input: [
       {
         content: [
@@ -115,7 +153,7 @@ export function buildOpenAIResponsesRequestBody(
     reasoning: {
       effort: config.reasoningEffort,
     },
-    store: false,
+    store: background,
     temperature: config.temperature,
     text: {
       format: {
@@ -135,6 +173,16 @@ export function parseOpenAIManifestResponse(response: unknown): AgentResponse {
   if (errorMessage) {
     return {
       message: errorMessage,
+      responseId,
+      status: 'error',
+    }
+  }
+
+  const status = extractStatus(response)
+
+  if (status && status !== 'completed') {
+    return {
+      message: `The OpenAI response ended with status "${status}".`,
       responseId,
       status: 'error',
     }
@@ -179,6 +227,311 @@ export function parseOpenAIManifestResponse(response: unknown): AgentResponse {
   }
 }
 
+type OpenAIRequestResult =
+  | {
+      json: unknown
+      rawText: string
+      response: Response
+      status: 'response'
+    }
+  | {
+      message: string
+      status: 'network_error'
+    }
+type OpenAIResponseResult = Extract<OpenAIRequestResult, { status: 'response' }>
+
+async function pollOpenAIBackgroundResponse({
+  apiKey,
+  endpoint,
+  fetcher,
+  maxPollRetries,
+  pollIntervalMs,
+  responseId,
+  retryDelayMs,
+  signal,
+}: {
+  apiKey: string
+  endpoint: string
+  fetcher: FetchLike
+  maxPollRetries: number
+  pollIntervalMs: number
+  responseId: string
+  retryDelayMs: number
+  signal?: AbortSignal
+}): Promise<AgentResponse> {
+  let cancelled = false
+  const abortHandler = () => {
+    if (cancelled) {
+      return
+    }
+
+    cancelled = true
+    void cancelOpenAIBackgroundResponse({
+      apiKey,
+      endpoint,
+      fetcher,
+      responseId,
+    })
+  }
+
+  if (signal?.aborted) {
+    abortHandler()
+
+    return createAbortResponse(responseId)
+  }
+
+  signal?.addEventListener('abort', abortHandler, { once: true })
+
+  try {
+    while (true) {
+      try {
+        await sleep(pollIntervalMs, signal)
+      } catch {
+        abortHandler()
+
+        return createAbortResponse(responseId)
+      }
+
+      const pollResult = await sendOpenAIJsonRequestWithRetry({
+        apiKey,
+        endpoint: `${endpoint}/${encodeURIComponent(responseId)}`,
+        fetcher,
+        maxRetries: maxPollRetries,
+        retryDelayMs,
+        signal,
+      })
+
+      if (pollResult.status === 'network_error') {
+        return {
+          message: pollResult.message,
+          responseId,
+          status: 'error',
+        }
+      }
+
+      if (!pollResult.response.ok) {
+        return {
+          message: createOpenAIHttpErrorMessage(pollResult),
+          responseId: extractResponseId(pollResult.json) ?? responseId,
+          status: 'error',
+          statusCode: pollResult.response.status,
+        }
+      }
+
+      if (!isPendingOpenAIResponse(pollResult.json)) {
+        return parseOpenAIManifestResponse(pollResult.json)
+      }
+    }
+  } finally {
+    signal?.removeEventListener('abort', abortHandler)
+  }
+}
+
+async function sendOpenAIJsonRequestWithRetry({
+  apiKey,
+  body,
+  endpoint,
+  fetcher,
+  maxRetries,
+  retryDelayMs,
+  signal,
+}: {
+  apiKey: string
+  body?: unknown
+  endpoint: string
+  fetcher: FetchLike
+  maxRetries: number
+  retryDelayMs: number
+  signal?: AbortSignal
+}): Promise<OpenAIRequestResult> {
+  for (let attempt = 0; ; attempt += 1) {
+    const result = await sendOpenAIJsonRequest({
+      apiKey,
+      body,
+      endpoint,
+      fetcher,
+      signal,
+    })
+
+    if (!shouldRetryOpenAIRequest(result, attempt, maxRetries)) {
+      return result
+    }
+
+    try {
+      await sleep(retryDelayMs, signal)
+    } catch {
+      return createNetworkErrorResult(new Error('The OpenAI request was aborted.'))
+    }
+  }
+}
+
+async function sendOpenAIJsonRequest({
+  apiKey,
+  body,
+  endpoint,
+  fetcher,
+  signal,
+}: {
+  apiKey: string
+  body?: unknown
+  endpoint: string
+  fetcher: FetchLike
+  signal?: AbortSignal
+}): Promise<OpenAIRequestResult> {
+  let response: Response
+
+  try {
+    response = await fetcher(endpoint, {
+      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      method: body === undefined ? 'GET' : 'POST',
+      signal,
+    })
+  } catch (error) {
+    return createNetworkErrorResult(error)
+  }
+
+  const rawText = await response.text()
+  const json = parseJsonOrNull(rawText)
+
+  return {
+    json,
+    rawText,
+    response,
+    status: 'response',
+  }
+}
+
+function parseJsonOrNull(value: string) {
+  if (!value) {
+    return null
+  }
+
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
+}
+
+function shouldRetryOpenAIRequest(
+  result: OpenAIRequestResult,
+  attempt: number,
+  maxRetries: number,
+) {
+  if (attempt >= maxRetries) {
+    return false
+  }
+
+  if (result.status === 'network_error') {
+    return true
+  }
+
+  return transientHttpStatuses.has(result.response.status)
+}
+
+async function cancelOpenAIBackgroundResponse({
+  apiKey,
+  endpoint,
+  fetcher,
+  responseId,
+}: {
+  apiKey: string
+  endpoint: string
+  fetcher: FetchLike
+  responseId: string
+}) {
+  try {
+    await fetcher(`${endpoint}/${encodeURIComponent(responseId)}/cancel`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    })
+  } catch {
+    // Cancellation is best effort; the abort path still returns immediately.
+  }
+}
+
+function createOpenAIHttpErrorMessage(result: OpenAIResponseResult) {
+  const extracted = extractErrorMessage(result.json)
+
+  if (extracted) {
+    return extracted
+  }
+
+  const body = result.rawText.trim()
+
+  if (body) {
+    return body.slice(0, 1_000)
+  }
+
+  return (
+    result.response.statusText ||
+    `OpenAI request failed with HTTP ${result.response.status}.`
+  )
+}
+
+function createNetworkErrorResult(error: unknown): OpenAIRequestResult {
+  return {
+    message: formatOpenAINetworkError(error),
+    status: 'network_error',
+  }
+}
+
+function createAbortResponse(responseId: string): AgentResponse {
+  return {
+    message: 'The OpenAI request was aborted.',
+    responseId,
+    status: 'error',
+  }
+}
+
+function formatOpenAINetworkError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return 'The OpenAI request could not be sent.'
+  }
+
+  const cause = error.cause
+
+  if (cause instanceof Error && cause.message) {
+    return `${error.message}: ${cause.message}`
+  }
+
+  return error.message
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  if (signal?.aborted) {
+    return Promise.reject(new Error('The OpenAI request was aborted.'))
+  }
+
+  if (ms <= 0) {
+    return Promise.resolve()
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      signal?.removeEventListener('abort', abortHandler)
+    }
+    const timeout = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, ms)
+    const abortHandler = () => {
+      clearTimeout(timeout)
+      cleanup()
+      reject(new Error('The OpenAI request was aborted.'))
+    }
+
+    signal?.addEventListener('abort', abortHandler, { once: true })
+  })
+}
+
 function formatImageInputs(attachments: readonly AgentImageAttachment[]) {
   return attachments.map((attachment) => ({
     detail: attachment.detail ?? 'auto',
@@ -204,7 +557,10 @@ function extractErrorMessage(value: unknown): string | null {
     return value.error.message
   }
 
-  if (value.status === 'failed' && isRecord(value.incomplete_details)) {
+  if (
+    (value.status === 'failed' || value.status === 'incomplete') &&
+    isRecord(value.incomplete_details)
+  ) {
     const reason = value.incomplete_details.reason
 
     if (typeof reason === 'string') {
@@ -212,7 +568,25 @@ function extractErrorMessage(value: unknown): string | null {
     }
   }
 
+  if (value.status === 'cancelled') {
+    return 'The OpenAI response was cancelled.'
+  }
+
   return null
+}
+
+function extractStatus(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  return typeof value.status === 'string' ? value.status : null
+}
+
+function isPendingOpenAIResponse(value: unknown) {
+  const status = extractStatus(value)
+
+  return status !== null && pendingOpenAIStatuses.has(status)
 }
 
 function extractOutputText(value: unknown): string | null {

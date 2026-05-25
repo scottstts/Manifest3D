@@ -101,15 +101,21 @@ Repair feedback also injects the candidate revision and fingerprint. This mirror
 
 `test/headless/agentPipelineSmoke.test.ts` is the practical pipeline stress harness. It exercises the same embedded engine and agent loop headlessly, then records candidate JSON, validation reports, request/response exchanges, and GLB artifacts for visual inspection.
 
-The headless harness deliberately bends around the app rather than the app bending around the test. Test-only conveniences such as Node file shims, local reference-image loading, artifact directory writing, and generated `glb-viewer.html` live in the test harness. App source should change only for real engine, validation, export, or prompt quality improvements that also matter to interactive runs.
+The headless harness deliberately bends around the app rather than the app bending around the test. Test-only conveniences such as Node file shims, local reference-image loading, artifact directory writing, per-attempt GLB materialization, and viewer URL generation live in the test harness. App source should change only for real engine, validation, export, or prompt quality improvements that also matter to interactive runs.
+
+Provider requests should go through the imported app provider client factory instead of a headless-only reimplementation of the transport or provider switch. The harness may wrap the client to record prompt and response artifacts, but it should not recreate OpenAI/Gemini request plumbing that already exists in `src/`. `HEADLESS_AGENT_PROVIDER` selects the provider for a run and defaults to OpenAI.
+
+OpenAI uses Responses API background mode by default in `openAiManifestClient.ts`: requests set `background: true` and `store: true`, then poll the response id until it reaches a terminal status. This avoids one long idle HTTP response for high-reasoning, strict-schema asset generations and is shared by the app and headless harness. The tradeoff is that background polling is not ZDR-compatible, so do not silently change it back to `store: false` without replacing the long-running transport strategy.
 
 Current headless stress behavior:
 
 - the default run budget is one hour
 - ready candidates export static GLB artifacts
 - assets with movable joints or material emission animation also export dynamic GLB artifacts when animation export is supported
+- every schema-parseable attempt gets its own static and, when applicable, dynamic GLB export under that attempt's artifact directory so validation pressure can be compared against visual quality over repair turns
 - local reference images can be supplied through `HEADLESS_AGENT_IMAGE_PATH` or `HEADLESS_AGENT_IMAGE_PATHS`
-- summary JSON records exported GLB paths and the generated viewer HTML path
+- default artifacts live under `test/headless/artifacts/headless-agent/` so `test/headless/glb_viewer.html` can serve them directly from a simple local HTTP server
+- summary JSON records exported GLB paths and viewer URLs
 
 ## Timeline Projection
 

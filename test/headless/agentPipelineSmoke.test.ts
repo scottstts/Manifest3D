@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { request as httpsRequest } from 'node:https'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import {
@@ -7,13 +6,15 @@ import {
   runManifestAgentLoop,
   type AgentLoopEvent,
 } from '../../src/engine/agent/agentLoop'
-import { createOpenAIManifestClient } from '../../src/engine/agent/openAiManifestClient'
+import { createManifestProviderClient } from '../../src/engine/agent/manifestProviderClient'
+import { parseModelProvider } from '../../src/engine/agent/providerPreference'
 import type {
   AgentImageAttachment,
   AgentRequest,
   AgentResponse,
-  OpenAIManifestClient,
+  ManifestProviderClient,
 } from '../../src/engine/agent/providerClient'
+import type { ModelProvider } from '../../src/engine/config/modelConfig'
 import { createAssetLibraryStore } from '../../src/engine/persistence/assetLibraryStore'
 import { createMemoryAssetLibraryRepository } from '../../src/engine/persistence/assetLibraryRepository'
 import { createSceneStore } from '../../src/engine/scene/sceneStore'
@@ -26,6 +27,10 @@ import type {
   ManifestAsset,
   ManifestScene,
 } from '../../src/engine/schema/manifestTypes'
+import { safeParseManifestAsset } from '../../src/engine/schema/manifestSchema'
+
+type HeadlessAgentResult = Awaited<ReturnType<typeof runManifestAgentLoop>>
+type HeadlessAttempt = HeadlessAgentResult['history']['attempts'][number]
 
 type CapturedExchange = {
   artifacts: {
@@ -38,6 +43,7 @@ type CapturedExchange = {
   }
   index: number
   metadata: AgentRequest['prompt']['metadata']
+  provider: ModelProvider
   request: {
     approximateInputTokens: number
     imageAttachmentCount: number
@@ -66,6 +72,15 @@ type HeadlessGlbArtifact = {
   fileName: string
   mode: GlbExportMode
   path: string
+  viewerUrl: string | null
+}
+
+type HeadlessAttemptGlbArtifacts = {
+  attemptId: string
+  attemptIndex: number
+  glbExports: HeadlessGlbArtifact[]
+  message: string | null
+  status: 'exported' | 'failed' | 'skipped'
 }
 
 type HeadlessImageArtifact = {
@@ -100,15 +115,12 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         'HEADLESS_AGENT_RUN_TIMEOUT_MS',
         defaultRunTimeoutMs,
       )
-      const fetchTimeoutMs = readNumberEnv(
-        'HEADLESS_AGENT_FETCH_TIMEOUT_MS',
-        runTimeoutMs + 30_000,
-      )
       const abortController = new AbortController()
       const runTimeout = setTimeout(() => {
         abortController.abort()
       }, runTimeoutMs)
-      const apiKey = readRequiredOpenAIApiKey()
+      const provider = readHeadlessModelProvider()
+      const apiKey = readRequiredProviderApiKey(provider)
       const events: AgentLoopEvent[] = []
       const { artifacts: imageArtifacts, attachments: imageAttachments } =
         readHeadlessImageAttachments(artifactRoot)
@@ -119,7 +131,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const { client, exchanges } = createCapturedClient({
         apiKey,
         artifactRoot,
-        fetchTimeoutMs,
+        provider,
       })
       const runStartedAt = new Date()
 
@@ -159,7 +171,6 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
           runId,
           runStartedAt,
           runCompletedAt: new Date(),
-          fetchTimeoutMs,
           runTimeoutMs,
         })
         throw error
@@ -169,7 +180,10 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 
       let savedVersionId: string | null = null
       let glbExports: HeadlessGlbArtifact[] = []
-      let glbViewerHtml: string | null = null
+      const attemptGlbArtifacts = await writeAttemptGlbArtifacts(
+        artifactRoot,
+        result.history.attempts,
+      )
 
       if (result.status === 'ready') {
         const savedVersion = await assetLibraryStore.saveValidatedVersion({
@@ -181,23 +195,24 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 
         savedVersionId = savedVersion.versionId
         sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
-        glbExports = await writeHeadlessGlbExports(artifactRoot, result.asset)
-        glbViewerHtml = writeHeadlessGlbViewer(artifactRoot, glbExports)
+        glbExports = await writeHeadlessGlbExports(artifactRoot, result.asset, {
+          relativeDir: 'glb',
+        })
       }
 
       writeHeadlessArtifacts({
         artifactRoot,
+        attemptGlbArtifacts,
         events,
         exchanges,
         prompt,
+        provider,
         result,
         runId,
         runStartedAt,
         runCompletedAt: new Date(),
-        fetchTimeoutMs,
         runTimeoutMs,
         glbExports,
-        glbViewerHtml,
         imageArtifacts,
         savedVersionId,
         scene: sceneStore.getSnapshot().scene,
@@ -221,18 +236,18 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 function createCapturedClient({
   apiKey,
   artifactRoot,
-  fetchTimeoutMs,
+  provider,
 }: {
   apiKey: string
   artifactRoot: string
-  fetchTimeoutMs: number
+  provider: ModelProvider
 }) {
-  const realClient = createOpenAIManifestClient({
+  const realClient = createManifestProviderClient({
     apiKey,
-    fetcher: createHeadlessHttpsFetcher(fetchTimeoutMs),
+    provider,
   })
   const exchanges: CapturedExchange[] = []
-  const client: OpenAIManifestClient = {
+  const client: ManifestProviderClient = {
     async generateAsset(request) {
       const index = exchanges.length + 1
       const exchangeDir = `exchanges/${String(index).padStart(2, '0')}`
@@ -266,6 +281,7 @@ function createCapturedClient({
         },
         index,
         metadata: request.prompt.metadata,
+        provider,
         request: requestMetrics,
         response: {
           completedAt: completedAt.toISOString(),
@@ -349,34 +365,34 @@ function estimateTokensFromChars(chars: number) {
 
 function writeHeadlessArtifacts({
   artifactRoot,
+  attemptGlbArtifacts,
   events,
   exchanges,
   prompt,
+  provider,
   result,
   runId,
   runStartedAt,
   runCompletedAt,
-  fetchTimeoutMs,
   runTimeoutMs,
   glbExports,
-  glbViewerHtml,
   imageArtifacts,
   savedVersionId,
   scene,
   library,
 }: {
   artifactRoot: string
+  attemptGlbArtifacts: readonly HeadlessAttemptGlbArtifacts[]
   events: readonly AgentLoopEvent[]
   exchanges: readonly CapturedExchange[]
   prompt: string
+  provider: ModelProvider
   result: Awaited<ReturnType<typeof runManifestAgentLoop>>
   runId: string
   runStartedAt: Date
   runCompletedAt: Date
-  fetchTimeoutMs: number
   runTimeoutMs: number
   glbExports: readonly HeadlessGlbArtifact[]
-  glbViewerHtml: string | null
   imageArtifacts: readonly HeadlessImageArtifact[]
   savedVersionId: string | null
   scene: ManifestScene
@@ -406,20 +422,25 @@ function writeHeadlessArtifacts({
     exchangeCount: exchanges.length,
     exchanges,
     prompt,
+    provider,
     runCompletedAt: runCompletedAt.toISOString(),
     runDurationMs: runCompletedAt.getTime() - runStartedAt.getTime(),
     resultStatus: result.status,
     runId,
     runStartedAt: runStartedAt.toISOString(),
-    fetchTimeoutMs,
     runTimeoutMs,
     glbExports,
-    glbViewerHtml,
+    glbViewerUrls: glbExports
+      .map((glbExport) => glbExport.viewerUrl)
+      .filter((viewerUrl): viewerUrl is string => viewerUrl !== null),
     imageArtifacts,
     imageAttachmentCount: imageArtifacts.length,
     savedVersionId,
     sceneAssetIds: scene.assets.map((asset) => asset.id),
     attempts: result.history.attempts.map((attempt) => ({
+      glbArtifacts:
+        attemptGlbArtifacts.find((entry) => entry.attemptId === attempt.id) ??
+        null,
       failureCount: attempt.report.summary.failureCount,
       failureSignature: attempt.failureSignature,
       failureStreak: attempt.failureStreak,
@@ -441,7 +462,6 @@ function writeCrashArtifacts({
   runId,
   runStartedAt,
   runCompletedAt,
-  fetchTimeoutMs,
   runTimeoutMs,
 }: {
   artifactRoot: string
@@ -452,7 +472,6 @@ function writeCrashArtifacts({
   runId: string
   runStartedAt: Date
   runCompletedAt: Date
-  fetchTimeoutMs: number
   runTimeoutMs: number
 }) {
   writeJsonArtifact(artifactRoot, 'events.json', events)
@@ -468,111 +487,8 @@ function writeCrashArtifacts({
     runDurationMs: runCompletedAt.getTime() - runStartedAt.getTime(),
     runId,
     runStartedAt: runStartedAt.toISOString(),
-    fetchTimeoutMs,
     runTimeoutMs,
   })
-}
-
-function createHeadlessHttpsFetcher(timeoutMs: number) {
-  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
-    new Promise((resolve, reject) => {
-      const url = new URL(String(input))
-      const body = normalizeRequestBody(init?.body)
-      const request = httpsRequest(
-        url,
-        {
-          headers: headersToObject(init?.headers),
-          method: init?.method ?? 'GET',
-        },
-        (response) => {
-          const chunks: Buffer[] = []
-
-          response.on('data', (chunk: Buffer) => {
-            chunks.push(chunk)
-          })
-          response.on('end', () => {
-            resolve(
-              new Response(Buffer.concat(chunks), {
-                headers: responseHeadersToHeaders(response.headers),
-                status: response.statusCode ?? 500,
-                statusText: response.statusMessage,
-              }),
-            )
-          })
-        },
-      )
-
-      request.setTimeout(timeoutMs, () => {
-        request.destroy(new Error(`Headless OpenAI request timed out after ${timeoutMs}ms.`))
-      })
-
-      request.on('error', reject)
-
-      if (init?.signal) {
-        if (init.signal.aborted) {
-          request.destroy(new Error('This operation was aborted'))
-          return
-        }
-
-        init.signal.addEventListener(
-          'abort',
-          () => {
-            request.destroy(new Error('This operation was aborted'))
-          },
-          { once: true },
-        )
-      }
-
-      if (body) {
-        request.write(body)
-      }
-
-      request.end()
-    })
-}
-
-function normalizeRequestBody(body: BodyInit | null | undefined) {
-  if (body === undefined || body === null) {
-    return null
-  }
-
-  if (typeof body === 'string' || Buffer.isBuffer(body)) {
-    return body
-  }
-
-  throw new Error('Headless fetcher only supports string or Buffer request bodies.')
-}
-
-function headersToObject(headers: HeadersInit | undefined) {
-  if (!headers) {
-    return undefined
-  }
-
-  if (headers instanceof Headers) {
-    return Object.fromEntries(headers.entries())
-  }
-
-  if (Array.isArray(headers)) {
-    return Object.fromEntries(headers)
-  }
-
-  return headers
-}
-
-function responseHeadersToHeaders(headers: import('node:http').IncomingHttpHeaders) {
-  const responseHeaders = new Headers()
-
-  for (const [key, value] of Object.entries(headers)) {
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        responseHeaders.append(key, entry)
-      }
-    } else if (value !== undefined) {
-      responseHeaders.set(key, value)
-    }
-  }
-
-  return responseHeaders
 }
 
 function logHeadlessSummary(
@@ -683,18 +599,89 @@ function inferImageMediaType(path: string) {
 async function writeHeadlessGlbExports(
   artifactRoot: string,
   asset: ManifestAsset,
+  options: {
+    relativeDir: string
+  },
 ): Promise<HeadlessGlbArtifact[]> {
   const artifacts: HeadlessGlbArtifact[] = []
   const staticExport = await exportManifestAssetGlb(asset, { mode: 'static' })
 
-  artifacts.push(writeHeadlessGlbArtifact(artifactRoot, 'static', staticExport))
+  artifacts.push(
+    writeHeadlessGlbArtifact(
+      artifactRoot,
+      options.relativeDir,
+      'static',
+      staticExport,
+    ),
+  )
 
   if (canExportManifestAssetAnimation(asset)) {
     const dynamicExport = await exportManifestAssetGlb(asset, { mode: 'dynamic' })
 
     artifacts.push(
-      writeHeadlessGlbArtifact(artifactRoot, 'dynamic', dynamicExport),
+      writeHeadlessGlbArtifact(
+        artifactRoot,
+        options.relativeDir,
+        'dynamic',
+        dynamicExport,
+      ),
     )
+  }
+
+  return artifacts
+}
+
+async function writeAttemptGlbArtifacts(
+  artifactRoot: string,
+  attempts: readonly HeadlessAttempt[],
+): Promise<HeadlessAttemptGlbArtifacts[]> {
+  const artifacts: HeadlessAttemptGlbArtifacts[] = []
+
+  for (const [index, attempt] of attempts.entries()) {
+    const attemptIndex = index + 1
+    const attemptDir = `attempts/${String(attemptIndex).padStart(2, '0')}`
+    const parsed = safeParseManifestAsset(attempt.candidate)
+
+    if (!parsed.success) {
+      const artifact: HeadlessAttemptGlbArtifacts = {
+        attemptId: attempt.id,
+        attemptIndex,
+        glbExports: [],
+        message: 'Candidate did not parse as a Manifest3D asset.',
+        status: 'skipped',
+      }
+
+      writeJsonArtifact(artifactRoot, `${attemptDir}/glb-exports.json`, artifact)
+      artifacts.push(artifact)
+      continue
+    }
+
+    try {
+      const glbExports = await writeHeadlessGlbExports(artifactRoot, parsed.data, {
+        relativeDir: `${attemptDir}/glb`,
+      })
+      const artifact: HeadlessAttemptGlbArtifacts = {
+        attemptId: attempt.id,
+        attemptIndex,
+        glbExports,
+        message: null,
+        status: 'exported',
+      }
+
+      writeJsonArtifact(artifactRoot, `${attemptDir}/glb-exports.json`, artifact)
+      artifacts.push(artifact)
+    } catch (error) {
+      const artifact: HeadlessAttemptGlbArtifacts = {
+        attemptId: attempt.id,
+        attemptIndex,
+        glbExports: [],
+        message: error instanceof Error ? error.message : String(error),
+        status: 'failed',
+      }
+
+      writeJsonArtifact(artifactRoot, `${attemptDir}/glb-exports.json`, artifact)
+      artifacts.push(artifact)
+    }
   }
 
   return artifacts
@@ -702,6 +689,7 @@ async function writeHeadlessGlbExports(
 
 function writeHeadlessGlbArtifact(
   artifactRoot: string,
+  relativeDir: string,
   mode: GlbExportMode,
   result: Awaited<ReturnType<typeof exportManifestAssetGlb>>,
 ): HeadlessGlbArtifact {
@@ -711,7 +699,7 @@ function writeHeadlessGlbArtifact(
       : result.fileName
   const path = writeBinaryArtifact(
     artifactRoot,
-    `glb/${fileName}`,
+    `${relativeDir}/${fileName}`,
     result.arrayBuffer,
   )
 
@@ -720,74 +708,8 @@ function writeHeadlessGlbArtifact(
     fileName,
     mode,
     path,
+    viewerUrl: createHeadlessGlbViewerUrl(path),
   }
-}
-
-function writeHeadlessGlbViewer(
-  artifactRoot: string,
-  glbExports: readonly HeadlessGlbArtifact[],
-) {
-  if (glbExports.length === 0) {
-    return null
-  }
-
-  const options = glbExports
-    .map(
-      (glbExport) =>
-        `<option value="${escapeHtml(relativeArtifactPath(artifactRoot, glbExport.path))}">${escapeHtml(`${glbExport.mode} - ${glbExport.fileName}`)}</option>`,
-    )
-    .join('\n')
-  const firstSrc = escapeHtml(
-    relativeArtifactPath(artifactRoot, glbExports[0].path),
-  )
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Manifest3D Headless GLB</title>
-  <style>
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      background: #9a9a9a;
-      color: #111;
-      font: 14px system-ui, sans-serif;
-    }
-    model-viewer {
-      width: 100%;
-      height: 100%;
-      background: #9a9a9a;
-    }
-    .toolbar {
-      position: fixed;
-      left: 16px;
-      top: 16px;
-      z-index: 1;
-    }
-  </style>
-  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-</head>
-<body>
-  <div class="toolbar">
-    <select id="asset-select" aria-label="GLB export">
-${options}
-    </select>
-  </div>
-  <model-viewer id="viewer" src="${firstSrc}" camera-controls auto-rotate exposure="0.9" shadow-intensity="0.8"></model-viewer>
-  <script>
-    const select = document.querySelector('#asset-select');
-    const viewer = document.querySelector('#viewer');
-    select.addEventListener('change', () => {
-      viewer.src = select.value;
-    });
-  </script>
-</body>
-</html>
-`
-
-  return writeTextArtifact(artifactRoot, 'glb-viewer.html', html)
 }
 
 function addFileNameSuffix(fileName: string, suffix: string) {
@@ -796,22 +718,21 @@ function addFileNameSuffix(fileName: string, suffix: string) {
     : `${fileName}.${suffix}.glb`
 }
 
-function relativeArtifactPath(artifactRoot: string, targetPath: string) {
-  return relative(artifactRoot, targetPath).replaceAll('\\', '/')
-}
+function createHeadlessGlbViewerUrl(targetPath: string) {
+  const serverRoot = resolve(process.cwd(), 'test/headless')
+  const relativeSrc = relative(serverRoot, targetPath).replaceAll('\\', '/')
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
+  if (relativeSrc.startsWith('../') || relativeSrc === '..') {
+    return null
+  }
+
+  return `http://localhost:3000/glb_viewer.html?src=${encodeURI(relativeSrc)}`
 }
 
 function createArtifactRoot(runId: string) {
   const baseDir = readStringEnv(
     'HEADLESS_AGENT_ARTIFACT_DIR',
-    'test/artifacts/headless-agent',
+    'test/headless/artifacts/headless-agent',
   )
   const artifactRoot = resolve(process.cwd(), baseDir, runId.replace(/[:]/g, '-'))
 
@@ -858,20 +779,40 @@ function writeBinaryArtifact(
   return targetPath
 }
 
-function readRequiredOpenAIApiKey() {
+function readHeadlessModelProvider(): ModelProvider {
+  return parseModelProvider(readStringEnv('HEADLESS_AGENT_PROVIDER', 'openai'))
+}
+
+function readRequiredProviderApiKey(provider: ModelProvider) {
   const apiKey =
-    readStringEnv('OPENAI_API_KEY', '') ||
-    readStringEnv('VITE_OPENAI_API_KEY', '') ||
-    readDotEnvValue('OPENAI_API_KEY') ||
-    readDotEnvValue('VITE_OPENAI_API_KEY')
+    provider === 'gemini'
+      ? readFirstEnvOrDotEnv([
+          'GEMINI_API_KEY',
+          'GOOGLE_API_KEY',
+          'VITE_GEMINI_API_KEY',
+          'VITE_GOOGLE_API_KEY',
+        ])
+      : readFirstEnvOrDotEnv(['OPENAI_API_KEY', 'VITE_OPENAI_API_KEY'])
 
   if (!apiKey) {
     throw new Error(
-      'Headless agent smoke requires OPENAI_API_KEY or VITE_OPENAI_API_KEY in the environment or .env.',
+      `Headless agent smoke requires a ${provider} API key in the environment or .env.`,
     )
   }
 
   return apiKey
+}
+
+function readFirstEnvOrDotEnv(keys: readonly string[]) {
+  for (const key of keys) {
+    const value = readStringEnv(key, '') || readDotEnvValue(key)
+
+    if (value) {
+      return value
+    }
+  }
+
+  return ''
 }
 
 function readDotEnvValue(key: string) {
