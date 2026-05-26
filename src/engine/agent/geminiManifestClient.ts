@@ -2,10 +2,7 @@ import {
   geminiModelConfig,
   type GeminiModelConfig,
 } from '../config/modelConfig'
-import {
-  manifestAssetResponseJsonSchema,
-  manifestRepairPatchResponseJsonSchema,
-} from '../schema/manifestContract'
+import { manifestAssetResponseJsonSchema } from '../schema/manifestContract'
 import type {
   AgentImageAttachment,
   AgentRequest,
@@ -30,6 +27,13 @@ type GeminiInlineDataPart = {
 }
 
 type GeminiRequestPart = GeminiTextPart | GeminiInlineDataPart
+
+type GeminiRepairPatchTransportOperation = {
+  op?: unknown
+  path?: unknown
+  value?: unknown
+  valueJson?: unknown
+}
 
 export type CreateGeminiManifestClientOptions = {
   apiKey?: string
@@ -61,6 +65,46 @@ const geminiJsonSchemaKeys = new Set([
   'title',
   'type',
 ])
+
+export const geminiRepairPatchTransportJsonSchema = {
+  properties: {
+    patch: {
+      items: {
+        properties: {
+          op: {
+            enum: ['add', 'replace', 'remove'],
+            type: 'string',
+          },
+          path: {
+            description:
+              'RFC 6901 JSON Pointer path into the current candidate JSON.',
+            type: 'string',
+          },
+          valueJson: {
+            description:
+              'For add/replace only: JSON.stringify of the exact replacement JSON value. Omit for remove.',
+            type: 'string',
+          },
+        },
+        required: ['op', 'path'],
+        type: 'object',
+      },
+      minItems: 1,
+      type: 'array',
+    },
+  },
+  required: ['patch'],
+  type: 'object',
+} as const
+
+const geminiRepairTransportInstruction = [
+  '<gemini_repair_transport>',
+  'For this Gemini repair request only, return patch operations using `valueJson` instead of raw `value` for every add/replace operation.',
+  '`valueJson` must be a JSON-encoded string containing the exact replacement JSON value, e.g. `[0,1,0]`, `{"type":"box"}`, `true`, `3.5`, or `null`.',
+  'For remove operations, omit `valueJson`.',
+  'Do not include a raw `value` field. The app will parse `valueJson` back into canonical JSON Patch and validate the fully patched asset against the central Manifest3D contract.',
+  '</gemini_repair_transport>',
+].join('\n')
 
 export function createGeminiManifestClient(
   options: CreateGeminiManifestClientOptions = {},
@@ -123,7 +167,7 @@ export function createGeminiManifestClient(
         }
       }
 
-      return parseGeminiManifestResponse(json)
+      return parseGeminiManifestResponse(json, request.prompt.metadata.mode)
     },
   }
 }
@@ -137,7 +181,7 @@ export function buildGeminiGenerateContentRequestBody(
       {
         parts: [
           {
-            text: request.prompt.user,
+            text: buildGeminiUserPrompt(request),
           },
           ...formatImageParts(request.imageAttachments ?? []),
         ],
@@ -166,15 +210,28 @@ export function buildGeminiGenerateContentRequestBody(
   }
 }
 
-export function buildGeminiResponseJsonSchema(mode: AgentRequest['prompt']['metadata']['mode'] = 'create') {
+export function buildGeminiResponseJsonSchema(
+  mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
+) {
   return normalizeGeminiJsonSchema(
     mode === 'repair'
-      ? manifestRepairPatchResponseJsonSchema
+      ? geminiRepairPatchTransportJsonSchema
       : manifestAssetResponseJsonSchema,
   )
 }
 
-export function parseGeminiManifestResponse(response: unknown): AgentResponse {
+function buildGeminiUserPrompt(request: AgentRequest) {
+  if (request.prompt.metadata.mode !== 'repair') {
+    return request.prompt.user
+  }
+
+  return `${request.prompt.user}\n\n${geminiRepairTransportInstruction}`
+}
+
+export function parseGeminiManifestResponse(
+  response: unknown,
+  mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
+): AgentResponse {
   const responseId = extractGeminiResponseId(response)
   const errorMessage = extractGeminiErrorMessage(response)
 
@@ -207,8 +264,14 @@ export function parseGeminiManifestResponse(response: unknown): AgentResponse {
   }
 
   try {
+    const parsedCandidate = JSON.parse(rawText) as unknown
+    const candidate =
+      mode === 'repair'
+        ? normalizeGeminiRepairPatchCandidate(parsedCandidate)
+        : parsedCandidate
+
     return {
-      candidate: JSON.parse(rawText) as unknown,
+      candidate,
       rawText,
       responseId,
       status: 'ok',
@@ -223,6 +286,60 @@ export function parseGeminiManifestResponse(response: unknown): AgentResponse {
       status: 'error',
     }
   }
+}
+
+function normalizeGeminiRepairPatchCandidate(candidate: unknown) {
+  if (!isRecord(candidate) || !Array.isArray(candidate.patch)) {
+    return candidate
+  }
+
+  return {
+    patch: candidate.patch.map((operation) =>
+      normalizeGeminiRepairPatchOperation(operation),
+    ),
+  }
+}
+
+function normalizeGeminiRepairPatchOperation(operation: unknown) {
+  if (!isRecord(operation)) {
+    return operation
+  }
+
+  const transportOperation = operation as GeminiRepairPatchTransportOperation
+  const op = transportOperation.op
+  const path = transportOperation.path
+
+  if (op === 'remove') {
+    return { op, path }
+  }
+
+  if (op !== 'add' && op !== 'replace') {
+    return operation
+  }
+
+  if (typeof transportOperation.valueJson === 'string') {
+    try {
+      return {
+        op,
+        path,
+        value: JSON.parse(transportOperation.valueJson) as unknown,
+      }
+    } catch {
+      if (!('value' in operation)) {
+        return operation
+      }
+    }
+  }
+
+  if ('value' in operation) {
+    return {
+      op,
+      path,
+      value: transportOperation.value,
+    }
+  }
+
+  return operation
 }
 
 function formatImageParts(

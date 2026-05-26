@@ -62,11 +62,78 @@ describe('buildGeminiGenerateContentRequestBody', () => {
     )
   })
 
+  it('uses a compact transport schema for Gemini repair requests', () => {
+    const repairSchema = buildGeminiResponseJsonSchema('repair')
+    const schemaJson = JSON.stringify(repairSchema)
+
+    expect(repairSchema).toMatchObject({
+      properties: {
+        patch: {
+          items: {
+            properties: {
+              op: {
+                enum: ['add', 'replace', 'remove'],
+                type: 'string',
+              },
+              path: {
+                type: 'string',
+              },
+              valueJson: {
+                type: 'string',
+              },
+            },
+            required: ['op', 'path'],
+            type: 'object',
+          },
+          minItems: 1,
+          type: 'array',
+        },
+      },
+      required: ['patch'],
+      type: 'object',
+    })
+    expect(schemaJson).not.toContain('anyOf')
+    expect(schemaJson).not.toContain('schemaVersion')
+    expect(schemaJson.length).toBeLessThan(1_500)
+  })
   it('normalizes the response schema to Gemini documented JSON Schema keys', () => {
     const schemaJson = JSON.stringify(buildGeminiResponseJsonSchema())
 
     expect(schemaJson).not.toContain('exclusiveMinimum')
     expect(schemaJson).toContain('"minimum":0')
+  })
+
+  it('adds Gemini-only repair transport instructions without changing the shared prompt contract', () => {
+    const prompt = compileManifestPrompt({
+      candidateJson: createValidValidationFixtureAsset(),
+      mode: 'repair',
+      scene: emptyScene,
+      userPrompt: 'Repair the candidate.',
+      validationFeedback: 'Geometry is too small.',
+    })
+
+    const body = buildGeminiGenerateContentRequestBody({ prompt })
+    const textPart = body.contents[0].parts[0]
+
+    expect(textPart).toMatchObject({
+      text: expect.stringContaining('<gemini_repair_transport>'),
+    })
+    expect(textPart).toMatchObject({
+      text: expect.stringContaining('valueJson'),
+    })
+    expect(body.generationConfig.responseJsonSchema).toMatchObject({
+      properties: {
+        patch: {
+          items: {
+            properties: {
+              valueJson: {
+                type: 'string',
+              },
+            },
+          },
+        },
+      },
+    })
   })
 })
 
@@ -123,6 +190,109 @@ describe('parseGeminiManifestResponse', () => {
     }
   })
 
+  it('converts Gemini repair valueJson transport back into canonical JSON Patch', () => {
+    const result = parseGeminiManifestResponse(
+      {
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    patch: [
+                      {
+                        op: 'replace',
+                        path: '/transform/position',
+                        valueJson: '[0,1,0]',
+                      },
+                      {
+                        op: 'add',
+                        path: '/tags/0',
+                        valueJson: '"hero"',
+                      },
+                      {
+                        op: 'remove',
+                        path: '/checks/0',
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        responseId: 'gemini-repair-123',
+      },
+      'repair',
+    )
+
+    expect(result.status).toBe('ok')
+
+    if (result.status === 'ok') {
+      expect(result.candidate).toEqual({
+        patch: [
+          {
+            op: 'replace',
+            path: '/transform/position',
+            value: [0, 1, 0],
+          },
+          {
+            op: 'add',
+            path: '/tags/0',
+            value: 'hero',
+          },
+          {
+            op: 'remove',
+            path: '/checks/0',
+          },
+        ],
+      })
+    }
+  })
+
+  it('accepts legacy canonical patch values from Gemini repair responses', () => {
+    const result = parseGeminiManifestResponse(
+      {
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    patch: [
+                      {
+                        op: 'replace',
+                        path: '/transform/position',
+                        value: [0, 1, 0],
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        responseId: 'gemini-repair-legacy',
+      },
+      'repair',
+    )
+
+    expect(result.status).toBe('ok')
+
+    if (result.status === 'ok') {
+      expect(result.candidate).toEqual({
+        patch: [
+          {
+            op: 'replace',
+            path: '/transform/position',
+            value: [0, 1, 0],
+          },
+        ],
+      })
+    }
+  })
   it('reports malformed output as a parse error without throwing', () => {
     const result = parseGeminiManifestResponse({
       candidates: [
