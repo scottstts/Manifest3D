@@ -41,6 +41,10 @@ import {
   getViewportWorldEnvironment,
   type ViewportWorldMode,
 } from './viewportWorld'
+import {
+  computeDefaultViewportShadowState,
+  defaultViewportShadowConfig,
+} from './viewportShadows'
 
 type WebGPUSceneProps = {
   activeTransformTool: TransformTool
@@ -223,7 +227,7 @@ export function WebGPUScene({
       ) : (
         <>
           <SceneEffectsPipeline object={selectedTransformHandle?.group ?? null} />
-          <ViewportWorld mode={worldMode} />
+          <ViewportWorld assetGroupHandles={assetGroupHandles} mode={worldMode} />
         </>
       )}
 
@@ -284,10 +288,11 @@ function clearSceneWorld(scene: THREE.Scene) {
 }
 
 type ViewportWorldProps = {
+  assetGroupHandles: Map<string, AssetGroupHandle>
   mode: ViewportWorldMode
 }
 
-function ViewportWorld({ mode }: ViewportWorldProps) {
+function ViewportWorld({ assetGroupHandles, mode }: ViewportWorldProps) {
   const invalidate = useThree((state) => state.invalidate)
   const environment = getViewportWorldEnvironment(mode)
 
@@ -298,11 +303,6 @@ function ViewportWorld({ mode }: ViewportWorldProps) {
   return (
     <>
       <color attach="background" args={[environment.backgroundColor]} />
-      <fogExp2
-        attach="fog"
-        args={[environment.fog.color, environment.fog.density]}
-      />
-
       <hemisphereLight
         args={[
           environment.lights.hemisphere.skyColor,
@@ -310,19 +310,11 @@ function ViewportWorld({ mode }: ViewportWorldProps) {
           environment.lights.hemisphere.intensity,
         ]}
       />
-      <directionalLight
-        castShadow
+      <DefaultViewportKeyLight
+        assetGroupHandles={assetGroupHandles}
         color={environment.lights.key.color}
         intensity={environment.lights.key.intensity}
-        position={environment.lights.key.position}
-        shadow-camera-bottom={-6}
-        shadow-camera-far={18}
-        shadow-camera-left={-6}
-        shadow-camera-near={0.5}
-        shadow-camera-right={6}
-        shadow-camera-top={6}
-        shadow-mapSize-height={2048}
-        shadow-mapSize-width={2048}
+        lightOffset={environment.lights.key.position}
       />
       <directionalLight
         color={environment.lights.fill.color}
@@ -340,6 +332,99 @@ function ViewportWorld({ mode }: ViewportWorldProps) {
       </mesh>
     </>
   )
+}
+
+
+type DefaultViewportKeyLightProps = {
+  assetGroupHandles: Map<string, AssetGroupHandle>
+  color: string
+  intensity: number
+  lightOffset: readonly [number, number, number]
+}
+
+function DefaultViewportKeyLight({
+  assetGroupHandles,
+  color,
+  intensity,
+  lightOffset,
+}: DefaultViewportKeyLightProps) {
+  const lightRef = useRef<THREE.DirectionalLight | null>(null)
+  const targetObject = useMemo(() => new THREE.Object3D(), [])
+  const scene = useThree((state) => state.scene)
+  const invalidate = useThree((state) => state.invalidate)
+
+  const applyShadowFit = useCallback(() => {
+    const light = lightRef.current
+
+    if (!light) {
+      return
+    }
+
+    const shadowState = computeDefaultViewportShadowState(
+      computeAssetGroupBounds(assetGroupHandles),
+      new THREE.Vector3(...lightOffset),
+    )
+    const shadowCamera = light.shadow.camera
+
+    targetObject.position.fromArray(shadowState.targetPosition)
+    targetObject.updateMatrixWorld(true)
+    light.target = targetObject
+    light.position.fromArray(shadowState.lightPosition)
+    light.updateMatrixWorld(true)
+
+    shadowCamera.left = shadowState.camera.left
+    shadowCamera.right = shadowState.camera.right
+    shadowCamera.top = shadowState.camera.top
+    shadowCamera.bottom = shadowState.camera.bottom
+    shadowCamera.near = shadowState.camera.near
+    shadowCamera.far = shadowState.camera.far
+    shadowCamera.updateProjectionMatrix()
+    light.shadow.needsUpdate = true
+  }, [assetGroupHandles, lightOffset, targetObject])
+
+  useEffect(() => {
+    scene.add(targetObject)
+    applyShadowFit()
+    invalidate()
+
+    return () => {
+      scene.remove(targetObject)
+      invalidate()
+    }
+  }, [applyShadowFit, invalidate, scene, targetObject])
+
+  useEffect(() => {
+    applyShadowFit()
+    invalidate()
+  }, [applyShadowFit, invalidate])
+
+  useFrame(() => {
+    applyShadowFit()
+  })
+
+  return (
+    <directionalLight
+      castShadow
+      color={color}
+      intensity={intensity}
+      ref={lightRef}
+      shadow-mapSize-height={defaultViewportShadowConfig.mapSize}
+      shadow-mapSize-width={defaultViewportShadowConfig.mapSize}
+    />
+  )
+}
+
+function computeAssetGroupBounds(
+  assetGroupHandles: Map<string, AssetGroupHandle>,
+) {
+  const bounds = new THREE.Box3()
+
+  for (const { group } of assetGroupHandles.values()) {
+    group.updateWorldMatrix(true, true)
+    bounds.union(new THREE.Box3().setFromObject(group))
+  }
+
+  return bounds
 }
 
 type ManifestAssetObjectProps = {

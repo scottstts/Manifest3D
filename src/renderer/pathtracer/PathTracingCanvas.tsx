@@ -14,7 +14,10 @@ import type { JointPoseValues } from '../../engine/geometry/jointPoses'
 import type { MaterialAnimationValues } from '../../engine/geometry/materialAnimations'
 import type { SceneAssetInstance } from '../../engine/scene/sceneStore'
 import { computeRendererDpr } from '../createRenderer'
-import type { ViewportCameraSnapshot } from '../viewportCamera'
+import {
+  defaultViewportCameraConfig,
+  type ViewportCameraSnapshot,
+} from '../viewportCamera'
 import type { ViewportWorldMode } from '../viewportWorld'
 import {
   applyPathTracingCameraSnapshot,
@@ -186,7 +189,12 @@ export function PathTracingCanvas({
       canvas,
       powerPreference: 'high-performance',
     })
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 80)
+    const camera = new THREE.PerspectiveCamera(
+      defaultViewportCameraConfig.fov,
+      1,
+      defaultViewportCameraConfig.near,
+      defaultViewportCameraConfig.far,
+    )
     const scene = new THREE.Scene()
     const pathTracer = new WebGLPathTracer(renderer)
     const texturePass = new TexturePass()

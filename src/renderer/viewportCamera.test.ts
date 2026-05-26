@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   createViewportCameraSnapshot,
+  defaultViewportCameraConfig,
   getViewportCameraSnapshotSignature,
 } from './viewportCamera'
+
+describe('defaultViewportCameraConfig', () => {
+  it('keeps the far clip safely beyond the maximum orbit zoom-out distance', () => {
+    expect(defaultViewportCameraConfig.far).toBe(150)
+  })
+})
 
 describe('createViewportCameraSnapshot', () => {
   it('captures camera pose and orbit target in the path-tracer bridge format', () => {

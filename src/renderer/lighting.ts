@@ -3,6 +3,7 @@ import {
   getViewportWorldEnvironment,
   type ViewportWorldMode,
 } from './viewportWorld'
+import { defaultViewportShadowConfig } from './viewportShadows'
 
 export function addLighting(
   scene: THREE.Scene,
@@ -22,13 +23,16 @@ export function addLighting(
   )
   key.position.set(...environment.lights.key.position)
   key.castShadow = true
-  key.shadow.mapSize.set(2048, 2048)
-  key.shadow.camera.near = 0.5
-  key.shadow.camera.far = 18
-  key.shadow.camera.left = -6
-  key.shadow.camera.right = 6
-  key.shadow.camera.top = 6
-  key.shadow.camera.bottom = -6
+  key.shadow.mapSize.set(
+    defaultViewportShadowConfig.mapSize,
+    defaultViewportShadowConfig.mapSize,
+  )
+  key.shadow.camera.near = defaultViewportShadowConfig.camera.near
+  key.shadow.camera.far = defaultViewportShadowConfig.camera.far
+  key.shadow.camera.left = defaultViewportShadowConfig.camera.left
+  key.shadow.camera.right = defaultViewportShadowConfig.camera.right
+  key.shadow.camera.top = defaultViewportShadowConfig.camera.top
+  key.shadow.camera.bottom = defaultViewportShadowConfig.camera.bottom
   scene.add(key)
 
   const fill = new THREE.DirectionalLight(

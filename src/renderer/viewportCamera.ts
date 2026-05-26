@@ -29,7 +29,7 @@ export type ViewportVectorLike = {
 }
 
 export const defaultViewportCameraConfig = {
-  far: 80,
+  far: 150,
   fov: 38,
   near: 0.1,
   position: [3.65, 2.5, 4.45] as [number, number, number],
