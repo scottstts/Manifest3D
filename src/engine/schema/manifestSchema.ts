@@ -24,6 +24,12 @@ const manifestPositiveVector3Schema = z.tuple([
   positiveNumber,
   positiveNumber,
 ])
+const manifestPartAttachmentSchema = z
+  .object({
+    partId: nonEmptyId,
+    position: manifestVector3Schema,
+  })
+  .strict()
 
 export const manifestTransformSchema = z
   .object({
@@ -122,6 +128,17 @@ export const manifestGeometrySchema = z.discriminatedUnion('type', [
       tubularSegments: segmentCount.optional(),
       radialSegments: segmentCount.optional(),
       closed: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('connectorTube'),
+      start: manifestPartAttachmentSchema,
+      end: manifestPartAttachmentSchema,
+      radius: positiveNumber,
+      sag: nonNegativeNumber.optional(),
+      tubularSegments: segmentCount.optional(),
+      radialSegments: segmentCount.optional(),
     })
     .strict(),
 ])

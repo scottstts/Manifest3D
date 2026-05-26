@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu'
 import type {
   ManifestAsset,
+  ManifestGeometry,
   ManifestJoint,
   ManifestMaterial,
   ManifestPart,
@@ -35,6 +36,7 @@ export type ManifestObjectUserData = {
 export type BuiltManifestAsset = {
   asset: ManifestAsset
   bounds: THREE.Box3
+  connectorVisuals: BuiltConnectorVisual[]
   group: THREE.Group
   jointGroups: Map<string, THREE.Group>
   materials: Map<string, THREE.Material>
@@ -43,6 +45,14 @@ export type BuiltManifestAsset = {
   visualBounds: Map<string, THREE.Box3>
   visualMeshes: Map<string, THREE.Mesh>
   visualPartIds: Map<string, string>
+}
+
+export type BuiltConnectorVisual = {
+  centerlinePoints: THREE.Vector3[]
+  geometry: Extract<ManifestGeometry, { type: 'connectorTube' }>
+  mesh: THREE.Mesh
+  ownerPartId: string
+  visualId: string
 }
 
 export type BuildManifestAssetOptions = {
@@ -59,6 +69,7 @@ export function buildManifestAsset(
   const visualMeshes = new Map<string, THREE.Mesh>()
   const visualPartIds = new Map<string, string>()
   const jointGroups = new Map<string, THREE.Group>()
+  const connectorVisuals: BuiltConnectorVisual[] = []
 
   group.name = asset.name
   setManifestUserData(group, {
@@ -73,6 +84,7 @@ export function buildManifestAsset(
       materialById,
       visualMeshes,
       visualPartIds,
+      connectorVisuals,
     )
 
     partGroups.set(part.id, partGroup)
@@ -92,6 +104,11 @@ export function buildManifestAsset(
   }
 
   attachJointDrivenHierarchy(asset, group, partGroups, jointGroups)
+  group.updateMatrixWorld(true)
+  updateConnectorVisualGeometries({
+    connectorVisuals,
+    partGroups,
+  })
   group.updateMatrixWorld(true)
 
   const visualBounds = new Map<string, THREE.Box3>()
@@ -126,6 +143,7 @@ export function buildManifestAsset(
   return {
     asset,
     bounds,
+    connectorVisuals,
     group,
     jointGroups,
     materials: materialById,
@@ -142,6 +160,8 @@ export function applyBuiltManifestJointPoses(
   jointPoses: JointPoseValues,
 ) {
   applyJointPosesToBuiltGroups(builtAsset.asset, builtAsset.jointGroups, jointPoses)
+  builtAsset.group.updateMatrixWorld(true)
+  updateConnectorVisualGeometries(builtAsset)
   builtAsset.group.updateMatrixWorld(true)
 }
 
@@ -305,6 +325,7 @@ function buildPartGroup(
   materialById: Map<string, THREE.Material>,
   visualMeshes: Map<string, THREE.Mesh>,
   visualPartIds: Map<string, string>,
+  connectorVisuals: BuiltConnectorVisual[],
 ) {
   const partGroup = new THREE.Group()
 
@@ -316,7 +337,18 @@ function buildPartGroup(
   })
 
   for (const visual of part.visuals) {
-    const mesh = buildVisualMesh(asset, part, visual, materialById)
+    const mesh =
+      visual.geometry.type === 'connectorTube'
+        ? buildConnectorVisualMesh(
+            asset,
+            part,
+            visual as ManifestVisual & {
+              geometry: Extract<ManifestGeometry, { type: 'connectorTube' }>
+            },
+            materialById,
+            connectorVisuals,
+          )
+        : buildVisualMesh(asset, part, visual, materialById)
 
     visualMeshes.set(visual.id, mesh)
     visualPartIds.set(visual.id, part.id)
@@ -324,6 +356,120 @@ function buildPartGroup(
   }
 
   return partGroup
+}
+
+function buildConnectorVisualMesh(
+  asset: ManifestAsset,
+  part: ManifestPart,
+  visual: ManifestVisual & {
+    geometry: Extract<ManifestGeometry, { type: 'connectorTube' }>
+  },
+  materialById: Map<string, THREE.Material>,
+  connectorVisuals: BuiltConnectorVisual[],
+) {
+  const material = materialById.get(visual.materialId)
+
+  if (!material) {
+    throw new Error(
+      `Visual ${visual.id} references missing material ${visual.materialId}.`,
+    )
+  }
+
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material)
+
+  mesh.name = visual.name ?? visual.id
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  setManifestUserData(mesh, {
+    kind: 'visual',
+    assetId: asset.id,
+    partId: part.id,
+    visualId: visual.id,
+  })
+  connectorVisuals.push({
+    centerlinePoints: [],
+    geometry: visual.geometry,
+    mesh,
+    ownerPartId: part.id,
+    visualId: visual.id,
+  })
+
+  return mesh
+}
+
+function updateConnectorVisualGeometries({
+  connectorVisuals,
+  partGroups,
+}: {
+  connectorVisuals: readonly BuiltConnectorVisual[]
+  partGroups: ReadonlyMap<string, THREE.Group>
+}) {
+  for (const connector of connectorVisuals) {
+    const ownerGroup = partGroups.get(connector.ownerPartId)
+    const startGroup = partGroups.get(connector.geometry.start.partId)
+    const endGroup = partGroups.get(connector.geometry.end.partId)
+
+    if (!ownerGroup || !startGroup || !endGroup) {
+      continue
+    }
+
+    const ownerInverse = ownerGroup.matrixWorld.clone().invert()
+    const start = startGroup
+      .localToWorld(new THREE.Vector3(...connector.geometry.start.position))
+      .applyMatrix4(ownerInverse)
+    const end = endGroup
+      .localToWorld(new THREE.Vector3(...connector.geometry.end.position))
+      .applyMatrix4(ownerInverse)
+    const centerlinePoints = createConnectorTubePoints(connector.geometry, start, end)
+    const nextGeometry = buildConnectorTubeGeometry(
+      connector.geometry,
+      centerlinePoints,
+    )
+
+    connector.mesh.geometry.dispose()
+    connector.mesh.geometry = nextGeometry
+    connector.centerlinePoints = centerlinePoints.map((point) => point.clone())
+  }
+}
+
+function createConnectorTubePoints(
+  geometry: Extract<ManifestGeometry, { type: 'connectorTube' }>,
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+) {
+  const safeEnd =
+    start.distanceTo(end) > 0.00001
+      ? end
+      : end.clone().add(new THREE.Vector3(0, 0.00001, 0))
+  const points = [start.clone()]
+  const sag = geometry.sag ?? 0
+
+  if (sag > 0) {
+    points.push(
+      start
+        .clone()
+        .add(safeEnd)
+        .multiplyScalar(0.5)
+        .add(new THREE.Vector3(0, -sag, 0)),
+    )
+  }
+
+  points.push(safeEnd.clone())
+
+  return points
+}
+
+function buildConnectorTubeGeometry(
+  geometry: Extract<ManifestGeometry, { type: 'connectorTube' }>,
+  points: readonly THREE.Vector3[],
+) {
+  return new THREE.TubeGeometry(
+    new THREE.CatmullRomCurve3([...points]),
+    geometry.tubularSegments ?? 32,
+    geometry.radius,
+    geometry.radialSegments ?? 12,
+    false,
+  )
 }
 
 function buildVisualMesh(

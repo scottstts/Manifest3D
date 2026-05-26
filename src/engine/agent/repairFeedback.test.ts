@@ -235,4 +235,89 @@ describe('renderValidationSignals', () => {
     expect(rendered).toContain('candidateFingerprint=fnv1a:test')
     expect(rendered).toContain('requires fresh validation')
   })
+
+  it('renders semantic clusters and probe context for mechanism repair', () => {
+    const bundle: ValidationSignalBundle = {
+      signals: [
+        createValidationSignal(
+          'sampled_pose_overlap',
+          'part_overlap_sampled_pose',
+          'Sampled-pose overlap detected between "chain" and "drawbridge".',
+          {
+            details: 'pose=lowered joints=bridge-hinge=-1.2000',
+            refs: {
+              partAId: 'chain',
+              partBId: 'drawbridge',
+            },
+            source: 'baseline_qc',
+            stage: 'sampled_poses',
+          },
+        ),
+      ],
+      status: 'failure',
+      summary: 'status=failure failures=1 warnings=0 notes=0',
+    }
+
+    const rendered = renderValidationSignals(bundle, {
+      failureClusters: [
+        {
+          code: 'part_overlap_sampled_pose',
+          count: 8,
+          key: 'cluster',
+          kind: 'sampled_pose_overlap',
+          label:
+            '[sampled_poses/part_overlap_sampled_pose] partPair=chain<->drawbridge',
+          poseKey: 'joints:bridge-hinge=-1.2000',
+          refs: {
+            partPair: 'chain<->drawbridge',
+          },
+          source: 'baseline_qc',
+          stage: 'sampled_poses',
+        },
+      ],
+      failureStreak: 3,
+      probeReport: {
+        assetBounds: {
+          center: [0, 0.5, 0],
+          max: [1, 1, 1],
+          min: [-1, 0, -1],
+          size: [2, 1, 2],
+        },
+        assetId: 'gatehouse',
+        assetName: 'Gatehouse',
+        connectors: [
+          {
+            endPartId: 'drawbridge',
+            endWorld: [0.5, 0.2, 0.1],
+            id: 'chain-1',
+            length: 1.25,
+            ownerPartId: 'gatehouse',
+            radius: 0.02,
+            startPartId: 'tower',
+            startWorld: [0.5, 1.2, 0.1],
+          },
+        ],
+        joints: [
+          {
+            axis: [1, 0, 0],
+            childDistanceToOrigin: 0.18,
+            childPartId: 'drawbridge',
+            id: 'bridge-hinge',
+            originWorld: [0, 0.2, -0.5],
+            parentDistanceToOrigin: 0.04,
+            parentPartId: 'gatehouse',
+            type: 'revolute',
+          },
+        ],
+        parts: [],
+      },
+    })
+
+    expect(rendered).toContain('<failure_clusters>')
+    expect(rendered).toContain('partPair=chain<->drawbridge')
+    expect(rendered).toContain('<probe_report>')
+    expect(rendered).toContain('jointOriginDistances')
+    expect(rendered).toContain('visual=chain-1')
+    expect(rendered).toContain('pose-resolved endpoint geometry')
+  })
 })

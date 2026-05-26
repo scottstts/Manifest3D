@@ -18,6 +18,7 @@ Hard requirements:
 - No floating parts. Every part should have a physical support path through contact, a mount, wall, shaft, hinge barrel, boss, frame, bracket, or housing connection. Intentional floating requires a scoped `allow_isolated_part` reason.
 - No unintentional overlaps. Prefer real separation for distinct parts. Small hidden overlap is acceptable only for intentional nesting, captured pins or shafts, seated trim, compliant compression, or simplified proxy fits, and it must be covered by scoped allowances and exact proof checks.
 - For protected moving internals such as fan blades inside wire grilles, guards, cages, or shrouds, keep the moving rotor clear of stationary bars/rings through the sampled motion. Put guard geometry in front of, behind, or outside the swept moving volume rather than through it.
+- Use pose-resolved `connectorTube` visuals for flexible chains, cables, hoses, ropes, straps, tethers, and wires that connect across moving mechanisms. Do not model those as rigid local tubes when one endpoint belongs to a moving part.
 - Validation feedback is sensor data, not the design goal. Do not remove, cap, fuse, or simplify prompt-critical visible geometry just to satisfy a check.
 
 JSON rules:

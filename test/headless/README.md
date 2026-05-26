@@ -15,9 +15,11 @@ Artifacts are written to `test/headless/artifacts/headless-agent/<run-id>/` by
 default and are ignored by git. Each run captures:
 
 - compiled system and user prompts
-- model response text and parsed candidate JSON
+- model response text and parsed create/edit asset JSON or repair patch JSON
 - validation reports and signals for every attempt
+- semantic failure clusters and deterministic probe reports for buildable attempts
 - agent events, final scene, saved in-memory library, and summary JSON
+- live progress in `progress.jsonl`
 - per-attempt static GLB exports whenever an attempt can be parsed and exported
 - per-attempt dynamic GLB exports when the attempt has movable joints or material emission animation
 - final static GLB export for ready runs
@@ -32,6 +34,7 @@ HEADLESS_AGENT_PROMPT='a compact espresso machine based on the reference' HEADLE
 HEADLESS_AGENT_PROVIDER=gemini npm run test:headless
 HEADLESS_AGENT_EXPECT_READY=0 npm run test:headless
 HEADLESS_AGENT_MAX_REPAIR_TURNS=10 npm run test:headless
+HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK=0 npm run test:headless
 HEADLESS_AGENT_ARTIFACT_DIR=test/headless/artifacts/headless-agent npm run test:headless
 ```
 
@@ -44,10 +47,16 @@ Vite-prefixed variants from the environment or `.env`.
 `HEADLESS_AGENT_IMAGE_PATH` or comma-separated `HEADLESS_AGENT_IMAGE_PATHS`
 loads local PNG/JPEG/WEBP/GIF files as reference image attachments and copies
 them into each run's `reference-images/` artifact folder.
+`HEADLESS_AGENT_PROGRESS_INTERVAL_MS` controls how often long model requests
+print a live waiting heartbeat and defaults to 30 seconds.
 The default agent-run timeout is one hour so stress runs can behave like real
 pipeline runs; recent live runs completed in roughly 12-15 minutes but need
 enough margin for slower repair turns.
 The default repair cap is ten repair turns, matching the app runtime.
+Headless also has a diagnostic-only repeated-failure stop that returns a failed
+result before another model request once the same validation failure signature
+repeats three times. Set `HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK=0` to let
+the run spend the full app repair cap.
 
 To inspect a GLB artifact, serve the headless directory and open the viewer URL
 recorded in `summary.json`:

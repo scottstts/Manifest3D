@@ -13,6 +13,16 @@ const transformSchema = objectSchema(
   ['position', 'rotation', 'scale'],
 )
 
+const partAttachmentSchema = objectSchema(
+  {
+    partId: stringSchema('Existing part id that owns this connector endpoint.'),
+    position: vector3Schema(
+      'Endpoint position [x, y, z] in the referenced part local frame.',
+    ),
+  },
+  ['partId', 'position'],
+)
+
 const materialSchema = objectSchema(
   {
     id: stringSchema('Stable material id.'),
@@ -232,6 +242,28 @@ const visualSchema = objectSchema(
             'tubularSegments',
             'radialSegments',
             'closed',
+          ],
+        ),
+        objectSchema(
+          {
+            type: literalSchema('connectorTube'),
+            start: partAttachmentSchema,
+            end: partAttachmentSchema,
+            radius: positiveNumberSchema('Positive connector tube radius.'),
+            sag: nonNegativeNumberSchema(
+              'Nonnegative downward slack in owner-part local meters. Use 0 for taut connectors.',
+            ),
+            tubularSegments: segmentCountSchema(),
+            radialSegments: segmentCountSchema(),
+          },
+          [
+            'type',
+            'start',
+            'end',
+            'radius',
+            'sag',
+            'tubularSegments',
+            'radialSegments',
           ],
         ),
       ],
@@ -517,6 +549,7 @@ const allowanceSchema = {
 }
 
 export const manifestAssetResponseFormatName = 'manifest3d_asset'
+export const manifestRepairPatchResponseFormatName = 'manifest3d_repair_patch'
 
 export const manifestAssetResponseJsonSchema = objectSchema(
   {
@@ -564,6 +597,79 @@ export const manifestAssetResponseJsonSchema = objectSchema(
     'allowances',
     'metadata',
   ],
+)
+
+const patchPathSchema = stringSchema(
+  'RFC 6901 JSON Pointer path into the current candidate asset.',
+)
+const patchValueSchema = {
+  anyOf: [
+    manifestAssetResponseJsonSchema,
+    partSchema,
+    visualSchema,
+    jointSchema,
+    jointControlSchema,
+    materialSchema,
+    checkSchema,
+    allowanceSchema,
+    transformSchema,
+    vector2Schema('Replacement two-number vector value [x, y].'),
+    vector3Schema('Replacement three-number vector value [x, y, z].'),
+    positiveVector3Schema('Replacement positive size vector [x, y, z].'),
+    arraySchema(vector2Schema('Replacement 2D point [x, y].'), {
+      minItems: 1,
+    }),
+    arraySchema(vector3Schema('Replacement 3D point [x, y, z].'), {
+      minItems: 1,
+    }),
+    arraySchema(partSchema, { minItems: 1 }),
+    arraySchema(jointSchema, { minItems: 1 }),
+    arraySchema(jointControlSchema, { minItems: 1 }),
+    arraySchema(materialSchema, { minItems: 1 }),
+    arraySchema(checkSchema, { minItems: 1 }),
+    arraySchema(allowanceSchema, { minItems: 1 }),
+    stringSchema('Replacement string value.'),
+    numberSchema('Replacement number value.'),
+    booleanSchema('Replacement boolean value.'),
+    {
+      type: 'null',
+    },
+  ],
+}
+const patchAddSchema = objectSchema(
+  {
+    op: literalSchema('add'),
+    path: patchPathSchema,
+    value: patchValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchReplaceSchema = objectSchema(
+  {
+    op: literalSchema('replace'),
+    path: patchPathSchema,
+    value: patchValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchRemoveSchema = objectSchema(
+  {
+    op: literalSchema('remove'),
+    path: patchPathSchema,
+  },
+  ['op', 'path'],
+)
+
+export const manifestRepairPatchResponseJsonSchema = objectSchema(
+  {
+    patch: arraySchema(
+      {
+        anyOf: [patchAddSchema, patchReplaceSchema, patchRemoveSchema],
+      },
+      { minItems: 1 },
+    ),
+  },
+  ['patch'],
 )
 
 function objectSchema(

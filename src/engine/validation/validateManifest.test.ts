@@ -36,6 +36,77 @@ describe('validateManifestAssetCandidate', () => {
     ])
   })
 
+  it('accepts connectorTube visuals with identity transforms and records connector probe measurements', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts[0].visuals.push({
+      geometry: {
+        end: {
+          partId: 'crate-lid',
+          position: [0.55, 0.12, 0],
+        },
+        radius: 0.008,
+        sag: 0.03,
+        start: {
+          partId: 'crate-base',
+          position: [0.55, 0.42, 0],
+        },
+        type: 'connectorTube',
+      },
+      id: 'lid-retainer-cable',
+      materialId: 'mat-white',
+      name: 'Lid retainer cable',
+      transform: {
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      },
+    })
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(true)
+    expect(result.probeReport?.connectors[0]).toMatchObject({
+      endPartId: 'crate-lid',
+      id: 'lid-retainer-cable',
+      ownerPartId: 'crate-base',
+      startPartId: 'crate-base',
+    })
+    expect(result.probeReport?.connectors[0]?.length).toBeGreaterThan(0.1)
+  })
+
+  it('rejects connectorTube visuals with transforms or missing endpoint parts', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts[0].visuals.push({
+      geometry: {
+        end: {
+          partId: 'missing-part',
+          position: [0.55, 0.12, 0],
+        },
+        radius: 0.008,
+        start: {
+          partId: 'crate-base',
+          position: [0.55, 0.42, 0],
+        },
+        type: 'connectorTube',
+      },
+      id: 'broken-cable',
+      materialId: 'mat-white',
+      transform: {
+        position: [0, 0.1, 0],
+      },
+    })
+
+    const result = validateManifestAssetCandidate(asset)
+    const signalCodes = result.report.bundle.signals.map((signal) => signal.code)
+
+    expect(result.report.valid).toBe(false)
+    expect(signalCodes).toContain('connector_missing_part_reference')
+    expect(signalCodes).toContain('connector_tube_transform_not_supported')
+    expect(result.probeReport).toBeNull()
+  })
+
   it('reports schema paths for malformed candidates', () => {
     const malformedAsset = createValidValidationFixtureAsset()
 

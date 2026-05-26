@@ -1,4 +1,10 @@
 import type { ValidationReport, ValidationSignal } from '../schema/validationTypes'
+import type { ManifestProbeReport } from '../validation/probeReport'
+import {
+  createValidationFailureClusters,
+  createValidationFailureClusterSignature,
+  type ValidationFailureCluster,
+} from './failureClusters'
 
 export type CandidateAttemptStatus = 'success' | 'failure'
 
@@ -6,9 +12,11 @@ export type CandidateAttempt = {
   candidate: unknown
   candidateFingerprint: string
   createdAt: string
+  failureClusters: ValidationFailureCluster[]
   failureSignature: string | null
   failureStreak: number
   id: string
+  probeReport: ManifestProbeReport | null
   repeatedFailure: boolean
   report: ValidationReport
   revision: number
@@ -37,6 +45,7 @@ export type CandidateHistory = {
   recordValidationAttempt: (
     candidate: unknown,
     report: ValidationReport,
+    probeReport?: ManifestProbeReport | null,
   ) => CandidateAttempt
 }
 
@@ -96,11 +105,13 @@ export function createCandidateHistory(
   function recordValidationAttempt(
     candidate: unknown,
     report: ValidationReport,
+    probeReport: ManifestProbeReport | null = null,
   ): CandidateAttempt {
     const candidateFingerprint = markCandidateDraft(candidate)
+    const failureClusters = createValidationFailureClusters(report.bundle.signals)
     const failureSignature = report.valid
       ? null
-      : createValidationFailureSignature(report.bundle.signals)
+      : createValidationFailureClusterSignature(failureClusters)
     const repeatedFailure = Boolean(
       failureSignature && failureSignature === latestFailureSignature,
     )
@@ -117,9 +128,11 @@ export function createCandidateHistory(
       candidate,
       candidateFingerprint,
       createdAt: now(),
+      failureClusters,
       failureSignature,
       failureStreak: consecutiveFailureCount,
       id: `${runId}:attempt:${attempts.length + 1}`,
+      probeReport,
       repeatedFailure,
       report,
       revision: currentRevision,
@@ -175,30 +188,9 @@ export function createCandidateFingerprint(candidate: unknown): string {
 export function createValidationFailureSignature(
   signals: readonly ValidationSignal[],
 ): string | null {
-  const failures = signals
-    .filter((signal) => signal.severity === 'failure')
-    .map((signal) => ({
-      blocking: signal.blocking,
-      checkName: signal.checkName ?? null,
-      code: signal.code,
-      dedupeKey: signal.dedupeKey ?? null,
-      details: signal.details ?? null,
-      kind: signal.kind,
-      path: signal.path ?? null,
-      refs: signal.refs ?? null,
-      source: signal.source,
-      stage: signal.stage,
-      summary: signal.summary,
-    }))
-    .sort((left, right) =>
-      stableSerialize(left).localeCompare(stableSerialize(right)),
-    )
-
-  if (failures.length === 0) {
-    return null
-  }
-
-  return hashString(stableSerialize(failures))
+  return createValidationFailureClusterSignature(
+    createValidationFailureClusters(signals),
+  )
 }
 
 function stableSerialize(value: unknown): string {

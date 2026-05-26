@@ -14,6 +14,7 @@ export function validateGeometryDescriptors(
   asset: ManifestAsset,
 ): ValidationSignal[] {
   const signals: ValidationSignal[] = []
+  const partIds = new Set(asset.parts.map((part) => part.id))
 
   for (const [partIndex, part] of asset.parts.entries()) {
     if (part.visuals.length === 0) {
@@ -39,6 +40,10 @@ export function validateGeometryDescriptors(
           visual.geometry,
           `${visualPath}/geometry`,
           { partId: part.id, visualId: visual.id },
+          {
+            partIds,
+            transform: visual.transform,
+          },
         ),
       )
       signals.push(
@@ -57,6 +62,10 @@ function validateManifestGeometry(
   geometry: ManifestGeometry,
   path: string,
   refs: Record<string, string>,
+  context: {
+    partIds: ReadonlySet<string>
+    transform: ManifestTransform
+  },
 ): ValidationSignal[] {
   switch (geometry.type) {
     case 'box':
@@ -102,9 +111,100 @@ function validateManifestGeometry(
         ...validateVector3List(geometry.points, `${path}/points`, refs),
         ...validatePositiveNumber(geometry.radius, `${path}/radius`, refs),
       ]
+    case 'connectorTube':
+      return [
+        ...validateConnectorAttachment(
+          geometry.start,
+          `${path}/start`,
+          refs,
+          context.partIds,
+        ),
+        ...validateConnectorAttachment(
+          geometry.end,
+          `${path}/end`,
+          refs,
+          context.partIds,
+        ),
+        ...validatePositiveNumber(geometry.radius, `${path}/radius`, refs),
+        ...(geometry.sag !== undefined
+          ? validateNonNegativeNumber(geometry.sag, `${path}/sag`, refs)
+          : []),
+        ...validateConnectorTransform(context.transform, path, refs),
+      ]
     default:
       return assertNever(geometry)
   }
+}
+
+function validateConnectorAttachment(
+  attachment: { partId: string; position: ManifestVector3 },
+  path: string,
+  refs: Record<string, string>,
+  partIds: ReadonlySet<string>,
+) {
+  const signals = validateFiniteVector3(attachment.position, `${path}/position`, refs)
+
+  if (!partIds.has(attachment.partId)) {
+    signals.push(
+      createValidationSignal(
+        'model_validity',
+        'connector_missing_part_reference',
+        `Connector endpoint references missing part "${attachment.partId}".`,
+        {
+          path: `${path}/partId`,
+          refs: {
+            ...refs,
+            partId: attachment.partId,
+          },
+          stage: 'structure',
+        },
+      ),
+    )
+  }
+
+  return signals
+}
+
+function validateConnectorTransform(
+  transform: ManifestTransform,
+  path: string,
+  refs: Record<string, string>,
+) {
+  if (isIdentityConnectorTransform(transform)) {
+    return []
+  }
+
+  return [
+    createValidationSignal(
+      'model_validity',
+      'connector_tube_transform_not_supported',
+      'connectorTube visuals resolve their geometry from endpoint parts and must use an empty or identity transform.',
+      {
+        path: path.replace(/\/geometry$/, '/transform'),
+        refs,
+        stage: 'structure',
+      },
+    ),
+  ]
+}
+
+function isIdentityConnectorTransform(transform: ManifestTransform) {
+  return (
+    isZeroVector(transform.position) &&
+    isZeroVector(transform.rotation) &&
+    isUnitScale(transform.scale)
+  )
+}
+
+function isZeroVector(vector: ManifestVector3 | undefined) {
+  return vector === undefined || vector.every((value) => Math.abs(value) <= 1e-8)
+}
+
+function isUnitScale(vector: ManifestVector3 | undefined) {
+  return (
+    vector === undefined ||
+    vector.every((value) => Math.abs(value - 1) <= 1e-8)
+  )
 }
 
 function validateRoundedBoxRadius(
@@ -227,6 +327,25 @@ function validatePositiveNumber(
         'model_validity',
         'geometry_positive_number_required',
         'Geometry values must be finite positive numbers.',
+        { path, refs, stage: 'structure' },
+      ),
+    ]
+  }
+
+  return []
+}
+
+function validateNonNegativeNumber(
+  value: number,
+  path: string,
+  refs: Record<string, string>,
+) {
+  if (!Number.isFinite(value) || value < 0) {
+    return [
+      createValidationSignal(
+        'model_validity',
+        'geometry_nonnegative_number_required',
+        'Geometry values must be finite nonnegative numbers.',
         { path, refs, stage: 'structure' },
       ),
     ]

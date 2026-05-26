@@ -75,6 +75,26 @@ describe('GLB export', () => {
     expect(gltf.nodes?.[target?.node ?? -1]?.name).toBe('Lid Hinge')
   })
 
+  it('exports connectorTube morph tracks when endpoint parts animate', async () => {
+    const result = await exportManifestAssetGlb(
+      createConnectorTubeAnimationFixtureAsset(),
+      { mode: 'dynamic' },
+    )
+    const gltf = readGlbJson(result.arrayBuffer)
+    const animation = gltf.animations?.find(
+      (candidate) => candidate.name === 'Lid Motion',
+    )
+    const weightChannel = animation?.channels.find(
+      (channel) => channel.target.path === 'weights',
+    )
+    const connectorNode = gltf.nodes?.[weightChannel?.target.node ?? -1]
+    const connectorMesh = gltf.meshes?.[connectorNode?.mesh ?? -1]
+
+    expect(weightChannel).toBeDefined()
+    expect(connectorNode?.name).toBe('Lid retainer cable')
+    expect(connectorMesh?.primitives[0].targets?.length).toBeGreaterThan(0)
+  })
+
   it('reuses one exported material slot for visuals sharing a manifest material', async () => {
     const asset = createValidValidationFixtureAsset()
 
@@ -328,6 +348,38 @@ function createMaterialEmissionAnimationFixtureAsset() {
   }
 }
 
+function createConnectorTubeAnimationFixtureAsset() {
+  const asset = createValidValidationFixtureAsset()
+
+  asset.parts[0].visuals.push({
+    geometry: {
+      end: {
+        partId: 'crate-lid',
+        position: [0.45, 0.08, 0],
+      },
+      radius: 0.01,
+      sag: 0.03,
+      start: {
+        partId: 'crate-base',
+        position: [0.45, 0.42, 0],
+      },
+      tubularSegments: 16,
+      radialSegments: 8,
+      type: 'connectorTube',
+    },
+    id: 'lid-retainer-cable',
+    materialId: 'mat-white',
+    name: 'Lid retainer cable',
+    transform: {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    },
+  })
+
+  return asset
+}
+
 class TestFileReader {
   onloadend: (() => void) | null = null
   result: ArrayBuffer | string | null = null
@@ -389,15 +441,17 @@ type GltfJson = {
       roughnessFactor?: number
     }
   }>
-  meshes?: Array<{
-    primitives: Array<{
-      material?: number
-    }>
-  }>
-  nodes?: Array<{
-    name?: string
-  }>
-}
+	  meshes?: Array<{
+	    primitives: Array<{
+	      material?: number
+	      targets?: Array<Record<string, number>>
+	    }>
+	  }>
+	  nodes?: Array<{
+	    mesh?: number
+	    name?: string
+	  }>
+	}
 
 function readGlbJson(arrayBuffer: ArrayBuffer): GltfJson {
   const view = new DataView(arrayBuffer)

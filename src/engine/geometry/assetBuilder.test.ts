@@ -3,6 +3,7 @@ import * as THREE from 'three/webgpu'
 import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
 import { parseManifestAsset } from '../schema/manifestSchema'
 import {
+  applyBuiltManifestJointPoses,
   applyBuiltManifestMaterialAnimations,
   buildManifestAsset,
   disposeManifestObject,
@@ -57,6 +58,49 @@ describe('buildManifestAsset', () => {
     const lidJointGroup = builtAsset.jointGroups.get('crate-lid-hinge')
 
     expect(lidJointGroup?.rotation.x).toBeCloseTo(-1.2)
+
+    disposeManifestObject(builtAsset.group)
+  })
+
+  it('resolves connectorTube visuals from current endpoint part poses', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts[0].visuals.push({
+      geometry: {
+        end: {
+          partId: 'crate-lid',
+          position: [0.5, 0.1, 0],
+        },
+        radius: 0.01,
+        sag: 0.02,
+        start: {
+          partId: 'crate-base',
+          position: [0.5, 0.45, 0],
+        },
+        type: 'connectorTube',
+      },
+      id: 'lid-retainer-cable',
+      materialId: 'mat-white',
+      name: 'Lid retainer cable',
+      transform: {},
+    })
+
+    const builtAsset = buildManifestAsset(asset)
+    const connector = builtAsset.connectorVisuals[0]
+    const initialEnd = connector.centerlinePoints.at(-1)?.clone()
+
+    applyBuiltManifestJointPoses(builtAsset, {
+      'crate-lid-hinge': -1.2,
+    })
+
+    const movedEnd = connector.centerlinePoints.at(-1)
+
+    expect(connector.visualId).toBe('lid-retainer-cable')
+    expect(initialEnd).toBeDefined()
+    expect(movedEnd).toBeDefined()
+    expect(initialEnd && movedEnd ? initialEnd.distanceTo(movedEnd) : 0).toBeGreaterThan(
+      0.05,
+    )
 
     disposeManifestObject(builtAsset.group)
   })

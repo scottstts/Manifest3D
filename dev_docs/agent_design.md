@@ -40,7 +40,7 @@ Do not port Articraft's Python/tool instructions into these prompts. Manifest3D 
 - prior validation feedback
 - compact examples
 
-Edit mode requires a selected asset and returns the full revised asset JSON, not a patch. Repair mode includes the failed candidate and `<validation_signals>` feedback. The failed candidate is still complete, but it is minified in repair turns because real headless runs showed pretty-printed candidate JSON was the dominant context cost after signal compaction.
+Edit mode requires a selected asset and returns the full revised asset JSON. Repair mode includes the failed candidate and `<validation_signals>` feedback, but the model response is a JSON Patch envelope rather than another complete asset. The failed candidate is still complete, but it is minified in repair turns because real headless runs showed pretty-printed candidate JSON was the dominant context cost after signal compaction.
 
 Image attachments are passed through the same prompt compiler metadata and provider request path as the app. The headless harness can now load local reference image files for stress runs, but that support is contained in `test/headless/agentPipelineSmoke.test.ts`; the app-side agent client still receives ordinary image attachment payloads.
 
@@ -56,7 +56,9 @@ The agent can report ready only when the active candidate fingerprint matches th
 
 Calling `markCandidateDraft` after a successful validation clears freshness because the active fingerprint changes. Failed candidates stay in history and are not committed to the scene.
 
-Fingerprints use stable serialization so object key order does not change candidate identity. Failure signatures are derived from failure signals, not from whole reports, so repeated-failure detection focuses on validation behavior rather than report ids or timeline metadata.
+Fingerprints use stable serialization so object key order does not change candidate identity. Failure signatures are derived from semantic failure clusters, not from whole reports or raw signal details, so repeated-failure detection focuses on validation behavior rather than report ids, depth/volume measurements, or incidental visual refs.
+
+Repair turns use JSON Patch envelopes instead of full replacement assets. The provider response schema switches by prompt mode: create/edit expect a full Manifest3D asset, while repair expects `{ "patch": [...] }`. The harness applies the patch to the current candidate, validates the patched result, and feeds patch-application errors back as repair feedback without mutating the candidate. The repair response schema intentionally permits standalone numeric vectors/point arrays so local vector repairs do not require full object replacement, and it avoids unconstrained empty array patch values because `[]` can otherwise satisfy every typed array branch while producing schema-invalid assets. If the same patch-application error repeats, the repair prompt includes the streak and a compact rejected-patch summary so the model has explicit pressure to change the bad operation rather than resending it.
 
 ## Repair Feedback
 
@@ -97,6 +99,13 @@ Repeated failures and failure streaks are included in the feedback summary so Ph
 
 Repair feedback also injects the candidate revision and fingerprint. This mirrors the Articraft freshness invariant: the validation evidence belongs to exactly one candidate revision, any mutation requires fresh validation, and the model should make the smallest focused repair while preserving unrelated stable ids.
 
+Repair feedback can include two additional diagnostic sections:
+
+- `<failure_clusters>` groups repeated blocking signals by semantic failure class so mechanism-level loops are visible to the model.
+- `<probe_report>` contains deterministic geometry measurements from the built candidate, such as asset bounds, joint-origin distances, and connector endpoint lengths. This is structured geometric sensor data, not rendered-image critique.
+
+`connectorTube` geometry exists for flexible chains, cables, hoses, ropes, straps, tethers, and wires whose endpoints should follow different parts through articulation. The visual must use an empty or identity transform because its tube path is generated from endpoint part transforms; provider schemas that require full transform fields should emit the identity transform.
+
 ## Headless Stress Harness
 
 `test/headless/agentPipelineSmoke.test.ts` is the practical pipeline stress harness. It exercises the same embedded engine and agent loop headlessly, then records candidate JSON, validation reports, request/response exchanges, and GLB artifacts for visual inspection.
@@ -113,6 +122,7 @@ Current headless stress behavior:
 - ready candidates export static GLB artifacts
 - assets with movable joints or material emission animation also export dynamic GLB artifacts when animation export is supported
 - every schema-parseable attempt gets its own static and, when applicable, dynamic GLB export under that attempt's artifact directory so validation pressure can be compared against visual quality over repair turns
+- every buildable attempt records a deterministic `probe.json` artifact, and summaries include semantic failure clusters for loop analysis
 - local reference images can be supplied through `HEADLESS_AGENT_IMAGE_PATH` or `HEADLESS_AGENT_IMAGE_PATHS`
 - default artifacts live under `test/headless/artifacts/headless-agent/` so `test/headless/glb_viewer.html` can serve them directly from a simple local HTTP server
 - summary JSON records exported GLB paths and viewer URLs

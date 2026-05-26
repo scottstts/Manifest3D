@@ -87,6 +87,10 @@ export function buildPrimitiveGeometry(
         geometry.closed ?? false,
       )
     }
+    case 'connectorTube':
+      throw new Error(
+        'connectorTube geometry must be built from resolved part endpoints.',
+      )
     default:
       return assertNever(geometry)
   }

@@ -10,6 +10,11 @@ export type ManifestTransform = {
   scale?: ManifestVector3
 }
 
+export type ManifestPartAttachment = {
+  partId: string
+  position: ManifestVector3
+}
+
 export type ManifestGeometry =
   | {
       type: 'box'
@@ -78,6 +83,15 @@ export type ManifestGeometry =
       tubularSegments?: number
       radialSegments?: number
       closed?: boolean
+    }
+  | {
+      type: 'connectorTube'
+      start: ManifestPartAttachment
+      end: ManifestPartAttachment
+      radius: number
+      sag?: number
+      tubularSegments?: number
+      radialSegments?: number
     }
 
 export type ManifestMaterialSide = 'front' | 'back' | 'double'

@@ -4,6 +4,10 @@ import {
   createValidValidationFixtureAsset,
 } from '../examples/validationFixtures'
 import { validateManifestAssetCandidate } from '../validation/validateManifest'
+import {
+  createValidationReport,
+  createValidationSignal,
+} from '../validation/reportBuilder'
 import { createCandidateHistory } from './candidateHistory'
 import { createCandidateHistoryTimeline } from './validationTimeline'
 
@@ -53,6 +57,70 @@ describe('createCandidateHistory', () => {
     expect(secondAttempt.failureStreak).toBe(2)
     expect(history.getSnapshot().attempts).toHaveLength(2)
     expect(history.canReportReady()).toBe(false)
+  })
+
+  it('detects repeated semantic failure clusters when raw overlap details change', () => {
+    const history = createCandidateHistory({
+      now: () => '2026-05-16T00:00:00.000Z',
+      runId: 'run-clusters',
+    })
+    const candidate = createValidValidationFixtureAsset()
+    const firstReport = createValidationReport({
+      asset: candidate,
+      signals: [
+        createValidationSignal(
+          'sampled_pose_overlap',
+          'part_overlap_sampled_pose',
+          'Sampled-pose overlap detected between "chain" and "drawbridge".',
+          {
+            details:
+              'depth=(0.0100,0.0200,0.0300) volume=1.000e-5 pose=lowered joints=bridge-hinge=-1.2000',
+            refs: {
+              partAId: 'chain',
+              partBId: 'drawbridge',
+              visualAId: 'chain-tube-a',
+              visualBId: 'bridge-plank-a',
+            },
+            source: 'baseline_qc',
+            stage: 'sampled_poses',
+          },
+        ),
+      ],
+    })
+    const secondReport = createValidationReport({
+      asset: candidate,
+      signals: [
+        createValidationSignal(
+          'sampled_pose_overlap',
+          'part_overlap_sampled_pose',
+          'Sampled-pose overlap detected between "drawbridge" and "chain".',
+          {
+            details:
+              'depth=(0.0400,0.0500,0.0600) volume=9.000e-5 pose=lowered joints=bridge-hinge=-1.2000',
+            refs: {
+              partAId: 'drawbridge',
+              partBId: 'chain',
+              visualAId: 'bridge-plank-b',
+              visualBId: 'chain-tube-b',
+            },
+            source: 'baseline_qc',
+            stage: 'sampled_poses',
+          },
+        ),
+      ],
+    })
+
+    const firstAttempt = history.recordValidationAttempt(candidate, firstReport)
+    const secondAttempt = history.recordValidationAttempt(candidate, secondReport)
+
+    expect(firstAttempt.failureClusters[0]).toMatchObject({
+      count: 1,
+      refs: {
+        partPair: 'chain<->drawbridge',
+      },
+    })
+    expect(secondAttempt.repeatedFailure).toBe(true)
+    expect(secondAttempt.failureSignature).toBe(firstAttempt.failureSignature)
   })
 
   it('projects candidate history into label-only attempt timeline rows', () => {

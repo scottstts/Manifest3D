@@ -17,11 +17,19 @@ export type GeometryOverlapFinding = {
 }
 
 type VisualOverlapProxy = {
+  allowedContactPartIds?: readonly string[]
   bounds: THREE.Box3
   partId: string
   visualId: string
 }
 
+type EndpointContactPartIds = {
+  end?: string
+  start?: string
+}
+
+const maxPolylineProxyLengthMeters = 0.08
+const maxPolylineProxySubdivisions = 96
 const torusProxySegments = 48
 
 export function findCurrentPoseVisualOverlaps(
@@ -42,7 +50,8 @@ export function findCurrentPoseVisualOverlaps(
 
       if (
         proxyA.visualId === proxyB.visualId ||
-        proxyA.partId === proxyB.partId
+        proxyA.partId === proxyB.partId ||
+        isAllowedConnectorEndpointContact(proxyA, proxyB)
       ) {
         continue
       }
@@ -110,6 +119,7 @@ function createVisualOverlapProxies(
 
     return createGeometryOverlapProxies({
       bounds,
+      builtAsset,
       geometry: visual.geometry,
       mesh,
       partId,
@@ -120,12 +130,14 @@ function createVisualOverlapProxies(
 
 function createGeometryOverlapProxies({
   bounds,
+  builtAsset,
   geometry,
   mesh,
   partId,
   visualId,
 }: {
   bounds: THREE.Box3
+  builtAsset: BuiltManifestAsset
   geometry: ManifestGeometry
   mesh: THREE.Object3D
   partId: string
@@ -150,6 +162,24 @@ function createGeometryOverlapProxies({
         partId,
         visualId,
       })
+	    case 'connectorTube': {
+	      const connector = builtAsset.connectorVisuals.find(
+	        (candidate) => candidate.visualId === visualId,
+	      )
+	
+	      return createPolylineOverlapProxies({
+	        closed: false,
+	        endpointContactPartIds: {
+	          end: geometry.end.partId,
+	          start: geometry.start.partId,
+	        },
+	        points: connector?.centerlinePoints ?? [],
+	        radius: geometry.radius,
+	        mesh,
+        partId,
+        visualId,
+      })
+    }
     default:
       return [
         {
@@ -163,6 +193,7 @@ function createGeometryOverlapProxies({
 
 function createPolylineOverlapProxies({
   closed,
+  endpointContactPartIds,
   points,
   radius,
   mesh,
@@ -170,6 +201,7 @@ function createPolylineOverlapProxies({
   visualId,
 }: {
   closed: boolean
+  endpointContactPartIds?: EndpointContactPartIds
   points: readonly THREE.Vector3[]
   radius: number
   mesh: THREE.Object3D
@@ -186,22 +218,99 @@ function createPolylineOverlapProxies({
   const segmentCount = closed ? points.length : points.length - 1
   const proxies: VisualOverlapProxy[] = []
 
-  for (let index = 0; index < segmentCount; index += 1) {
-    const start = points[index].clone().applyMatrix4(mesh.matrixWorld)
-    const end = points[(index + 1) % points.length]
-      .clone()
-      .applyMatrix4(mesh.matrixWorld)
-    const bounds = new THREE.Box3().setFromPoints([start, end])
+	for (let index = 0; index < segmentCount; index += 1) {
+	  const start = points[index].clone().applyMatrix4(mesh.matrixWorld)
+	  const end = points[(index + 1) % points.length]
+	    .clone()
+	    .applyMatrix4(mesh.matrixWorld)
+	  const subdivisions = getPolylineProxySubdivisionCount(start, end)
 
-    bounds.expandByScalar(worldRadius)
-    proxies.push({
-      bounds,
-      partId,
-      visualId,
-    })
+	  for (let subdivision = 0; subdivision < subdivisions; subdivision += 1) {
+	    const subStart = start.clone().lerp(end, subdivision / subdivisions)
+	    const subEnd = start.clone().lerp(end, (subdivision + 1) / subdivisions)
+	    const bounds = new THREE.Box3().setFromPoints([subStart, subEnd])
+	    const allowedContactPartIds = getPolylineProxyEndpointContactPartIds({
+	      closed,
+	      endpointContactPartIds,
+	      segmentCount,
+	      segmentIndex: index,
+	      subdivision,
+	      subdivisions,
+	    })
+
+	    bounds.expandByScalar(worldRadius)
+	    proxies.push({
+	      ...(allowedContactPartIds.length > 0 ? { allowedContactPartIds } : {}),
+	      bounds,
+	      partId,
+	      visualId,
+	    })
+	  }
+	}
+	
+	return proxies
+}
+
+function isAllowedConnectorEndpointContact(
+  left: VisualOverlapProxy,
+  right: VisualOverlapProxy,
+) {
+  return (
+    left.allowedContactPartIds?.includes(right.partId) === true ||
+    right.allowedContactPartIds?.includes(left.partId) === true
+  )
+}
+
+function getPolylineProxySubdivisionCount(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+) {
+  const length = start.distanceTo(end)
+
+  if (!Number.isFinite(length) || length <= maxPolylineProxyLengthMeters) {
+    return 1
   }
 
-  return proxies
+  return Math.min(
+    maxPolylineProxySubdivisions,
+    Math.ceil(length / maxPolylineProxyLengthMeters),
+  )
+}
+
+function getPolylineProxyEndpointContactPartIds({
+  closed,
+  endpointContactPartIds,
+  segmentCount,
+  segmentIndex,
+  subdivision,
+  subdivisions,
+}: {
+  closed: boolean
+  endpointContactPartIds?: EndpointContactPartIds
+  segmentCount: number
+  segmentIndex: number
+  subdivision: number
+  subdivisions: number
+}) {
+  if (closed || !endpointContactPartIds) {
+    return []
+  }
+
+  const partIds: string[] = []
+
+  if (segmentIndex === 0 && subdivision === 0 && endpointContactPartIds.start) {
+    partIds.push(endpointContactPartIds.start)
+  }
+
+  if (
+    segmentIndex === segmentCount - 1 &&
+    subdivision === subdivisions - 1 &&
+    endpointContactPartIds.end
+  ) {
+    partIds.push(endpointContactPartIds.end)
+  }
+
+  return partIds
 }
 
 function createTorusPolylinePoints(radius: number, segments: number) {

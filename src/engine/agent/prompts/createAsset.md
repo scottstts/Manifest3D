@@ -19,6 +19,7 @@ Requirements:
 - Use real-world dimensions and plausible materials.
 - For visible lighting requests, make the visible lens/screen material emissive; for flashing or color-switching lights, author material `emissionAnimation` instead of adding separate light objects.
 - If the prompt describes a primary mechanism or visible control, represent it as a separate part with an appropriate joint and realistic limits.
+- Use `connectorTube` for flexible chains, cables, hoses, ropes, straps, tethers, and wires whose endpoints belong to different or moving parts.
 - Add manifest `controls` for mechanical assets: group joints under one control when they should move together, and leave independent joints as separate controls or fallback joint dials.
 - If the asset has more than one movable joint, controls must cover every movable joint; use fallback dials only for a single-joint mechanism.
 - For primary mechanisms, include at least one pose-specific authored check with `check.pose` so validation can inspect the open, extended, rotated, or retained state.

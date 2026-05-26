@@ -11,6 +11,7 @@ Requirements:
 - For overlap and isolation findings, decide whether the relationship is intentional. Fix unintended geometry; add scoped allowances only for intentional exceptions.
 - For exact check failures, preserve prompt-critical relationships and stable ids. Do not remove exact checks to hide failures.
 - For sampled-pose failures, repair the mechanism's joint origin, axis, limits, child placement, or clearance at that pose; do not only tune the rest pose.
+- If repeated sampled-pose failures involve chains, cables, hoses, ropes, straps, tethers, or wires attached to moving mechanisms, replace the rigid connector representation with `connectorTube` endpoint geometry instead of nudging static tube coordinates.
 - If overlaps involve a moving rotor/blade/wheel and a stationary grille, guard, cage, or shroud, move or resize the guard so it clears the swept volume; do not add broad overlap allowances between moving blades and protective bars.
 - Preserve or correct `controls` so linked joints share one dial only when they should move together; independent moving parts should remain independently controllable.
 - When validation reports missing controls, add manifest controls that cover every movable joint instead of deleting joints, changing movable joints to fixed, or relying on fallback dials for a multi-joint asset.
@@ -20,4 +21,5 @@ Requirements:
 - If validation reports `allowance_overlap_missing_proof_check`, add or correct a matching exact proof check for the same part pair and same visual pair; do not delete intentional-fit evidence unless the geometry no longer overlaps.
 - If a failure repeats, reconsider the representation or support path instead of making another small tolerance or placement tweak.
 - Do not remove, cap, fuse, or simplify prompt-critical visible geometry just to make validation pass.
-- Return the full repaired asset JSON.
+- Return a focused JSON Patch object that repairs the supplied candidate while preserving unrelated stable ids and geometry.
+- When replacing vector fields, sizes, connector endpoint positions, or point arrays, write concrete numeric array values. Never use `[]` as a placeholder or deletion value; use `remove` only for array entries or object fields that should actually be deleted.

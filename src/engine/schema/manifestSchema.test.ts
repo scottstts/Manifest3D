@@ -57,6 +57,35 @@ describe('manifestSchema', () => {
     expect(parseManifestScene(scene)).toEqual(scene)
   })
 
+  it('accepts connector tube geometry descriptors with identity transforms', () => {
+    const scene = createValidScene()
+
+    scene.assets[0].parts[0].visuals.push({
+      geometry: {
+        end: {
+          partId: 'schema-base',
+          position: [0.2, 0.25, 0],
+        },
+        radius: 0.01,
+        sag: 0.03,
+        start: {
+          partId: 'schema-base',
+          position: [-0.2, 0.25, 0],
+        },
+        type: 'connectorTube',
+      },
+      id: 'schema-cable',
+      materialId: 'mat-blue',
+      transform: {
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      },
+    })
+
+    expect(parseManifestScene(scene)).toEqual(scene)
+  })
+
   it('rejects legacy parentId and tests fields', () => {
     const invalidScene = createValidScene()
     const legacyPart = invalidScene.assets[0].parts[0] as Record<string, unknown>

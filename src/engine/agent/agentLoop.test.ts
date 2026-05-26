@@ -36,7 +36,7 @@ describe('runManifestAgentLoop', () => {
           status: 'ok',
         },
         {
-          candidate: createValidValidationFixtureAsset(),
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
           rawText: '{}',
           responseId: 'resp_valid',
           status: 'ok',
@@ -95,7 +95,7 @@ describe('runManifestAgentLoop', () => {
         status: 'ok',
       },
       {
-        candidate: createInvalidValidationFixtureAsset(),
+        candidate: replaceRootPatch(createInvalidValidationFixtureAsset()),
         rawText: '{}',
         responseId: 'resp_invalid_2',
         status: 'ok',
@@ -122,11 +122,100 @@ describe('runManifestAgentLoop', () => {
     expect(result.history.canReportReady).toBe(false)
   })
 
+  it('rejects schema-invalid repair patches before recording a new attempt', async () => {
+    const requests: AgentRequest[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const client = createQueuedClient(
+      [
+        {
+          candidate: createInvalidValidationFixtureAsset(),
+          rawText: '{}',
+          responseId: 'resp_invalid',
+          status: 'ok',
+        },
+        {
+          candidate: {
+            patch: [
+              {
+                op: 'replace',
+                path: '/parts/0/visuals/0/transform/position',
+                value: [],
+              },
+            ],
+          },
+          rawText: '{}',
+          responseId: 'resp_bad_patch',
+          status: 'ok',
+        },
+        {
+          candidate: {
+            patch: [
+              {
+                op: 'replace',
+                path: '/parts/0/visuals/0/transform/position',
+                value: [],
+              },
+            ],
+          },
+          rawText: '{}',
+          responseId: 'resp_repeated_bad_patch',
+          status: 'ok',
+        },
+        {
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
+          rawText: '{}',
+          responseId: 'resp_valid',
+          status: 'ok',
+        },
+      ],
+      requests,
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        runId: 'run-schema-invalid-patch',
+        scene: emptyScene,
+        userPrompt: 'Create a hinged utility crate.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(result.history.attempts.map((attempt) => attempt.status)).toEqual([
+      'failure',
+      'success',
+    ])
+    expect(requests.map((request) => request.prompt.metadata.mode)).toEqual([
+      'create',
+      'repair',
+      'repair',
+      'repair',
+    ])
+    expect(requests[2].prompt.user).toContain('<patch_application_error>')
+    expect(requests[2].prompt.user).toContain(
+      '/parts/0/visuals/0/transform/position',
+    )
+    expect(requests[2].prompt.user).toContain('array(length=0)')
+    expect(requests[3].prompt.user).toContain(
+      'This patch-application error has repeated 2 times.',
+    )
+    expect(requests[3].prompt.user).toContain(
+      'Do not send the same rejected operation or value again.',
+    )
+  })
+
   it('uses ten repair turns by default before failing', async () => {
     const sceneStore = createSceneStore(emptyScene)
     const client = createQueuedClient(
       Array.from({ length: defaultRepairTurnCap + 1 }, (_, index) => ({
-        candidate: createInvalidValidationFixtureAsset(),
+        candidate:
+          index === 0
+            ? createInvalidValidationFixtureAsset()
+            : replaceRootPatch(createInvalidValidationFixtureAsset()),
         rawText: '{}',
         responseId: `resp_invalid_${index + 1}`,
         status: 'ok' as const,
@@ -165,7 +254,7 @@ describe('runManifestAgentLoop', () => {
           status: 'ok',
         },
         {
-          candidate: createValidValidationFixtureAsset(),
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
           rawText: '{}',
           responseId: 'resp_valid',
           status: 'ok',
@@ -335,5 +424,17 @@ function createQueuedClient(
         }
       )
     },
+  }
+}
+
+function replaceRootPatch(value: unknown) {
+  return {
+    patch: [
+      {
+        op: 'replace',
+        path: '',
+        value,
+      },
+    ],
   }
 }

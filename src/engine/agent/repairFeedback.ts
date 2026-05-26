@@ -3,10 +3,14 @@ import type {
   ValidationSignalBundle,
   ValidationStage,
 } from '../schema/validationTypes'
+import type { ManifestProbeReport } from '../validation/probeReport'
+import type { ValidationFailureCluster } from './failureClusters'
 
 export type RenderValidationFeedbackOptions = {
   candidateFingerprint?: string
+  failureClusters?: readonly ValidationFailureCluster[]
   failureStreak?: number
+  probeReport?: ManifestProbeReport | null
   repeated?: boolean
   revision?: number
 }
@@ -60,9 +64,28 @@ export function renderValidationSignals(
   })
   const parts = ['<validation_signals>', '<summary>', summary, '</summary>']
   const repairContext = renderRepairContext(options)
+  const failureClusters = options.failureClusters ?? []
 
   if (repairContext) {
     parts.push('', '<repair_context>', repairContext, '</repair_context>')
+  }
+
+  if (failureClusters.length > 0) {
+    parts.push(
+      '',
+      '<failure_clusters>',
+      renderFailureClusters(failureClusters),
+      '</failure_clusters>',
+    )
+  }
+
+  if (options.probeReport) {
+    parts.push(
+      '',
+      '<probe_report>',
+      renderProbeReport(options.probeReport),
+      '</probe_report>',
+    )
   }
 
   if (failures.length > 0) {
@@ -99,6 +122,7 @@ export function renderValidationSignals(
   }
 
   const responseRules = responseRulesForFailures(failures, {
+    failureClusters,
     failureStreak,
     includeWarningNote: warnings.length > 0,
     repeated,
@@ -148,7 +172,7 @@ function renderRepairContext(options: RenderValidationFeedbackOptions) {
       ? `candidateFingerprint=${options.candidateFingerprint}`
       : null,
     '- The validation signals correspond to this exact candidate revision; any candidate change requires fresh validation before it can be accepted.',
-    '- Return one complete replacement asset JSON, but keep the edit focused on the failed contract and preserve unrelated stable ids.',
+    '- Return a focused JSON Patch against the current candidate; preserve unrelated stable ids and geometry.',
     '- Use the compact candidate JSON as the current source of truth; do not infer stale geometry from earlier attempts.',
   ].filter((line): line is string => Boolean(line))
 
@@ -170,6 +194,69 @@ function renderSignalSection(
   }
 
   return `${heading}\n${renderedLines.join('\n')}`
+}
+
+function renderFailureClusters(clusters: readonly ValidationFailureCluster[]) {
+  const lines = clusters.slice(0, 8).map((cluster) => {
+    const pose = cluster.poseKey ? ` pose=${cluster.poseKey}` : ''
+
+    return `- count=${cluster.count} ${cluster.label}${pose}`
+  })
+
+  if (clusters.length > 8) {
+    lines.push(`- Omitted ${clusters.length - 8} lower-priority failure clusters.`)
+  }
+
+  lines.push(
+    'Repair repeated clusters as one mechanism-level problem; do not chase each visual overlap independently.',
+  )
+
+  return lines.join('\n')
+}
+
+function renderProbeReport(report: ManifestProbeReport) {
+  const lines = [
+    report.assetBounds
+      ? `assetBounds size=${formatVector(report.assetBounds.size)} center=${formatVector(report.assetBounds.center)}`
+      : 'assetBounds unavailable',
+  ]
+  const jointDistances = report.joints
+    .map((joint) => ({
+      joint,
+      maxDistance: Math.max(
+        joint.parentDistanceToOrigin ?? 0,
+        joint.childDistanceToOrigin ?? 0,
+      ),
+    }))
+    .filter(({ maxDistance }) => maxDistance > 0.01)
+    .sort((left, right) => right.maxDistance - left.maxDistance)
+    .slice(0, 6)
+
+  if (jointDistances.length > 0) {
+    lines.push('jointOriginDistances:')
+
+    for (const { joint, maxDistance } of jointDistances) {
+      lines.push(
+        `- joint=${joint.id} type=${joint.type} parent=${joint.parentPartId} child=${joint.childPartId} maxDistance=${maxDistance.toFixed(4)} origin=${joint.originWorld ? formatVector(joint.originWorld) : 'unavailable'}`,
+      )
+    }
+  }
+
+  if (report.connectors.length > 0) {
+    lines.push('connectors:')
+
+    for (const connector of report.connectors.slice(0, 8)) {
+      lines.push(
+        `- visual=${connector.id} owner=${connector.ownerPartId} endpoints=${connector.startPartId}->${connector.endPartId} length=${connector.length?.toFixed(4) ?? 'unavailable'} radius=${connector.radius}`,
+      )
+    }
+  }
+
+  return lines.join('\n')
+}
+
+function formatVector(vector: readonly number[]) {
+  return `(${vector.map((value) => value.toFixed(4)).join(',')})`
 }
 
 function renderSignalLine(signal: ValidationSignal) {
@@ -331,6 +418,7 @@ function dedupeSignals(signals: readonly ValidationSignal[]) {
 function responseRulesForFailures(
   failures: readonly ValidationSignal[],
   options: {
+    failureClusters: readonly ValidationFailureCluster[]
     failureStreak: number
     includeWarningNote: boolean
     repeated: boolean
@@ -452,7 +540,30 @@ function responseRulesForFailures(
     )
   }
 
+  if (
+    options.failureStreak >= 3 &&
+    hasConnectorMechanismCluster(options.failureClusters)
+  ) {
+    rules.push(
+      '- Repeated failures involve cable/chain/strap-style connector geometry. Do not keep nudging a rigid connector part; represent the connector with pose-resolved endpoint geometry so it follows the moving mechanism through sampled poses.',
+    )
+  }
+
   return rules
+}
+
+function hasConnectorMechanismCluster(
+  clusters: readonly ValidationFailureCluster[],
+) {
+  const connectorPattern = /(?:chain|cable|cord|hose|rope|strap|tether|wire)/i
+
+  return clusters.some((cluster) => {
+    if (cluster.stage !== 'sampled_poses') {
+      return false
+    }
+
+    return Object.values(cluster.refs).some((value) => connectorPattern.test(value))
+  })
 }
 
 function getKindPriority(kind: string) {

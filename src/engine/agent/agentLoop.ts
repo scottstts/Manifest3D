@@ -1,5 +1,6 @@
 import type { ManifestAsset, ManifestScene } from '../schema/manifestTypes'
 import type { ValidationReport } from '../schema/validationTypes'
+import { manifestAssetSchema } from '../schema/manifestSchema'
 import type { SceneStore } from '../scene/sceneStore'
 import { withCommitStep } from '../validation/reportBuilder'
 import {
@@ -24,6 +25,7 @@ import type {
   ManifestProviderClient,
 } from './providerClient'
 import { renderValidationSignals } from './repairFeedback'
+import { applyJsonPatch } from './jsonPatch'
 
 export type AgentLoopState =
   | 'idle'
@@ -107,6 +109,8 @@ export async function runManifestAgentLoop(
   let validationFeedback: string | null = null
   let eventIndex = 0
   let repairTurns = 0
+  let patchApplicationErrorSignature: string | null = null
+  let patchApplicationErrorStreak = 0
   const userInputHistory = input.userInputHistory ?? []
   const requestImageAttachments = collectRequestImageAttachments(
     userInputHistory,
@@ -242,8 +246,66 @@ export async function runManifestAgentLoop(
         : null,
     )
 
-    const candidate = agentResponse.candidate
+    const candidate =
+      mode === 'repair'
+        ? applyRepairPatch(candidateJson, agentResponse.candidate)
+        : { status: 'ok' as const, value: agentResponse.candidate }
+
+    if (candidate.status === 'error') {
+      finishParseCandidate('failed', candidate.message)
+
+      if (repairTurns >= maxRepairTurns) {
+        emit(
+          dependencies.onEvent,
+          runId,
+          nextEventIndex,
+          'failed',
+          'Repair turn cap reached',
+          `attempts=${history.getSnapshot().attempts.length}`,
+          'failed',
+        )
+
+        return {
+          history: history.getSnapshot(),
+          message:
+            'The agent could not produce a valid repair patch before the repair turn cap.',
+          status: 'failed',
+        }
+      }
+
+      const patchErrorSignature = createPatchApplicationErrorSignature(
+        candidate.message,
+        candidate.rejectedPatchSummary,
+      )
+
+      if (patchErrorSignature === patchApplicationErrorSignature) {
+        patchApplicationErrorStreak += 1
+      } else {
+        patchApplicationErrorSignature = patchErrorSignature
+        patchApplicationErrorStreak = 1
+      }
+
+      repairTurns += 1
+      mode = 'repair'
+      validationFeedback = renderPatchApplicationFeedback({
+        failureStreak: patchApplicationErrorStreak,
+        message: candidate.message,
+        rejectedPatchSummary: candidate.rejectedPatchSummary,
+      })
+      scene = dependencies.sceneStore.getSnapshot().scene
+
+      const finishRepairFeedback = beginStep(
+        'repairing',
+        'Prepare repair feedback',
+        `repairTurn=${repairTurns}`,
+      )
+      finishRepairFeedback('passed')
+      continue
+    }
+
     finishParseCandidate('passed')
+    patchApplicationErrorSignature = null
+    patchApplicationErrorStreak = 0
 
     const finishValidateCandidate = beginStep(
       'validating_candidate',
@@ -251,17 +313,18 @@ export async function runManifestAgentLoop(
       null,
     )
 
-    const validationResult = validateCandidate(candidate)
+    const validationResult = validateCandidate(candidate.value)
     const attempt = history.recordValidationAttempt(
-      candidate,
+      candidate.value,
       validationResult.report,
+      validationResult.probeReport,
     )
     finishValidateCandidate(
       validationResult.report.valid ? 'passed' : 'failed',
     )
 
     if (validationResult.asset && validationResult.report.valid) {
-      if (!history.canReportReady(candidate)) {
+      if (!history.canReportReady(candidate.value)) {
         emit(
           dependencies.onEvent,
           runId,
@@ -329,7 +392,7 @@ export async function runManifestAgentLoop(
 
     repairTurns += 1
     mode = 'repair'
-    candidateJson = candidate
+    candidateJson = candidate.value
     validationFeedback = renderRepairFeedback(attempt)
     scene = dependencies.sceneStore.getSnapshot().scene
 
@@ -366,10 +429,168 @@ export async function runManifestAgentLoop(
 function renderRepairFeedback(attempt: CandidateAttempt) {
   return renderValidationSignals(attempt.report.bundle, {
     candidateFingerprint: attempt.candidateFingerprint,
+    failureClusters: attempt.failureClusters,
     failureStreak: attempt.failureStreak,
+    probeReport: attempt.probeReport,
     repeated: attempt.repeatedFailure,
     revision: attempt.revision,
   })
+}
+
+function applyRepairPatch(currentCandidate: unknown, patchCandidate: unknown) {
+  if (currentCandidate === undefined) {
+    return {
+      message: 'No current candidate JSON exists for the repair patch.',
+      rejectedPatchSummary: summarizePatchCandidate(patchCandidate),
+      status: 'error' as const,
+    }
+  }
+
+  const result = applyJsonPatch(currentCandidate, patchCandidate, {
+    validateResult: validatePatchedManifestAsset,
+  })
+
+  if (result.status === 'error') {
+    return {
+      ...result,
+      rejectedPatchSummary: summarizePatchCandidate(patchCandidate),
+    }
+  }
+
+  return result
+}
+
+function validatePatchedManifestAsset(value: unknown) {
+  const parsed = manifestAssetSchema.safeParse(value)
+
+  if (parsed.success) {
+    return null
+  }
+
+  const issueSummary = parsed.error.issues
+    .slice(0, 8)
+    .map((issue) => `${formatSchemaPath(issue.path)}: ${issue.message}`)
+    .join('\n')
+  const remainingCount = parsed.error.issues.length - 8
+  const remainingSuffix =
+    remainingCount > 0 ? `\n...and ${remainingCount} more schema issue(s).` : ''
+
+  return [
+    'Patched candidate does not satisfy the Manifest3D asset schema.',
+    issueSummary,
+    remainingSuffix,
+  ].filter(Boolean).join('\n')
+}
+
+function renderPatchApplicationFeedback({
+  failureStreak,
+  message,
+  rejectedPatchSummary,
+}: {
+  failureStreak: number
+  message: string
+  rejectedPatchSummary: string
+}) {
+  const repeatedMessage =
+    failureStreak > 1
+      ? `This patch-application error has repeated ${failureStreak} times. Do not send the same rejected operation or value again.`
+      : 'The rejected patch was not applied.'
+
+  return [
+    '<patch_application_error>',
+    message,
+    '',
+    repeatedMessage,
+    'The next patch is still applied to the same previous candidate JSON.',
+    '',
+    '<rejected_patch_summary>',
+    rejectedPatchSummary,
+    '</rejected_patch_summary>',
+    '',
+    'Return a valid JSON object with a top-level `patch` array.',
+    'Use only `add`, `replace`, and `remove` operations with RFC 6901 JSON Pointer paths into the current candidate JSON.',
+    'For transform vectors, geometry sizes, connector endpoint positions, and point arrays, use concrete numeric arrays with the required length; never use an empty array.',
+    'Preserve unrelated stable ids and geometry.',
+    '</patch_application_error>',
+  ].join('\n')
+}
+
+function createPatchApplicationErrorSignature(
+  message: string,
+  rejectedPatchSummary: string,
+) {
+  return `${message}\n${rejectedPatchSummary}`
+}
+
+function summarizePatchCandidate(patchCandidate: unknown) {
+  if (!isRecord(patchCandidate) || !Array.isArray(patchCandidate.patch)) {
+    return `response=${summarizePatchValue(patchCandidate)}`
+  }
+
+  if (patchCandidate.patch.length === 0) {
+    return 'patch array is empty'
+  }
+
+  const maxOperations = 6
+  const operationLines = patchCandidate.patch
+    .slice(0, maxOperations)
+    .map((operation, index) => summarizePatchOperation(operation, index))
+  const remainingCount = patchCandidate.patch.length - maxOperations
+
+  if (remainingCount > 0) {
+    operationLines.push(`...and ${remainingCount} more operation(s).`)
+  }
+
+  return operationLines.join('\n')
+}
+
+function summarizePatchOperation(operation: unknown, index: number) {
+  if (!isRecord(operation)) {
+    return `${index + 1}. invalid operation=${summarizePatchValue(operation)}`
+  }
+
+  const op = typeof operation.op === 'string' ? operation.op : '<missing op>'
+  const path =
+    typeof operation.path === 'string' ? operation.path : '<missing path>'
+  const valueSummary =
+    'value' in operation ? ` value=${summarizePatchValue(operation.value)}` : ''
+
+  return `${index + 1}. ${op} ${path}${valueSummary}`
+}
+
+function summarizePatchValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `array(length=${value.length})`
+  }
+
+  if (isRecord(value)) {
+    const keys = Object.keys(value)
+    const keySummary = keys.slice(0, 5).join(', ')
+    const remainingCount = keys.length - 5
+    const suffix = remainingCount > 0 ? `, ...+${remainingCount}` : ''
+
+    return `object(keys=${keySummary}${suffix})`
+  }
+
+  if (typeof value === 'string') {
+    const truncated = value.length > 80 ? `${value.slice(0, 77)}...` : value
+
+    return JSON.stringify(truncated)
+  }
+
+  return String(value)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function formatSchemaPath(path: readonly (PropertyKey | symbol)[]) {
+  if (path.length === 0) {
+    return '/'
+  }
+
+  return `/${path.map(String).join('/')}`
 }
 
 function imageAttachmentMetadata(

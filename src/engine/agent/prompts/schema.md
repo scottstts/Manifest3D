@@ -48,7 +48,7 @@ Materials may define emission in their own material object:
 - Keyframes use seconds and must start at `time: 0` with strictly increasing times. Each keyframe has `{ "time", "hasEmission", "color", "intensity" }`; set `hasEmission: false` and `intensity: 0` for off intervals.
 - Keep the base `emission` aligned with the first keyframe so rest-state preview and dynamic GLB export begin from the same material state.
 
-Part visuals support geometry types `box`, `roundedBox`, `cylinder`, `sphere`, `cone`, `capsule`, `torus`, `lathe`, `extrude`, and `tube`. Visual transforms are local to the owning part.
+Part visuals support geometry types `box`, `roundedBox`, `cylinder`, `sphere`, `cone`, `capsule`, `torus`, `lathe`, `extrude`, `tube`, and `connectorTube`. Visual transforms are local to the owning part, except `connectorTube`, which resolves from endpoint parts and must use an empty or identity transform. When a full transform object is required, use `position: [0, 0, 0]`, `rotation: [0, 0, 0]`, and `scale: [1, 1, 1]`.
 
 Geometry authoring guidance:
 
@@ -56,6 +56,7 @@ Geometry authoring guidance:
 - Use `roundedBox` for softened manufactured housings, panels, padded blocks, cases, seats, and controls that should not read as sharp placeholder boxes.
 - For every `roundedBox`, set `radius <= min(size[0], size[1], size[2]) / 2`. Prefer visibly subtle radii on thin panels and small details; if the form should be fully pill-shaped, use `capsule` instead.
 - Use `capsule` for pill-shaped handles, rounded rails, grips, rubber feet, bumpers, soft bars, and small retained pins with rounded ends.
+- Use `connectorTube` for flexible chains, cables, hoses, ropes, straps, tethers, and wires that visually connect two parts, especially when one endpoint is on a movable part. It has `{ "type": "connectorTube", "start": { "partId", "position" }, "end": { "partId", "position" }, "radius", "sag" }`; endpoint `position` values are local to their referenced parts.
 - Do not represent visible hollow bodies or open cavities as one solid box or capped cylinder.
 - For protective grilles, cages, guards, and shrouds around moving internals, model the guard as stationary bars/rings with real clearance around the moving part's swept volume.
 - Keep visual ids stable and meaningful because checks and allowances may reference them directly.

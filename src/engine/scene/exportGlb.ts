@@ -1,7 +1,10 @@
 import * as THREE from 'three/webgpu'
 import {
+  applyBuiltManifestJointPoses,
   buildManifestAsset,
   disposeManifestObject,
+  type BuiltConnectorVisual,
+  type BuiltManifestAsset,
 } from '../geometry/assetBuilder'
 import { hasMaterialEmissionAnimation } from '../geometry/materialAnimations'
 import {
@@ -42,6 +45,13 @@ type CloneExportableObjectOptions = {
 type ControlAnimationKeyframe = {
   controlValue: number
   time: number
+}
+
+type ConnectorMorphTargetPlan = {
+  basePositions: Float32Array
+  connector: BuiltConnectorVisual
+  exportMesh: THREE.Mesh
+  keyframePositions: Array<Float32Array | null>
 }
 
 const helperObjectTypes = new Set([
@@ -126,14 +136,14 @@ function createExportableManifestAsset(
       throw new Error(`Asset "${asset.id}" contains no exportable mesh geometry.`)
     }
 
-    const animations =
-      mode === 'dynamic'
-        ? createManifestAssetAnimationClips(
-            asset,
-            builtAsset.jointGroups,
-            clonedObjects,
-          )
-        : []
+	    const animations =
+	      mode === 'dynamic'
+	        ? createManifestAssetAnimationClips(
+	            asset,
+	            builtAsset,
+	            clonedObjects,
+	          )
+	        : []
 
     if (mode === 'dynamic' && getMovableJoints(asset).length > 0 && animations.length === 0) {
       throw new Error(
@@ -210,19 +220,19 @@ export function downloadGlbExport(result: GlbExportResult) {
 
 function createManifestAssetAnimationClips(
   asset: ManifestAsset,
-  sourceJointGroups: ReadonlyMap<string, THREE.Object3D>,
+  builtAsset: BuiltManifestAsset,
   clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
 ) {
   return getJointPreviewControls(asset)
     .map((control) =>
-      createControlAnimationClip(control, sourceJointGroups, clonedObjects),
+      createControlAnimationClip(control, builtAsset, clonedObjects),
     )
     .filter((clip): clip is THREE.AnimationClip => clip !== null)
 }
 
 function createControlAnimationClip(
   control: JointPreviewControl,
-  sourceJointGroups: ReadonlyMap<string, THREE.Object3D>,
+  builtAsset: BuiltManifestAsset,
   clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
 ) {
   const keyframes = createControlAnimationKeyframes(control)
@@ -238,7 +248,7 @@ function createControlAnimationClip(
   const tracks: THREE.KeyframeTrack[] = []
 
   for (const binding of control.bindings) {
-    const sourceJointGroup = sourceJointGroups.get(binding.joint.id)
+    const sourceJointGroup = builtAsset.jointGroups.get(binding.joint.id)
     const exportJointGroup = sourceJointGroup
       ? clonedObjects.get(sourceJointGroup)
       : undefined
@@ -260,6 +270,16 @@ function createControlAnimationClip(
     }
   }
 
+  tracks.push(
+    ...createConnectorTubeAnimationTracks(
+      control,
+      builtAsset,
+      clonedObjects,
+      times,
+      poseValuesByKeyframe,
+    ),
+  )
+
   if (tracks.length === 0) {
     return null
   }
@@ -269,6 +289,160 @@ function createControlAnimationClip(
     times[times.length - 1],
     tracks,
   )
+}
+
+function createConnectorTubeAnimationTracks(
+  control: JointPreviewControl,
+  builtAsset: BuiltManifestAsset,
+  clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
+  times: readonly number[],
+  poseValuesByKeyframe: readonly Readonly<Record<string, number>>[],
+) {
+  if (builtAsset.connectorVisuals.length === 0 || times.length < 2) {
+    return []
+  }
+
+  const plans = createConnectorMorphTargetPlans(builtAsset, clonedObjects)
+
+  if (plans.length === 0) {
+    return []
+  }
+
+  for (const [keyframeIndex, poseValues] of poseValuesByKeyframe.entries()) {
+    applyBuiltManifestJointPoses(builtAsset, poseValues)
+
+    for (const plan of plans) {
+      const positionAttribute = getPositionAttribute(plan.connector.mesh.geometry)
+
+      plan.keyframePositions[keyframeIndex] =
+        positionAttribute && positionAttribute.count === plan.basePositions.length / 3
+          ? copyBufferAttributeArray(positionAttribute)
+          : null
+    }
+  }
+
+  applyBuiltManifestJointPoses(builtAsset, {})
+
+  return plans.flatMap((plan) =>
+    createConnectorMorphTargetTracks(control, plan, times),
+  )
+}
+
+function createConnectorMorphTargetPlans(
+  builtAsset: BuiltManifestAsset,
+  clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
+): ConnectorMorphTargetPlan[] {
+  return builtAsset.connectorVisuals.flatMap((connector) => {
+    const exportMesh = clonedObjects.get(connector.mesh)
+
+    if (!exportMesh || !isMesh(exportMesh)) {
+      return []
+    }
+
+    const positionAttribute = getPositionAttribute(exportMesh.geometry)
+
+    if (!positionAttribute) {
+      return []
+    }
+
+    return [
+      {
+        basePositions: copyBufferAttributeArray(positionAttribute),
+        connector,
+        exportMesh,
+        keyframePositions: [],
+      },
+    ]
+  })
+}
+
+function createConnectorMorphTargetTracks(
+  control: JointPreviewControl,
+  plan: ConnectorMorphTargetPlan,
+  times: readonly number[],
+) {
+  const tracks: THREE.KeyframeTrack[] = []
+
+  for (const [keyframeIndex, positions] of plan.keyframePositions.entries()) {
+    if (!positions || positionsMatch(positions, plan.basePositions)) {
+      continue
+    }
+
+    const morphTargetName = addConnectorMorphTarget(
+      plan.exportMesh,
+      positions,
+      `${control.id}-${plan.connector.visualId}-${keyframeIndex}`,
+    )
+    const values = times.map((_, index) => (index === keyframeIndex ? 1 : 0))
+
+    if (!hasTrackMotion(values, 1)) {
+      continue
+    }
+
+    tracks.push(
+      new THREE.NumberKeyframeTrack(
+        `${plan.exportMesh.uuid}.morphTargetInfluences[${morphTargetName}]`,
+        times,
+        values,
+      ),
+    )
+  }
+
+  if (tracks.length > 0) {
+    plan.exportMesh.updateMorphTargets()
+  }
+
+  return tracks
+}
+
+function addConnectorMorphTarget(
+  mesh: THREE.Mesh,
+  positions: Float32Array,
+  name: string,
+) {
+  const targetName = `connector_${name.replace(/[^A-Za-z0-9_]/g, '_')}`
+  const morphAttribute = new THREE.BufferAttribute(positions, 3)
+  const positionTargets = mesh.geometry.morphAttributes.position ?? []
+
+  morphAttribute.name = targetName
+  positionTargets.push(morphAttribute)
+  mesh.geometry.morphAttributes.position = positionTargets
+  mesh.geometry.morphTargetsRelative = false
+
+  return targetName
+}
+
+function getPositionAttribute(geometry: THREE.BufferGeometry) {
+  const attribute = geometry.getAttribute('position')
+
+  return attribute instanceof THREE.BufferAttribute && attribute.itemSize === 3
+    ? attribute
+    : null
+}
+
+function copyBufferAttributeArray(attribute: THREE.BufferAttribute) {
+  const source = attribute.array as ArrayLike<number>
+  const copy = new Float32Array(source.length)
+
+  for (let index = 0; index < source.length; index += 1) {
+    copy[index] = source[index]
+  }
+
+  return copy
+}
+
+function positionsMatch(left: Float32Array, right: Float32Array) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (Math.abs(left[index] - right[index]) > 1e-5) {
+      return false
+    }
+  }
+
+  return true
 }
 
 function createControlAnimationKeyframes(

@@ -12,6 +12,11 @@ import {
   runManifestAgentLoop,
   type AgentLoopEvent,
 } from '../../src/engine/agent/agentLoop'
+import {
+  createValidationFailureClusters,
+  createValidationFailureClusterSignature,
+  type ValidationFailureCluster,
+} from '../../src/engine/agent/failureClusters'
 import { createManifestProviderClient } from '../../src/engine/agent/manifestProviderClient'
 import { parseModelProvider } from '../../src/engine/agent/providerPreference'
 import type {
@@ -101,6 +106,7 @@ type HeadlessImageArtifact = {
 }
 
 type HeadlessProgressLogger = {
+  logEarlyStopArmed: (state: HeadlessRepeatedFailureStopState) => void
   logAgentEvent: (event: AgentLoopEvent) => void
   logFinalResult: (result: HeadlessAgentResult) => void
   logGlbExportComplete: (
@@ -126,6 +132,14 @@ type HeadlessProgressLogger = {
   }) => void
   logValidationAttempt: (attemptIndex: number, report: ValidationReport) => void
   path: string
+}
+
+type HeadlessRepeatedFailureStopState = {
+  clusters: readonly ValidationFailureCluster[]
+  reason: string
+  signature: string
+  streak: number
+  threshold: number
 }
 
 // intentionally use a more difficult prompt to stress test the pipeline
@@ -154,10 +168,13 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         'HEADLESS_AGENT_RUN_TIMEOUT_MS',
         defaultRunTimeoutMs,
       )
-      const maxRepairTurns = readNumberEnv(
-        'HEADLESS_AGENT_MAX_REPAIR_TURNS',
-        defaultRepairTurnCap,
-      )
+	      const maxRepairTurns = readNumberEnv(
+	        'HEADLESS_AGENT_MAX_REPAIR_TURNS',
+	        defaultRepairTurnCap,
+	      )
+	      const repeatedFailureStopper = createHeadlessRepeatedFailureStopper(
+	        readNumberEnv('HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK', 3),
+	      )
       const abortController = new AbortController()
       const runTimeout = setTimeout(() => {
         abortController.abort()
@@ -178,12 +195,13 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const assetLibraryStore = createAssetLibraryStore(
         createMemoryAssetLibraryRepository(),
       )
-      const { client, exchanges } = createCapturedClient({
-        apiKey,
-        artifactRoot,
-        progress,
-        provider,
-      })
+	      const { client, exchanges } = createCapturedClient({
+	        apiKey,
+	        artifactRoot,
+	        progress,
+	        provider,
+	        shouldStopBeforeRequest: () => repeatedFailureStopper.getStopReason(),
+	      })
       const runStartedAt = new Date()
       let validationAttemptCount = 0
 
@@ -217,13 +235,21 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
             validateCandidate: (candidate) => {
               const validationResult = validateManifestAssetCandidate(candidate)
 
-              validationAttemptCount += 1
-              progress.logValidationAttempt(
-                validationAttemptCount,
-                validationResult.report,
-              )
+	              validationAttemptCount += 1
+	              progress.logValidationAttempt(
+	                validationAttemptCount,
+	                validationResult.report,
+	              )
+	              const earlyStopState =
+	                repeatedFailureStopper.recordValidationReport(
+	                  validationResult.report,
+	                )
 
-              return validationResult
+	              if (earlyStopState) {
+	                progress.logEarlyStopArmed(earlyStopState)
+	              }
+
+	              return validationResult
             },
           },
         )
@@ -308,11 +334,13 @@ function createCapturedClient({
   artifactRoot,
   progress,
   provider,
+  shouldStopBeforeRequest,
 }: {
   apiKey: string
   artifactRoot: string
   progress?: HeadlessProgressLogger
   provider: ModelProvider
+  shouldStopBeforeRequest?: () => string | null
 }) {
   const realClient = createManifestProviderClient({
     apiKey,
@@ -344,19 +372,29 @@ function createCapturedClient({
         `${exchangeDir}/user-prompt.txt`,
         request.prompt.user,
       )
-      const progressInterval = setInterval(() => {
-        progress?.logModelRequestStillWaiting(index, startedAt)
-      }, readNumberEnv('HEADLESS_AGENT_PROGRESS_INTERVAL_MS', 30_000))
-      let response: AgentResponse
+	      const earlyStopReason = shouldStopBeforeRequest?.() ?? null
+	      let response: AgentResponse
 
-      try {
-        response = await realClient.generateAsset(request)
-      } catch (error) {
-        progress?.logModelRequestFailed(index, startedAt, error)
-        throw error
-      } finally {
-        clearInterval(progressInterval)
-      }
+	      if (earlyStopReason) {
+	        response = {
+	          message: earlyStopReason,
+	          responseId: null,
+	          status: 'error',
+	        }
+	      } else {
+	        const progressInterval = setInterval(() => {
+	          progress?.logModelRequestStillWaiting(index, startedAt)
+	        }, readNumberEnv('HEADLESS_AGENT_PROGRESS_INTERVAL_MS', 30_000))
+
+	        try {
+	          response = await realClient.generateAsset(request)
+	        } catch (error) {
+	          progress?.logModelRequestFailed(index, startedAt, error)
+	          throw error
+	        } finally {
+	          clearInterval(progressInterval)
+	        }
+	      }
 
       const completedAt = new Date()
       const captured: CapturedExchange = {
@@ -435,6 +473,64 @@ function createRequestMetrics(request: AgentRequest) {
   }
 }
 
+function createHeadlessRepeatedFailureStopper(threshold: number) {
+  let lastSignature: string | null = null
+  let stopState: HeadlessRepeatedFailureStopState | null = null
+  let streak = 0
+
+  return {
+    getStopReason() {
+      return stopState?.reason ?? null
+    },
+    recordValidationReport(
+      report: ValidationReport,
+    ): HeadlessRepeatedFailureStopState | null {
+      if (threshold <= 0 || report.valid) {
+        lastSignature = null
+        streak = 0
+        return null
+      }
+
+      const clusters = createValidationFailureClusters(report.bundle.signals)
+      const signature = createValidationFailureClusterSignature(clusters)
+
+      if (!signature) {
+        lastSignature = null
+        streak = 0
+        return null
+      }
+
+      if (signature === lastSignature) {
+        streak += 1
+      } else {
+        lastSignature = signature
+        streak = 1
+      }
+
+      if (stopState || streak < threshold) {
+        return null
+      }
+
+      stopState = {
+        clusters,
+        reason: [
+          `Headless repeated-failure stop: validation signature ${signature} repeated ${streak} times.`,
+          `Top clusters: ${clusters
+            .slice(0, 5)
+            .map((cluster) => `${cluster.count}x ${cluster.label}`)
+            .join('; ')}`,
+          'Set HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK=0 to disable this headless-only stop.',
+        ].join(' '),
+        signature,
+        streak,
+        threshold,
+      }
+
+      return stopState
+    },
+  }
+}
+
 function extractTopLevelTaggedSectionChars(value: string) {
   const sectionChars: Record<string, number> = {}
   const sectionPattern = /^<([a-z_]+)>\n([\s\S]*?)\n<\/\1>$/gm
@@ -497,6 +593,9 @@ function writeHeadlessArtifacts({
 
     writeJsonArtifact(artifactRoot, `${attemptDir}/candidate.json`, attempt.candidate)
     writeJsonArtifact(artifactRoot, `${attemptDir}/report.json`, attempt.report)
+    if (attempt.probeReport) {
+      writeJsonArtifact(artifactRoot, `${attemptDir}/probe.json`, attempt.probeReport)
+    }
     writeJsonArtifact(
       artifactRoot,
       `${attemptDir}/signals.json`,
@@ -527,14 +626,18 @@ function writeHeadlessArtifacts({
     imageAttachmentCount: imageArtifacts.length,
     savedVersionId,
     sceneAssetIds: scene.assets.map((asset) => asset.id),
-    attempts: result.history.attempts.map((attempt) => ({
+	    attempts: result.history.attempts.map((attempt, index) => ({
       glbArtifacts:
         attemptGlbArtifacts.find((entry) => entry.attemptId === attempt.id) ??
         null,
       failureCount: attempt.report.summary.failureCount,
+      failureClusters: attempt.failureClusters,
       failureSignature: attempt.failureSignature,
       failureStreak: attempt.failureStreak,
       id: attempt.id,
+      probeArtifact: attempt.probeReport
+        ? `${artifactRoot}/attempts/${String(index + 1).padStart(2, '0')}/probe.json`
+        : null,
       repeatedFailure: attempt.repeatedFailure,
       status: attempt.status,
       validationStatus: attempt.report.bundle.status,
@@ -840,9 +943,17 @@ function createHeadlessProgressLogger({
     },
   )
 
-  return {
-    logAgentEvent(event) {
-      record('agent_event', { event })
+	  return {
+	    logEarlyStopArmed(state) {
+	      log(
+	        `headless repeated-failure stop armed signature=${state.signature} streak=${state.streak}/${state.threshold}`,
+	        {
+	          repeatedFailureStop: state,
+	        },
+	      )
+	    },
+	    logAgentEvent(event) {
+	      record('agent_event', { event })
 
       if (event.status === 'failed' && event.state !== 'validating_candidate') {
         log(`agent event failed: ${event.label}${formatDetail(event.detail)}`, {

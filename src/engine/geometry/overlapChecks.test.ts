@@ -69,6 +69,28 @@ describe('findCurrentPoseVisualOverlaps', () => {
       disposeManifestObject(builtAsset.group)
     }
   })
+
+  it('allows connectorTube endpoint contact with referenced parts', () => {
+    const asset = createConnectorContactAsset()
+    const builtAsset = buildManifestAsset(asset)
+
+    try {
+      expect(findVisualPairs(builtAsset)).toEqual([])
+    } finally {
+      disposeManifestObject(builtAsset.group)
+    }
+  })
+
+  it('still detects connectorTube overlap with unrelated obstruction parts', () => {
+    const asset = createConnectorContactAsset({ includeObstruction: true })
+    const builtAsset = buildManifestAsset(asset)
+
+    try {
+      expect(findVisualPairs(builtAsset)).toContain('cable-visual|obstruction-visual')
+    } finally {
+      disposeManifestObject(builtAsset.group)
+    }
+  })
 })
 
 function findVisualPairs(builtAsset: ReturnType<typeof buildManifestAsset>) {
@@ -169,5 +191,146 @@ function createRingAndBladeAsset({
     prompt: 'Test torus and tube overlap proxies.',
     schemaVersion: 2,
     units: 'meters',
+	  }
+}
+
+function createConnectorContactAsset({
+  includeObstruction = false,
+}: {
+  includeObstruction?: boolean
+} = {}): ManifestAsset {
+  return {
+    allowances: [],
+    checks: [],
+    controls: [],
+    id: 'connector-contact-test',
+    joints: [
+      {
+        childPartId: 'moving-part',
+        id: 'moving-fixed-joint',
+        name: 'Moving fixed joint',
+        origin: {},
+        parentPartId: 'anchor-part',
+        type: 'fixed',
+      },
+      ...(includeObstruction
+        ? [
+            {
+              childPartId: 'obstruction-part',
+              id: 'obstruction-fixed-joint',
+              name: 'Obstruction fixed joint',
+              origin: {},
+              parentPartId: 'anchor-part',
+              type: 'fixed' as const,
+            },
+          ]
+        : []),
+      {
+        childPartId: 'cable-part',
+        id: 'cable-fixed-joint',
+        name: 'Cable fixed joint',
+        origin: {},
+        parentPartId: 'anchor-part',
+        type: 'fixed',
+      },
+    ],
+    materials: [
+      {
+        color: '#999999',
+        id: 'mat-anchor',
+        metalness: 0.1,
+        name: 'Anchor material',
+        roughness: 0.5,
+      },
+      {
+        color: '#111111',
+        id: 'mat-cable',
+        metalness: 0.4,
+        name: 'Cable material',
+        roughness: 0.35,
+      },
+    ],
+    metadata: {
+      createdAt: '2026-05-26T00:00:00.000Z',
+      generationStatus: 'ready',
+      sourceImageIds: [],
+      updatedAt: '2026-05-26T00:00:00.000Z',
+    },
+    name: 'Connector Contact Test',
+    parts: [
+      createConnectorBoxPart('anchor-part', 'Anchor', 'anchor-visual', [0, 0, 0]),
+      createConnectorBoxPart('moving-part', 'Moving Part', 'moving-visual', [1, 0, 0]),
+      ...(includeObstruction
+        ? [
+            createConnectorBoxPart(
+              'obstruction-part',
+              'Obstruction',
+              'obstruction-visual',
+              [0.5, 0, 0],
+            ),
+          ]
+        : []),
+      {
+        id: 'cable-part',
+        name: 'Cable',
+        role: 'support',
+        visuals: [
+          {
+            geometry: {
+              end: {
+                partId: 'moving-part',
+                position: [0.9, 0, 0],
+              },
+              radius: 0.02,
+              start: {
+                partId: 'anchor-part',
+                position: [0.1, 0, 0],
+              },
+              type: 'connectorTube',
+            },
+            id: 'cable-visual',
+            materialId: 'mat-cable',
+            name: 'Cable visual',
+            transform: {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+            },
+          },
+        ],
+      },
+    ],
+    prompt: 'Test connector tube endpoint overlap behavior.',
+    schemaVersion: 2,
+    units: 'meters',
+  }
+}
+
+function createConnectorBoxPart(
+  id: string,
+  name: string,
+  visualId: string,
+  position: [number, number, number],
+): ManifestAsset['parts'][number] {
+  return {
+    id,
+    name,
+    role: 'support',
+    visuals: [
+      {
+        geometry: {
+          size: [0.18, 0.18, 0.18],
+          type: 'box',
+        },
+        id: visualId,
+        materialId: 'mat-anchor',
+        name: `${name} visual`,
+        transform: {
+          position,
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      },
+    ],
   }
 }

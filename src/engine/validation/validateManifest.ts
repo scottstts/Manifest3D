@@ -17,9 +17,14 @@ import { runPromptChecks } from './runPromptChecks'
 import { runSampledPoseValidation } from './runSampledPoseValidation'
 import { validateGeometryDescriptors } from './validateGeometryDescriptors'
 import { validateStructure } from './validateStructure'
+import {
+  createManifestProbeReport,
+  type ManifestProbeReport,
+} from './probeReport'
 
 export type ManifestValidationResult = {
   asset: ManifestAsset | null
+  probeReport: ManifestProbeReport | null
   report: ValidationReport
 }
 
@@ -29,6 +34,7 @@ export function validateManifestAssetCandidate(
   const signals: ValidationSignal[] = []
   const skippedStages = new Set<ValidationStage>()
   const parsedCandidate = manifestAssetSchema.safeParse(candidate)
+  let probeReport: ManifestProbeReport | null = null
 
   if (!parsedCandidate.success) {
     for (const schemaIssue of parsedCandidate.error.issues) {
@@ -57,6 +63,7 @@ export function validateManifestAssetCandidate(
 
     return {
       asset: null,
+      probeReport: null,
       report: createValidationReport({
         asset: null,
         signals,
@@ -81,6 +88,7 @@ export function validateManifestAssetCandidate(
 
     return {
       asset,
+      probeReport: null,
       report: createValidationReport({
         asset,
         signals,
@@ -93,6 +101,7 @@ export function validateManifestAssetCandidate(
     const builtAsset = buildManifestAsset(asset)
 
     try {
+      probeReport = createManifestProbeReport(asset, builtAsset)
       signals.push(...runBaselineQc(asset, builtAsset))
       signals.push(...runPromptChecks(asset, builtAsset))
       signals.push(...runSampledPoseValidation(asset))
@@ -119,6 +128,7 @@ export function validateManifestAssetCandidate(
 
   return {
     asset,
+    probeReport,
     report: createValidationReport({
       asset,
       signals,

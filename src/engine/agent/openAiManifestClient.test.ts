@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
-import { manifestAssetResponseJsonSchema } from '../schema/manifestContract'
+import {
+  manifestAssetResponseJsonSchema,
+  manifestRepairPatchResponseFormatName,
+  manifestRepairPatchResponseJsonSchema,
+} from '../schema/manifestContract'
 import type { ManifestScene } from '../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
 import {
@@ -63,6 +67,47 @@ describe('buildOpenAIResponsesRequestBody', () => {
 
   it('uses strict-compatible object schemas for the response format', () => {
     expect(findStrictRequiredMismatches(manifestAssetResponseJsonSchema)).toEqual([])
+    expect(findStrictRequiredMismatches(manifestRepairPatchResponseJsonSchema)).toEqual([])
+  })
+
+  it('uses the repair patch schema for repair prompts', () => {
+    const prompt = compileManifestPrompt({
+      candidateJson: createValidValidationFixtureAsset(),
+      mode: 'repair',
+      scene: emptyScene,
+      userPrompt: 'Repair it.',
+      validationFeedback: '<validation_signals />',
+    })
+
+    const body = buildOpenAIResponsesRequestBody({ prompt })
+
+    expect(body.text.format).toMatchObject({
+      name: manifestRepairPatchResponseFormatName,
+      schema: manifestRepairPatchResponseJsonSchema,
+    })
+  })
+
+  it('allows repair patches to replace numeric vectors without permitting empty array values', () => {
+    const valueVariants = getRepairPatchValueVariants()
+    const arrayVariants = valueVariants.filter(
+      (variant) => isRecord(variant) && variant.type === 'array',
+    )
+
+    expect(
+      arrayVariants.some(
+        (variant) =>
+          isRecord(variant) &&
+          variant.minItems === 3 &&
+          variant.maxItems === 3 &&
+          isRecord(variant.items) &&
+          variant.items.type === 'number',
+      ),
+    ).toBe(true)
+    expect(
+      arrayVariants.filter(
+        (variant) => isRecord(variant) && variant.minItems === undefined,
+      ),
+    ).toEqual([])
   })
 
   it('constrains generated vectors, geometry arrays, and bounded numbers', () => {
@@ -357,6 +402,36 @@ function getAnyOfVariant(schema: unknown, type: string) {
   }
 
   return variant
+}
+
+function getRepairPatchValueVariants() {
+  const patchArray = getProperty(manifestRepairPatchResponseJsonSchema, 'patch')
+  const patchOperation = getArrayItem(patchArray)
+
+  if (!isRecord(patchOperation) || !Array.isArray(patchOperation.anyOf)) {
+    throw new Error('Patch operation schema has no anyOf variants.')
+  }
+
+  const replaceOperation = patchOperation.anyOf.find(
+    (entry) =>
+      isRecord(entry) &&
+      isRecord(entry.properties) &&
+      isRecord(entry.properties.op) &&
+      Array.isArray(entry.properties.op.enum) &&
+      entry.properties.op.enum.includes('replace'),
+  )
+
+  if (!replaceOperation || !isRecord(replaceOperation)) {
+    throw new Error('Missing replace patch operation schema.')
+  }
+
+  const valueSchema = getProperty(replaceOperation, 'value')
+
+  if (!isRecord(valueSchema) || !Array.isArray(valueSchema.anyOf)) {
+    throw new Error('Patch value schema has no anyOf variants.')
+  }
+
+  return valueSchema.anyOf
 }
 
 function findStrictRequiredMismatches(

@@ -48,6 +48,16 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 - Known validation signal codes should map to short messages about what the candidate needs to fix, not implementation details about how the validator measured it.
 - Running steps show a spinner; completed rows show pass/fail/warning state. Debug details such as prompt mode are not part of the user-facing row copy.
 
+## Diagnostic Repair Loop
+
+- Create and edit turns return a complete Manifest3D asset. Repair turns return a JSON Patch envelope. The harness applies the patch to the last failed candidate, validates the patched asset, and only commits a fresh valid candidate. If patch application fails, the next repair turn receives a patch-application error and the prior candidate remains the source of truth.
+- Candidate history failure signatures are semantic cluster signatures, not raw signal hashes. Clusters normalize by stage, kind, code, unordered part pair or stable ref, and sampled-pose key while ignoring depth, volume, and visual-level noise. This catches plateau or oscillation cases where the same mechanism failure keeps changing exact measurements.
+- Buildable attempts store deterministic probe reports with asset and part bounds, joint-origin distances, and connector endpoint measurements. Repair feedback includes a compact probe section as geometry sensor data. This is the Manifest3D analogue of Articraft probe measurements; it is not rendered-image feedback.
+- `connectorTube` is the supported representation for flexible chains, cables, hoses, ropes, straps, tethers, and wires whose endpoints belong to parts. Endpoint positions are local to referenced parts, and the builder regenerates the tube from current joint transforms for validation and preview.
+- Connector tubes use subdivided overlap proxies. Only the endpoint-adjacent proxy chunks can ignore contact with the referenced endpoint parts; connector overlap with unrelated obstructions remains a validation failure.
+- Dynamic GLB export preserves `connectorTube` endpoint motion with morph-target weight tracks on the connector meshes, alongside the regular joint animation tracks.
+- Repair patches are applied to a cloned candidate and then checked against the Manifest3D asset schema before the patched candidate is accepted as the next attempt. Schema-invalid patches are reported as patch-application errors and the prior candidate remains the repair source. The repair patch response schema supports standalone numeric vector values for focused geometry edits and disallows unconstrained empty array patch values. Repeated identical patch-application errors are tracked inside the loop so the next repair prompt can state that the rejected patch was not applied, summarize the rejected operation, and tell the model not to repeat the same value.
+
 ## Compose Editing
 
 - Compose toolbar actions are duplicate, delete, move, rotate, and scale. They apply only to the selected compose instance.

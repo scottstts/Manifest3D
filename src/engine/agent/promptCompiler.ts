@@ -90,13 +90,7 @@ export function compileManifestPrompt(
       ? tag('validation_feedback', input.validationFeedback.trim())
       : '',
     tag('examples', examplesPrompt.trim()),
-    tag(
-      'response_contract',
-      [
-        'Return exactly one Manifest3D asset JSON object.',
-        'Do not include markdown fences, comments, prose, or multiple candidates.',
-      ].join('\n'),
-    ),
+    tag('response_contract', formatResponseContract(input.mode)),
   ])
 
   return {
@@ -108,6 +102,24 @@ export function compileManifestPrompt(
     system,
     user,
   }
+}
+
+function formatResponseContract(mode: PromptCompilerMode) {
+  if (mode === 'repair') {
+    return [
+      'Return exactly one JSON object with a top-level `patch` array.',
+      'The patch array must use RFC 6902-style operations with `op`, `path`, and, for add/replace, `value`.',
+      'Allowed operations are `add`, `replace`, and `remove`.',
+      'Patch the supplied candidate JSON into the repaired complete asset; do not return the full asset unless replacing the root path "".',
+      'Use concrete numeric arrays when replacing vectors, sizes, connector endpoint positions, or point arrays; never use [] as a placeholder.',
+      'Do not include markdown fences, comments, prose, or multiple candidates.',
+    ].join('\n')
+  }
+
+  return [
+    'Return exactly one Manifest3D asset JSON object.',
+    'Do not include markdown fences, comments, prose, or multiple candidates.',
+  ].join('\n')
 }
 
 function summarizeScene(scene: ManifestScene) {

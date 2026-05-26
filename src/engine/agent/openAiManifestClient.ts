@@ -2,6 +2,8 @@ import { modelConfig, type ModelConfig } from '../config/modelConfig'
 import {
   manifestAssetResponseFormatName,
   manifestAssetResponseJsonSchema,
+  manifestRepairPatchResponseFormatName,
+  manifestRepairPatchResponseJsonSchema,
 } from '../schema/manifestContract'
 import type {
   AgentImageAttachment,
@@ -157,8 +159,14 @@ export function buildOpenAIResponsesRequestBody(
     temperature: config.temperature,
     text: {
       format: {
-        name: manifestAssetResponseFormatName,
-        schema: manifestAssetResponseJsonSchema,
+        name:
+          request.prompt.metadata.mode === 'repair'
+            ? manifestRepairPatchResponseFormatName
+            : manifestAssetResponseFormatName,
+        schema:
+          request.prompt.metadata.mode === 'repair'
+            ? manifestRepairPatchResponseJsonSchema
+            : manifestAssetResponseJsonSchema,
         strict: true,
         type: 'json_schema',
       },

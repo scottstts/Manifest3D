@@ -156,6 +156,7 @@ describe('compileManifestPrompt', () => {
     expect(compiled.user).toContain('<validation_feedback>')
     expect(compiled.user).toContain('<validation_signals>')
     expect(compiled.user).toContain('<candidate_json>\n{"schemaVersion":2')
+    expect(compiled.user).toContain('top-level `patch` array')
   })
 
   it('keeps the compact example parseable as Contract V2 JSON', () => {

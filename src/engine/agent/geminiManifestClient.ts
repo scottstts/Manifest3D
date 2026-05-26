@@ -2,7 +2,10 @@ import {
   geminiModelConfig,
   type GeminiModelConfig,
 } from '../config/modelConfig'
-import { manifestAssetResponseJsonSchema } from '../schema/manifestContract'
+import {
+  manifestAssetResponseJsonSchema,
+  manifestRepairPatchResponseJsonSchema,
+} from '../schema/manifestContract'
 import type {
   AgentImageAttachment,
   AgentRequest,
@@ -143,7 +146,9 @@ export function buildGeminiGenerateContentRequestBody(
     ],
     generationConfig: {
       maxOutputTokens: config.maxOutputTokens,
-      responseJsonSchema: buildGeminiResponseJsonSchema(),
+      responseJsonSchema: buildGeminiResponseJsonSchema(
+        request.prompt.metadata.mode,
+      ),
       responseMimeType: 'application/json',
       temperature: config.temperature,
       thinkingConfig: {
@@ -161,8 +166,12 @@ export function buildGeminiGenerateContentRequestBody(
   }
 }
 
-export function buildGeminiResponseJsonSchema() {
-  return normalizeGeminiJsonSchema(manifestAssetResponseJsonSchema)
+export function buildGeminiResponseJsonSchema(mode: AgentRequest['prompt']['metadata']['mode'] = 'create') {
+  return normalizeGeminiJsonSchema(
+    mode === 'repair'
+      ? manifestRepairPatchResponseJsonSchema
+      : manifestAssetResponseJsonSchema,
+  )
 }
 
 export function parseGeminiManifestResponse(response: unknown): AgentResponse {
