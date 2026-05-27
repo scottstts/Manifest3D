@@ -3,7 +3,7 @@ import type {
 } from '../engine/agent/agentLoop'
 import type { AgentImageAttachment } from '../engine/agent/providerClient'
 import {
-  createCandidateHistoryTimeline,
+  createAgentProgressTimeline,
   type AgentTimelineItem,
 } from '../engine/agent/validationTimeline'
 import type {
@@ -100,7 +100,7 @@ export function createVersionTimeline(
       .reverse()
       .find((attempt) => attempt.status === 'failure') ?? null
 
-  return createCandidateHistoryTimeline({
+  return createAgentProgressTimeline(version.agentEvents ?? [], {
     activeCandidateFingerprint: latestAttempt?.candidateFingerprint ?? null,
     attempts: version.attempts,
     canReportReady: latestAttempt?.status === 'success',

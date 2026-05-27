@@ -1332,6 +1332,45 @@ a.viewport-toolbar__button {
   list-style: none;
 }
 
+.agent-timeline__attempt-header,
+.agent-timeline__attempt-footer {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 18px;
+  color: #7772ea;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.11em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.agent-timeline__attempt-header::after,
+.agent-timeline__attempt-footer::before {
+  flex: 1;
+  height: 1px;
+  content: '';
+  background: linear-gradient(
+    90deg,
+    rgb(119 114 234 / 0.34),
+    rgb(119 114 234 / 0.08)
+  );
+}
+
+.agent-timeline__attempt-footer {
+  min-height: 8px;
+}
+
+.agent-timeline__attempt-footer::before {
+  background: linear-gradient(
+    90deg,
+    rgb(119 114 234 / 0.08),
+    rgb(119 114 234 / 0.28),
+    rgb(119 114 234 / 0.08)
+  );
+}
+
 .agent-status {
   margin: 0 44px 14px 0;
   color: #3f478d;
@@ -1403,6 +1442,7 @@ a.viewport-toolbar__button {
   font-size: 0.74rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .prompt-composer {

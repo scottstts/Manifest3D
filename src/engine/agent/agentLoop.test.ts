@@ -10,6 +10,7 @@ import {
   runManifestAgentLoop,
   type AgentLoopEvent,
 } from './agentLoop'
+import { createCandidateHistory } from './candidateHistory'
 import type {
   AgentRequest,
   AgentResponse,
@@ -83,6 +84,51 @@ describe('runManifestAgentLoop', () => {
         'ready',
       ]),
     )
+  })
+
+  it('makes each recorded validation attempt available when the validate step finishes', async () => {
+    const sceneStore = createSceneStore(emptyScene)
+    const history = createCandidateHistory()
+    const observedAttemptCounts: number[] = []
+    const client = createQueuedClient([
+      {
+        candidate: createInvalidValidationFixtureAsset(),
+        rawText: '{}',
+        responseId: 'resp_invalid',
+        status: 'ok',
+      },
+      {
+        candidate: replaceRootPatch(createValidValidationFixtureAsset()),
+        rawText: '{}',
+        responseId: 'resp_valid',
+        status: 'ok',
+      },
+    ])
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        runId: 'run-live-attempts',
+        scene: emptyScene,
+        userPrompt: 'Create a hinged utility crate.',
+      },
+      {
+        client,
+        history,
+        onEvent: (event) => {
+          if (
+            event.state === 'validating_candidate' &&
+            event.status !== 'running'
+          ) {
+            observedAttemptCounts.push(history.getSnapshot().attempts.length)
+          }
+        },
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(observedAttemptCounts).toEqual([1, 2])
   })
 
   it('stops after the configured repair turn cap without committing', async () => {

@@ -16,6 +16,7 @@
 - The XYZ gizmo uses Drei's built-in `GizmoHelper` and `GizmoViewport` in a small WebGPU overlay canvas so its sprite labels can render at normal device density. Do not reintroduce custom gizmo geometry, CSS-only gizmos, or scaled-up Drei sprite heads.
 - The gizmo is fixed in the top-right of the open viewport. When the side panel collapses, it slides to the top-right of the overall viewport.
 - The viewport world mode control is an icon-only two-button group fixed at the top-left of the effective viewport. It slides with the left asset panel and changes only renderer world lighting, not the UI theme.
+- The render-mode control sits near the viewport world-mode control. Path tracer-only controls should appear only when path tracer mode is active; for example, the Denoiser toggle should be hidden in the default WebGPU viewport rather than shown disabled.
 
 ## Chrome And Brand
 

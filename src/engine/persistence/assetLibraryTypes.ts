@@ -1,3 +1,4 @@
+import type { AgentLoopEvent } from '../agent/agentLoop'
 import type { CandidateAttempt } from '../agent/candidateHistory'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import type { ValidationReport } from '../schema/validationTypes'
@@ -16,6 +17,7 @@ export type AssetLibraryAsset = {
 }
 
 export type AssetLibraryVersion = {
+  agentEvents?: PersistedAgentEvent[]
   asset: ManifestAsset
   assetId: string
   attempts: PersistedCandidateAttempt[]
@@ -27,6 +29,8 @@ export type AssetLibraryVersion = {
   versionId: string
   versionNumber: number
 }
+
+export type PersistedAgentEvent = AgentLoopEvent
 
 export type PersistedCandidateAttempt = CandidateAttempt & {
   assetId: string
@@ -49,6 +53,7 @@ export type PersistedUserInputImage = {
 }
 
 export type SaveValidatedAssetVersionInput = {
+  agentEvents?: readonly AgentLoopEvent[]
   asset: ManifestAsset
   history: {
     attempts: readonly CandidateAttempt[]

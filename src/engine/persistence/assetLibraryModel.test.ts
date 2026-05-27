@@ -35,6 +35,22 @@ describe('asset library model', () => {
     const saved = saveValidatedAssetVersion(
       createEmptyAssetLibrarySnapshot(),
       {
+        agentEvents: [
+          {
+            detail: 'mode=create',
+            id: 'run-library:1:compiling_prompt',
+            label: 'Compile prompt',
+            state: 'compiling_prompt',
+            status: 'passed',
+          },
+          {
+            detail: null,
+            id: 'run-library:2:validating_candidate',
+            label: 'Validate candidate',
+            state: 'validating_candidate',
+            status: 'failed',
+          },
+        ],
         asset: validAsset,
         history: history.getSnapshot(),
         now: () => '2026-05-17T00:00:00.000Z',
@@ -53,6 +69,10 @@ describe('asset library model', () => {
     expect(saved.version.attempts[0].candidate).toMatchObject({
       id: 'invalid-validation-crate',
     })
+    expect(saved.version.agentEvents?.map((event) => event.label)).toEqual([
+      'Compile prompt',
+      'Validate candidate',
+    ])
   })
 
   it('links the submitted user input to the saved asset version', () => {

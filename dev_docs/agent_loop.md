@@ -6,7 +6,7 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 
 - The harness remains stateless from the LLM transcript perspective. Each create/edit run compiles a fresh prompt from the current scene, the current Create viewport asset when editing, optional image attachments, compact attempt context for the selected saved version, and saved user-input history for the selected version lineage.
 - Full LLM transcripts are intentionally not persisted. Direct user input per saved version is persisted instead: submitted text plus attached image data/metadata. Later edit prompts prepend that accumulated user-input history, including the pending turn, before the existing prompt assembly.
-- Candidate attempts are different from chat transcripts. Attempts are saved with the validated asset version that produced or repaired them, so future edits can include compact validation history without replaying the whole conversation.
+- Candidate attempts are different from chat transcripts. Attempts are saved with the validated asset version that produced or repaired them, so future edits can include compact validation history without replaying the whole conversation. Saved versions also keep the agent progress events for the run, so the same continuous progress timeline can be reconstructed from persistence instead of falling back to attempt-only history.
 - The agent loop commits only a fresh valid candidate. Candidate freshness is still guarded by the candidate history fingerprint before the asset is saved or rendered.
 - Provider clients own provider-specific request details. UI and scene code should continue to talk to providers through the agent loop/client interfaces, not by reaching into OpenAI Responses or Gemini GenerateContent payloads.
 - OpenAI remains the starting provider default. The last provider selected in the Providers panel is cached as the next default; API keys are not persisted outside local `.env`.
@@ -17,7 +17,7 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 - IndexedDB stores the asset library: asset records, ordered version records, validation attempts per version, and optional per-version user input.
 - Persistence writes are scoped to the touched logical asset, or to the deleted asset id. Do not clear and rewrite the full asset/version/attempt stores for normal saves because multiple tabs can create different assets concurrently.
 - Only validated assets are persisted. Invalid attempts are persisted only as context under a saved valid version, never as standalone library assets.
-- Legacy version rows without `userInput` stay valid. They should keep the old attempt-only UI and prompt behavior until a new validated edit creates a version with submitted user input.
+- Legacy version rows without `userInput` stay valid. They should not fabricate chat transcript turns; once a newer version has submitted user input, its timeline can still be reconstructed from the persisted attempts and any stored agent events.
 - Asset list ordering is by original creation time descending. Later-created assets appear above older assets; editing an old asset should not reorder it by last update.
 - Each asset history item represents one logical asset with multiple versions. Opening an asset defaults to its last selected version, falling back to the latest version.
 - The scene store is runtime-only. Persisted asset data and active viewport placement are deliberately separate.
@@ -36,17 +36,19 @@ Phase 5 turns the local Manifest3D harness into a usable create/edit surface wit
 - Starting a new Create asset clears the active runtime transcript, candidate timeline, current Create viewport asset, and selection. It does not delete saved history and does not stop background agent runs.
 - Submitting a create prompt clears the previous Create viewport asset before the run. Submitting an edit prompt uses the current Create viewport asset as edit context, not the transient renderer object-selection outline.
 - Multiple create/edit runs may continue in the background. Running create jobs appear as top `Creating` rows in the asset history panel; running edit jobs stay attached to their source asset row. Opening one of those rows restores that run's prompt message and progress timeline until it finishes.
-- User prompt messages and agent timeline messages are interleaved in the right panel from saved version lineage when per-version user input exists. Running follow-up edits prepend the selected version transcript before the current turn, then the saved transcript is rebuilt from persistence after commit.
+- User prompt messages and agent timeline messages are interleaved in the right panel from saved version lineage when per-version user input exists. Running follow-up edits prepend the selected version transcript before the current turn. The current run's agent message is then updated in place through commit so the visible timeline remains continuous; later history opens reconstruct that same timeline from persisted agent events plus validation attempts.
 - Image attachments can be selected from disk or pasted into the prompt textarea. Attached images show removable thumbnails before submission and thumbnail context in the runtime transcript.
 - Persisted prompt-image thumbnails in the agent panel open an in-app image preview modal; closing uses the `X`, Escape, or clicking outside the image.
 - The send/stop control follows the currently selected run. It becomes a running stop button only when the active right-panel view is a running create/edit task; selected saved assets keep the normal send button even when other runs continue in the background.
 
 ## Validation Trace
 
-- Timeline rows should not expose raw validator strings, raw paths, debug key/value pairs, or provider errors when a normalized message can be shown.
+- Timeline rows should not expose raw validator strings, raw paths, debug key/value pairs, or provider errors when a normalized message can be shown. Routine agent event details such as prompt mode or response id stay hidden; failed agent events may show only their first concise detail line.
 - Failure and warning rows should always show a user-facing detail. If a signal is missing or unknown, fall back to a stage-specific explanation.
 - Known validation signal codes should map to short messages about what the candidate needs to fix, not implementation details about how the validator measured it.
 - Running steps show a spinner; completed rows show pass/fail/warning state. Debug details such as prompt mode are not part of the user-facing row copy.
+- Agent progress timelines are sectioned by attempt. The first section is labeled `Initial attempt`; later sections are labeled `Repair N`. The header separator appears as soon as that attempt begins, and the closing separator is appended only when the attempt reaches a terminal result.
+- Completed `validating_candidate` events are normalized into the candidate result row instead of rendering both `Validate candidate` and `Candidate validation failed/validated`. Failed attempts show only the concise validation failure summary on the candidate result row; successful attempts keep the full validation step trace.
 
 ## Diagnostic Repair Loop
 

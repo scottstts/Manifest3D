@@ -9,7 +9,11 @@ import {
   createValidationSignal,
 } from '../validation/reportBuilder'
 import { createCandidateHistory } from './candidateHistory'
-import { createCandidateHistoryTimeline } from './validationTimeline'
+import type { AgentLoopEvent } from './agentLoop'
+import {
+  createAgentProgressTimeline,
+  createCandidateHistoryTimeline,
+} from './validationTimeline'
 
 describe('createCandidateHistory', () => {
   it('allows ready only when the latest active candidate has a fresh successful report', () => {
@@ -123,7 +127,7 @@ describe('createCandidateHistory', () => {
     expect(secondAttempt.failureSignature).toBe(firstAttempt.failureSignature)
   })
 
-  it('projects candidate history into label-only attempt timeline rows', () => {
+  it('projects candidate history into separated attempt timeline sections', () => {
     const history = createCandidateHistory({
       now: () => '2026-05-16T00:00:00.000Z',
       runId: 'run-timeline',
@@ -136,19 +140,155 @@ describe('createCandidateHistory', () => {
 
     const timeline = createCandidateHistoryTimeline(history.getSnapshot())
 
-    expect(timeline[0]).toMatchObject({
-      detail: null,
+    expect(timeline.map((item) => item.label)).toEqual([
+      'Initial attempt',
+      'Candidate validation failed',
+      '',
+      'Repair 1',
+      'Candidate validation failed',
+      '',
+    ])
+    expect(timeline[1]).toMatchObject({
       kind: 'candidate_attempt',
       label: 'Candidate validation failed',
       status: 'failed',
     })
+    expect(timeline[1].detail).toContain(
+      'The candidate reused an id that must be unique.',
+    )
     expect(
-      timeline
-        .filter((item) => item.kind === 'candidate_attempt')
-        .map((item) => item.detail),
-    ).toEqual([null, null])
-    expect(timeline.map((item) => item.id)).toContain(
-      'run-timeline:attempt:2:validation:invalid-validation-crate:structure',
+      timeline.some((item) => item.label === 'Check asset structure'),
+    ).toBe(false)
+  })
+
+  it('interleaves completed validation attempts with the live agent event stream', () => {
+    const history = createCandidateHistory({
+      now: () => '2026-05-16T00:00:00.000Z',
+      runId: 'run-progress',
+    })
+    const invalidCandidate = createInvalidValidationFixtureAsset()
+    const result = validateManifestAssetCandidate(invalidCandidate)
+
+    history.recordValidationAttempt(invalidCandidate, result.report)
+
+    const events: AgentLoopEvent[] = [
+      {
+        detail: 'mode=create',
+        id: 'run-progress:1:compiling_prompt',
+        label: 'Compile prompt',
+        state: 'compiling_prompt',
+        status: 'passed',
+      },
+      {
+        detail: null,
+        id: 'run-progress:2:validating_candidate',
+        label: 'Validate candidate',
+        state: 'validating_candidate',
+        status: 'failed',
+      },
+      {
+        detail: 'repairTurn=1',
+        id: 'run-progress:3:repairing',
+        label: 'Prepare repair feedback',
+        state: 'repairing',
+        status: 'passed',
+      },
+    ]
+
+    const timeline = createAgentProgressTimeline(events, history.getSnapshot())
+    const labels = timeline.map((item) => item.label)
+    const compileIndex = labels.indexOf('Compile prompt')
+    const attemptIndex = labels.indexOf('Candidate validation failed')
+    const repairHeaderIndex = labels.indexOf('Repair 1')
+    const repairIndex = labels.indexOf('Prepare repair feedback')
+
+    expect(labels).not.toContain('Validate candidate')
+    expect(compileIndex).toBeGreaterThan(-1)
+    expect(attemptIndex).toBeGreaterThan(compileIndex)
+    expect(repairHeaderIndex).toBeGreaterThan(attemptIndex)
+    expect(repairIndex).toBeGreaterThan(repairHeaderIndex)
+    expect(timeline[attemptIndex]).toMatchObject({
+      kind: 'candidate_attempt',
+      status: 'failed',
+    })
+    expect(timeline[attemptIndex].detail).toContain(
+      'The candidate reused an id that must be unique.',
+    )
+  })
+
+  it('leaves the current attempt section open while a step is running', () => {
+    const history = createCandidateHistory({ runId: 'run-open-section' })
+    const timeline = createAgentProgressTimeline(
+      [
+        {
+          detail: null,
+          id: 'run-open-section:1:requesting_model',
+          label: 'Request candidate',
+          state: 'requesting_model',
+          status: 'running',
+        },
+      ],
+      history.getSnapshot(),
+    )
+
+    expect(timeline.map((item) => item.label)).toEqual([
+      'Initial attempt',
+      'Request candidate',
+    ])
+    expect(timeline.some((item) => item.kind === 'attempt_footer')).toBe(false)
+  })
+
+  it('keeps full validation steps for successful attempts', () => {
+    const history = createCandidateHistory({ runId: 'run-success-steps' })
+    const validCandidate = createValidValidationFixtureAsset()
+
+    history.recordValidationAttempt(
+      validCandidate,
+      validateManifestAssetCandidate(validCandidate).report,
+    )
+
+    const timeline = createAgentProgressTimeline([], history.getSnapshot())
+    const labels = timeline.map((item) => item.label)
+
+    expect(labels).toContain('Candidate validated')
+    expect(labels).toContain('Parse Manifest3D schema')
+    expect(labels).toContain('Check asset structure')
+    expect(labels).toContain('Build candidate geometry')
+    expect(labels).toContain('Run baseline QC')
+    expect(labels).toContain('Run authored checks')
+    expect(labels).toContain('Run sampled-pose checks')
+    expect(labels).toContain('Check export readiness')
+    expect(timeline.at(-1)).toMatchObject({ kind: 'attempt_footer' })
+  })
+
+  it('keeps failed agent event details concise and hides routine event details', () => {
+    const history = createCandidateHistory({ runId: 'run-event-detail' })
+    const timeline = createAgentProgressTimeline(
+      [
+        {
+          detail: 'mode=create',
+          id: 'run-event-detail:1:compiling_prompt',
+          label: 'Compile prompt',
+          state: 'compiling_prompt',
+          status: 'passed',
+        },
+        {
+          detail: [
+            'Patched candidate does not satisfy the Manifest3D asset schema.',
+            '/details omitted',
+          ].join('\n'),
+          id: 'run-event-detail:2:parsing_candidate',
+          label: 'Parse candidate JSON',
+          state: 'parsing_candidate',
+          status: 'failed',
+        },
+      ],
+      history.getSnapshot(),
+    )
+
+    expect(timeline[1].detail).toBeNull()
+    expect(timeline[2].detail).toBe(
+      'Patched candidate does not satisfy the Manifest3D asset schema.',
     )
   })
 

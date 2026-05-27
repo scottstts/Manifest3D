@@ -74,6 +74,11 @@ describe('agent conversation helpers', () => {
     expect(
       transcript[1].role === 'agent' ? transcript[1].timelineItems.length : 0,
     ).toBeGreaterThan(0)
+    expect(
+      transcript[1].role === 'agent'
+        ? transcript[1].timelineItems.map((item) => item.label).slice(0, 3)
+        : [],
+    ).toEqual(['Initial attempt', 'Compile prompt', 'Candidate validated'])
   })
 
   it('leaves legacy versions on the existing attempt-only path', () => {
@@ -105,6 +110,7 @@ function buildTwoTurnAsset(): {
   historyV1.recordValidationAttempt(assetV1, reportV1)
 
   const first = saveValidatedAssetVersion(createEmptyAssetLibrarySnapshot(), {
+    agentEvents: createPersistedRunEvents('run-v1'),
     asset: assetV1,
     history: historyV1.getSnapshot(),
     now: () => '2026-05-17T00:00:00.000Z',
@@ -130,6 +136,7 @@ function buildTwoTurnAsset(): {
   historyV2.recordValidationAttempt(assetV2, reportV2)
 
   const second = saveValidatedAssetVersion(first.snapshot, {
+    agentEvents: createPersistedRunEvents('run-v2'),
     asset: assetV2,
     history: historyV2.getSnapshot(),
     now: () => '2026-05-17T00:01:00.000Z',
@@ -145,6 +152,26 @@ function buildTwoTurnAsset(): {
     latestVersionId: second.version.versionId,
     snapshot: second.snapshot,
   }
+}
+
+
+function createPersistedRunEvents(runId: string) {
+  return [
+    {
+      detail: 'mode=create',
+      id: `${runId}:1:compiling_prompt`,
+      label: 'Compile prompt',
+      state: 'compiling_prompt' as const,
+      status: 'passed' as const,
+    },
+    {
+      detail: null,
+      id: `${runId}:2:validating_candidate`,
+      label: 'Validate candidate',
+      state: 'validating_candidate' as const,
+      status: 'passed' as const,
+    },
+  ]
 }
 
 function buildLegacyAsset(): AssetLibraryAsset[] {

@@ -81,7 +81,7 @@ import {
 } from '../engine/scene/sceneStore'
 import {
   createAgentEventTimelineItem,
-  createCandidateHistoryTimeline,
+  createAgentProgressTimeline,
   type AgentTimelineItem,
 } from '../engine/agent/validationTimeline'
 import {
@@ -141,7 +141,7 @@ type MaterialAnimationByInstance = Record<string, MaterialAnimationValues>
 type AgentRunView = {
   agentEvents: readonly AgentLoopEvent[]
   assistantMessageId: string
-  candidateTimelineItems: readonly AgentTimelineItem[]
+  progressTimelineItems: readonly AgentTimelineItem[]
   chatTranscriptItems: readonly ChatPanelTranscriptItem[]
   createdAt: number
   isRunning: boolean
@@ -179,7 +179,7 @@ export function AppShell() {
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false)
   const [agentEvents, setAgentEvents] = useState<AgentLoopEvent[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
-  const [candidateTimelineItems, setCandidateTimelineItems] = useState<
+  const [progressTimelineItems, setProgressTimelineItems] = useState<
     AgentTimelineItem[]
   >([])
   const [chatTranscriptItems, setChatTranscriptItems] = useState<
@@ -276,11 +276,11 @@ export function AppShell() {
     [scene.assets],
   )
   const timelineItems = useMemo(
-    () => [
-      ...agentEvents.map(createAgentEventTimelineItem),
-      ...candidateTimelineItems,
-    ],
-    [agentEvents, candidateTimelineItems],
+    () =>
+      progressTimelineItems.length > 0
+        ? progressTimelineItems
+        : agentEvents.map(createAgentEventTimelineItem),
+    [agentEvents, progressTimelineItems],
   )
   const composeToolbarRightOffset = Math.max(28, rightPanelOcclusionWidth + 28)
   const composeSelectionActive =
@@ -685,7 +685,7 @@ export function AppShell() {
   const showAgentRunView = useCallback((run: AgentRunView) => {
     setAgentEvents([...run.agentEvents])
     setAgentStatus(run.status)
-    setCandidateTimelineItems([...run.candidateTimelineItems])
+    setProgressTimelineItems([...run.progressTimelineItems])
     setChatTranscriptItems([...run.chatTranscriptItems])
   }, [])
 
@@ -858,7 +858,7 @@ export function AppShell() {
       const runView: AgentRunView = {
         agentEvents: [],
         assistantMessageId,
-        candidateTimelineItems: [],
+        progressTimelineItems: [],
         chatTranscriptItems: runItems,
         createdAt: Date.now(),
         isRunning: true,
@@ -924,7 +924,10 @@ export function AppShell() {
           onEvent: (event) => {
             runEvents = upsertAgentEvent(runEvents, event)
 
-            const currentTimeline = runEvents.map(createAgentEventTimelineItem)
+            const currentTimeline = createAgentProgressTimeline(
+              runEvents,
+              agentHistoryRef.current.getSnapshot(),
+            )
 
             updateAgentRunView(runId, (currentRun) => ({
               ...currentRun,
@@ -934,23 +937,21 @@ export function AppShell() {
                 assistantMessageId,
                 { timelineItems: currentTimeline },
               ),
+              progressTimelineItems: currentTimeline,
             }))
           },
           sceneStore: runSceneStore,
         },
       )
         .then(async (result) => {
-          const candidateHistoryTimelineItems = createCandidateHistoryTimeline(
+          const resultTimelineItems = createAgentProgressTimeline(
+            runEvents,
             result.history,
           )
-          const resultTimelineItems = [
-            ...runEvents.map(createAgentEventTimelineItem),
-            ...candidateHistoryTimelineItems,
-          ]
 
           updateAgentRunView(runId, (currentRun) => ({
             ...currentRun,
-            candidateTimelineItems: candidateHistoryTimelineItems,
+            progressTimelineItems: resultTimelineItems,
           }))
 
           if (result.status !== 'ready') {
@@ -975,6 +976,7 @@ export function AppShell() {
           }
 
           const savedVersion = await assetLibraryStore.saveValidatedVersion({
+            agentEvents: runEvents,
             asset: result.asset,
             history: result.history,
             parentVersionId:
@@ -982,17 +984,9 @@ export function AppShell() {
             userInput: persistSubmittedUserInput(submittedUserInput),
             validationReport: result.report,
           })
-          const readyStatus = `Ready: ${result.asset.name}`
+          const readyStatus = `Ready: ${result.asset.name} v${savedVersion.versionNumber}`
           const finalRun = agentRunsRef.current.find((run) => run.runId === runId)
           const wasActive = activeAgentRunIdRef.current === runId
-          const savedLibraryAsset =
-            assetLibraryStore
-              .getSnapshot()
-              .library.assets.find((asset) => asset.assetId === result.asset.id) ??
-            null
-          const savedTranscript = savedLibraryAsset
-            ? createVersionTranscript(savedLibraryAsset, savedVersion)
-            : []
 
           updateAgentRunView(runId, (currentRun) => ({
             ...currentRun,
@@ -1012,16 +1006,12 @@ export function AppShell() {
             sceneStore.setCreateAsset(result.asset, savedVersion.versionId)
             selectionStore.selectAsset('create', result.asset.id)
             setAgentStatus(readyStatus)
-            setCandidateTimelineItems(
-              savedTranscript.length > 0 ? [] : candidateHistoryTimelineItems,
-            )
+            setProgressTimelineItems(resultTimelineItems)
             setChatTranscriptItems((currentItems) =>
-              savedTranscript.length > 0
-                ? savedTranscript
-                : updateAgentTranscriptItem(currentItems, assistantMessageId, {
-                    status: readyStatus,
-                    timelineItems: resultTimelineItems,
-                  }),
+              updateAgentTranscriptItem(currentItems, assistantMessageId, {
+                status: readyStatus,
+                timelineItems: resultTimelineItems,
+              }),
             )
           }
         })
@@ -1031,6 +1021,11 @@ export function AppShell() {
               ? error.message
               : 'The agent run failed unexpectedly.'
 
+          const failedTimelineItems = createAgentProgressTimeline(
+            runEvents,
+            agentHistoryRef.current.getSnapshot(),
+          )
+
           updateAgentRunView(runId, (currentRun) => ({
             ...currentRun,
             chatTranscriptItems: updateAgentTranscriptItem(
@@ -1038,10 +1033,11 @@ export function AppShell() {
               assistantMessageId,
               {
                 status: message,
-                timelineItems: runEvents.map(createAgentEventTimelineItem),
+                timelineItems: failedTimelineItems,
               },
             ),
             isRunning: false,
+            progressTimelineItems: failedTimelineItems,
             status: message,
           }))
         })
@@ -1097,7 +1093,7 @@ export function AppShell() {
   const handleNewCreateAsset = useCallback(() => {
     clearActiveAgentRun()
     setAgentEvents([])
-    setCandidateTimelineItems([])
+    setProgressTimelineItems([])
     setChatTranscriptItems([])
     setAgentStatus(null)
     sceneStore.clearCreateAsset()
@@ -1175,7 +1171,7 @@ export function AppShell() {
       const transcript = createVersionTranscript(asset, version)
 
       setChatTranscriptItems(transcript)
-      setCandidateTimelineItems(
+      setProgressTimelineItems(
         transcript.length > 0 ? [] : createVersionTimeline(version),
       )
       setAgentStatus(`Loaded ${asset.name} v${version.versionNumber}`)
@@ -1270,7 +1266,7 @@ export function AppShell() {
         : []
 
       setChatTranscriptItems(transcript)
-      setCandidateTimelineItems(
+      setProgressTimelineItems(
         transcript.length > 0 ? [] : createVersionTimeline(version),
       )
       setAgentStatus(`Loaded ${version.asset.name} v${version.versionNumber}`)
@@ -1678,12 +1674,13 @@ export function AppShell() {
           mode={viewportRenderMode}
           onModeChange={handleViewportRenderModeChange}
         />
-        <ViewportDenoiseControl
-          isEnabled={isPathTracingDenoiseEnabled}
-          isHistoryPanelCollapsed={isHistoryPanelCollapsed}
-          isPathTracerMode={viewportRenderMode === 'pathtracer'}
-          onEnabledChange={handlePathTracingDenoiseEnabledChange}
-        />
+        {viewportRenderMode === 'pathtracer' && (
+          <ViewportDenoiseControl
+            isEnabled={isPathTracingDenoiseEnabled}
+            isHistoryPanelCollapsed={isHistoryPanelCollapsed}
+            onEnabledChange={handlePathTracingDenoiseEnabledChange}
+          />
+        )}
         <AssetHistoryPanel
           activeAssetId={assetPanelActiveState.activeAssetId}
           activeRunId={assetPanelActiveState.activeRunId}

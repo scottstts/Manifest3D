@@ -12,6 +12,8 @@ import type { AgentLoopEvent } from './agentLoop'
 
 export type AgentTimelineItemKind =
   | 'agent_step'
+  | 'attempt_header'
+  | 'attempt_footer'
   | 'candidate_attempt'
   | 'validation_warning'
   | 'validation_failure'
@@ -44,20 +46,42 @@ export function createValidationTimeline(
 export function createCandidateHistoryTimeline(
   history: CandidateHistorySnapshot,
 ): AgentTimelineItem[] {
-  return history.attempts.flatMap((attempt) => [
-    createAttemptTimelineItem(attempt),
-    ...createValidationTimeline(attempt.report).map((item) => ({
-      ...item,
-      id: `${attempt.id}:${item.id}`,
-    })),
-  ])
+  return createAgentProgressTimeline([], history)
+}
+
+export function createAgentProgressTimeline(
+  events: readonly AgentLoopEvent[],
+  history: CandidateHistorySnapshot,
+): AgentTimelineItem[] {
+  const builder = createTimelineBuilder()
+  let validationAttemptIndex = 0
+
+  for (const event of events) {
+    if (isCompletedValidationEvent(event)) {
+      const attempt = history.attempts[validationAttemptIndex]
+      validationAttemptIndex += 1
+
+      if (attempt) {
+        builder.addAttempt(attempt, { closeSuccessfulAttempt: false })
+        continue
+      }
+    }
+
+    builder.addEvent(event)
+  }
+
+  for (const attempt of history.attempts.slice(validationAttemptIndex)) {
+    builder.addAttempt(attempt, { closeSuccessfulAttempt: true })
+  }
+
+  return builder.items
 }
 
 export function createAgentEventTimelineItem(
   event: AgentLoopEvent,
 ): AgentTimelineItem {
   return {
-    detail: null,
+    detail: formatAgentEventDetail(event),
     id: event.id,
     kind: 'agent_step',
     label: event.label,
@@ -65,11 +89,160 @@ export function createAgentEventTimelineItem(
   }
 }
 
+type AddAttemptOptions = {
+  closeSuccessfulAttempt: boolean
+}
+
+type TimelineBuilder = {
+  addAttempt: (attempt: CandidateAttempt, options: AddAttemptOptions) => void
+  addEvent: (event: AgentLoopEvent) => void
+  items: AgentTimelineItem[]
+}
+
+function createTimelineBuilder(): TimelineBuilder {
+  const items: AgentTimelineItem[] = []
+  let currentSection: AttemptSectionState | null = null
+  let nextSectionOrdinal = 0
+
+  function openSection() {
+    if (currentSection) {
+      return currentSection
+    }
+
+    nextSectionOrdinal += 1
+    const section = createAttemptSection(nextSectionOrdinal)
+
+    currentSection = section
+    items.push(createAttemptHeaderTimelineItem(section))
+
+    return section
+  }
+
+  function closeSection(status: Exclude<AgentTimelineItem['status'], 'running'>) {
+    if (!currentSection) {
+      return
+    }
+
+    items.push(createAttemptFooterTimelineItem(currentSection, status))
+    currentSection = null
+  }
+
+  return {
+    addAttempt(attempt, options) {
+      openSection()
+
+      items.push(...createCandidateAttemptTimeline(attempt))
+
+      if (attempt.status === 'failure') {
+        closeSection('failed')
+        return
+      }
+
+      if (options.closeSuccessfulAttempt) {
+        closeSection('passed')
+      }
+    },
+    addEvent(event) {
+      openSection()
+      items.push(createAgentEventTimelineItem(event))
+
+      if (shouldCloseSectionAfterEvent(event)) {
+        closeSection(getClosingStatusForEvent(event))
+      }
+    },
+    items,
+  }
+}
+
+type AttemptSectionState = {
+  id: string
+  label: string
+}
+
+function createAttemptSection(ordinal: number): AttemptSectionState {
+  return {
+    id: `attempt-section:${ordinal}`,
+    label: ordinal === 1 ? 'Initial attempt' : `Repair ${ordinal - 1}`,
+  }
+}
+
+function createAttemptHeaderTimelineItem(
+  section: AttemptSectionState,
+): AgentTimelineItem {
+  return {
+    detail: null,
+    id: `${section.id}:header`,
+    kind: 'attempt_header',
+    label: section.label,
+    status: 'skipped',
+  }
+}
+
+function createAttemptFooterTimelineItem(
+  section: AttemptSectionState,
+  status: Exclude<AgentTimelineItem['status'], 'running'>,
+): AgentTimelineItem {
+  return {
+    detail: null,
+    id: `${section.id}:footer`,
+    kind: 'attempt_footer',
+    label: '',
+    status,
+  }
+}
+
+function isCompletedValidationEvent(event: AgentLoopEvent) {
+  return event.state === 'validating_candidate' && event.status !== 'running'
+}
+
+function shouldCloseSectionAfterEvent(event: AgentLoopEvent) {
+  if (event.status === 'failed' || event.state === 'cancelled') {
+    return true
+  }
+
+  return event.state === 'ready' && event.status === 'passed'
+}
+
+function getClosingStatusForEvent(
+  event: AgentLoopEvent,
+): Exclude<AgentTimelineItem['status'], 'running'> {
+  if (event.status === 'passed') {
+    return 'passed'
+  }
+
+  if (event.status === 'skipped') {
+    return 'skipped'
+  }
+
+  return 'failed'
+}
+
+function createCandidateAttemptTimeline(
+  attempt: CandidateAttempt,
+): AgentTimelineItem[] {
+  const attemptItem = createAttemptTimelineItem(attempt)
+
+  if (attempt.status === 'failure') {
+    return [attemptItem]
+  }
+
+  return [
+    attemptItem,
+    ...createValidationTimeline(attempt.report).map((item) => ({
+      ...item,
+      id: `${attempt.id}:${item.id}`,
+    })),
+  ]
+}
+
 function createAttemptTimelineItem(
   attempt: CandidateAttempt,
 ): AgentTimelineItem {
   return {
-    detail: null,
+    detail:
+      attempt.status === 'failure'
+        ? formatValidationFailureSummary(attempt.report)
+        : null,
     id: attempt.id,
     kind: 'candidate_attempt',
     label:
@@ -78,6 +251,70 @@ function createAttemptTimelineItem(
         : 'Candidate validation failed',
     status: attempt.status === 'success' ? 'passed' : 'failed',
   }
+}
+
+function formatAgentEventDetail(event: AgentLoopEvent) {
+  if (event.status !== 'failed' || !event.detail) {
+    return null
+  }
+
+  return formatConciseDetail(event.detail)
+}
+
+function formatValidationFailureSummary(report: ValidationReport) {
+  const details = collectValidationFailureDetails(report)
+
+  if (details.length === 0) {
+    return 'Candidate validation failed.'
+  }
+
+  const maxDetails = 3
+  const visibleDetails = details.slice(0, maxDetails)
+  const remainingCount = details.length - visibleDetails.length
+
+  if (remainingCount > 0) {
+    visibleDetails.push(`+${remainingCount} more validation failure(s).`)
+  }
+
+  return visibleDetails.join('\n')
+}
+
+function collectValidationFailureDetails(report: ValidationReport) {
+  const details: string[] = []
+  const seenDetails = new Set<string>()
+
+  for (const step of report.steps) {
+    if (step.status !== 'failed') {
+      continue
+    }
+
+    const signal = findPrimarySignal(report.bundle.signals, step.signalIds)
+    const detail = signal
+      ? formatSignalDetail(signal)
+      : getFallbackDetail('failed', step.stage)
+
+    if (seenDetails.has(detail)) {
+      continue
+    }
+
+    seenDetails.add(detail)
+    details.push(detail)
+  }
+
+  return details
+}
+
+function formatConciseDetail(detail: string) {
+  const firstLine = detail
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+
+  if (!firstLine) {
+    return null
+  }
+
+  return firstLine.length > 180 ? `${firstLine.slice(0, 177)}...` : firstLine
 }
 
 function findPrimarySignal(
