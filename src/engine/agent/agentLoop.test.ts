@@ -90,6 +90,7 @@ describe('runManifestAgentLoop', () => {
     const sceneStore = createSceneStore(emptyScene)
     const history = createCandidateHistory()
     const observedAttemptCounts: number[] = []
+    const repairRequestProgressLabels: string[][] = []
     const client = createQueuedClient([
       {
         candidate: createInvalidValidationFixtureAsset(),
@@ -123,12 +124,38 @@ describe('runManifestAgentLoop', () => {
             observedAttemptCounts.push(history.getSnapshot().attempts.length)
           }
         },
+        onProgress: (progress) => {
+          const requestCandidateItem = progress.timelineItems.at(-1)
+
+          if (
+            requestCandidateItem?.label === 'Request candidate' &&
+            requestCandidateItem.status === 'running' &&
+            progress.timelineItems.some((item) => item.label === 'Repair 1')
+          ) {
+            repairRequestProgressLabels.push(
+              progress.timelineItems.map((item) => item.label),
+            )
+          }
+        },
         sceneStore,
       },
     )
 
     expect(result.status).toBe('ready')
     expect(observedAttemptCounts).toEqual([1, 2])
+    expect(repairRequestProgressLabels.at(-1)).toEqual([
+      'Initial attempt',
+      'Agent run started',
+      'Compile prompt',
+      'Request candidate',
+      'Parse candidate JSON',
+      'Candidate validation failed',
+      '',
+      'Repair 1',
+      'Prepare repair feedback',
+      'Compile prompt',
+      'Request candidate',
+    ])
   })
 
   it('stops after the configured repair turn cap without committing', async () => {

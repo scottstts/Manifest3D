@@ -27,6 +27,12 @@ export type AgentTimelineItem = {
   status: ValidationStepStatus | 'running'
 }
 
+export type AgentProgressSnapshot = {
+  agentEvents: readonly AgentLoopEvent[]
+  history: CandidateHistorySnapshot
+  timelineItems: readonly AgentTimelineItem[]
+}
+
 export function createValidationTimeline(
   report: ValidationReport,
 ): AgentTimelineItem[] {
@@ -49,12 +55,26 @@ export function createCandidateHistoryTimeline(
   return createAgentProgressTimeline([], history)
 }
 
+export function createAgentProgressSnapshot(
+  events: readonly AgentLoopEvent[],
+  history: CandidateHistorySnapshot,
+): AgentProgressSnapshot {
+  const agentEvents = events.map((event) => ({ ...event }))
+
+  return {
+    agentEvents,
+    history,
+    timelineItems: createAgentProgressTimeline(agentEvents, history),
+  }
+}
+
 export function createAgentProgressTimeline(
   events: readonly AgentLoopEvent[],
   history: CandidateHistorySnapshot,
 ): AgentTimelineItem[] {
   const builder = createTimelineBuilder()
   let validationAttemptIndex = 0
+  const hasRunningEvent = events.some((event) => event.status === 'running')
 
   for (const event of events) {
     if (isCompletedValidationEvent(event)) {
@@ -70,8 +90,10 @@ export function createAgentProgressTimeline(
     builder.addEvent(event)
   }
 
-  for (const attempt of history.attempts.slice(validationAttemptIndex)) {
-    builder.addAttempt(attempt, { closeSuccessfulAttempt: true })
+  if (!hasRunningEvent) {
+    for (const attempt of history.attempts.slice(validationAttemptIndex)) {
+      builder.addAttempt(attempt, { closeSuccessfulAttempt: true })
+    }
   }
 
   return builder.items

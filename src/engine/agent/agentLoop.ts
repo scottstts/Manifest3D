@@ -26,6 +26,10 @@ import type {
 } from './providerClient'
 import { renderValidationSignals } from './repairFeedback'
 import { applyJsonPatch } from './jsonPatch'
+import {
+  createAgentProgressSnapshot,
+  type AgentProgressSnapshot,
+} from './validationTimeline'
 
 export type AgentLoopState =
   | 'idle'
@@ -75,6 +79,7 @@ export type RunManifestAgentLoopDependencies = {
   history?: CandidateHistory
   now?: () => string
   onEvent?: (event: AgentLoopEvent) => void
+  onProgress?: (progress: AgentProgressSnapshot) => void
   sceneStore: SceneStore
   validateCandidate?: (candidate: unknown) => ManifestValidationResult
 }
@@ -109,6 +114,7 @@ export async function runManifestAgentLoop(
   let validationFeedback: string | null = null
   let eventIndex = 0
   let repairTurns = 0
+  let runEvents: AgentLoopEvent[] = []
   let patchApplicationErrorSignature: string | null = null
   let patchApplicationErrorStreak = 0
   const userInputHistory = input.userInputHistory ?? []
@@ -119,7 +125,7 @@ export async function runManifestAgentLoop(
 
   history.beginRun(runId)
   emit(
-    dependencies.onEvent,
+    publishEvent,
     runId,
     nextEventIndex,
     'idle',
@@ -131,7 +137,7 @@ export async function runManifestAgentLoop(
   while (true) {
     if (input.signal?.aborted) {
       emit(
-        dependencies.onEvent,
+        publishEvent,
         runId,
         nextEventIndex,
         'cancelled',
@@ -182,7 +188,7 @@ export async function runManifestAgentLoop(
     if (input.signal?.aborted) {
       finishModelRequest('skipped')
       emit(
-        dependencies.onEvent,
+        publishEvent,
         runId,
         nextEventIndex,
         'cancelled',
@@ -201,7 +207,7 @@ export async function runManifestAgentLoop(
     if (agentResponse.status === 'unavailable') {
       finishModelRequest('failed')
       emit(
-        dependencies.onEvent,
+        publishEvent,
         runId,
         nextEventIndex,
         'failed',
@@ -220,7 +226,7 @@ export async function runManifestAgentLoop(
     if (agentResponse.status === 'refused' || agentResponse.status === 'error') {
       finishModelRequest('failed')
       emit(
-        dependencies.onEvent,
+        publishEvent,
         runId,
         nextEventIndex,
         'failed',
@@ -256,7 +262,7 @@ export async function runManifestAgentLoop(
 
       if (repairTurns >= maxRepairTurns) {
         emit(
-          dependencies.onEvent,
+          publishEvent,
           runId,
           nextEventIndex,
           'failed',
@@ -326,7 +332,7 @@ export async function runManifestAgentLoop(
     if (validationResult.asset && validationResult.report.valid) {
       if (!history.canReportReady(candidate.value)) {
         emit(
-          dependencies.onEvent,
+          publishEvent,
           runId,
           nextEventIndex,
           'failed',
@@ -355,7 +361,7 @@ export async function runManifestAgentLoop(
       finishCommit('passed')
 
       emit(
-        dependencies.onEvent,
+        publishEvent,
         runId,
         nextEventIndex,
         'ready',
@@ -374,7 +380,7 @@ export async function runManifestAgentLoop(
 
     if (repairTurns >= maxRepairTurns) {
       emit(
-        dependencies.onEvent,
+        publishEvent,
         runId,
         nextEventIndex,
         'failed',
@@ -413,13 +419,21 @@ export async function runManifestAgentLoop(
     return eventIndex
   }
 
+  function publishEvent(event: AgentLoopEvent) {
+    runEvents = upsertAgentLoopEvent(runEvents, event)
+    dependencies.onEvent?.(event)
+    dependencies.onProgress?.(
+      createAgentProgressSnapshot(runEvents, history.getSnapshot()),
+    )
+  }
+
   function beginStep(
     state: AgentLoopState,
     label: string,
     detail: string | null,
   ) {
     return beginAgentLoopStep(
-      dependencies.onEvent,
+      publishEvent,
       runId,
       nextEventIndex,
       state,
@@ -725,7 +739,7 @@ function collectRequestImageAttachments(
 }
 
 function emit(
-  onEvent: RunManifestAgentLoopDependencies['onEvent'],
+  publishEvent: (event: AgentLoopEvent) => void,
   runId: string,
   nextEventIndex: () => number,
   state: AgentLoopState,
@@ -733,7 +747,7 @@ function emit(
   detail: string | null,
   status: AgentLoopStatus,
 ) {
-  onEvent?.({
+  publishEvent({
     detail,
     id: `${runId}:${nextEventIndex()}:${state}`,
     label,
@@ -743,7 +757,7 @@ function emit(
 }
 
 function beginAgentLoopStep(
-  onEvent: RunManifestAgentLoopDependencies['onEvent'],
+  publishEvent: (event: AgentLoopEvent) => void,
   runId: string,
   nextEventIndex: () => number,
   state: AgentLoopState,
@@ -752,7 +766,7 @@ function beginAgentLoopStep(
 ) {
   const id = `${runId}:${nextEventIndex()}:${state}`
 
-  onEvent?.({
+  publishEvent({
     detail,
     id,
     label,
@@ -761,7 +775,7 @@ function beginAgentLoopStep(
   })
 
   return (status: Exclude<AgentLoopStatus, 'running'>, nextDetail = detail) => {
-    onEvent?.({
+    publishEvent({
       detail: nextDetail,
       id,
       label,
@@ -769,6 +783,25 @@ function beginAgentLoopStep(
       status,
     })
   }
+}
+
+function upsertAgentLoopEvent(
+  events: readonly AgentLoopEvent[],
+  event: AgentLoopEvent,
+) {
+  const existingEventIndex = events.findIndex(
+    (currentEvent) => currentEvent.id === event.id,
+  )
+
+  if (existingEventIndex < 0) {
+    return [...events, event]
+  }
+
+  const nextEvents = [...events]
+
+  nextEvents[existingEventIndex] = event
+
+  return nextEvents
 }
 
 function createRunId(now?: () => string) {

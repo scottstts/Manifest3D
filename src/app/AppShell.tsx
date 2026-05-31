@@ -82,6 +82,7 @@ import {
 import {
   createAgentEventTimelineItem,
   createAgentProgressTimeline,
+  type AgentProgressSnapshot,
   type AgentTimelineItem,
 } from '../engine/agent/validationTimeline'
 import {
@@ -216,7 +217,6 @@ export function AppShell() {
   )
   const apiKeyNoticeTimeoutRef = useRef<number | null>(null)
   const jointAnimationDirectionByKeyRef = useRef<Record<string, number>>({})
-  const agentHistoryRef = useRef(createCandidateHistory())
   const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
   const librarySnapshot = useAssetLibrarySnapshot(assetLibraryStore)
   const sceneSnapshot = useSceneSnapshot(sceneStore)
@@ -903,6 +903,22 @@ export function AppShell() {
       }, modelConfig.agentRunTimeoutMs)
 
       let runEvents: AgentLoopEvent[] = []
+      const runHistory = createCandidateHistory()
+
+      function applyAgentProgress(progress: AgentProgressSnapshot) {
+        runEvents = [...progress.agentEvents]
+
+        updateAgentRunView(runId, (currentRun) => ({
+          ...currentRun,
+          agentEvents: runEvents,
+          chatTranscriptItems: updateAgentTranscriptItem(
+            currentRun.chatTranscriptItems,
+            assistantMessageId,
+            { timelineItems: progress.timelineItems },
+          ),
+          progressTimelineItems: progress.timelineItems,
+        }))
+      }
 
       void runManifestAgentLoop(
         {
@@ -920,26 +936,8 @@ export function AppShell() {
         },
         {
           client: providerClient,
-          history: agentHistoryRef.current,
-          onEvent: (event) => {
-            runEvents = upsertAgentEvent(runEvents, event)
-
-            const currentTimeline = createAgentProgressTimeline(
-              runEvents,
-              agentHistoryRef.current.getSnapshot(),
-            )
-
-            updateAgentRunView(runId, (currentRun) => ({
-              ...currentRun,
-              agentEvents: runEvents,
-              chatTranscriptItems: updateAgentTranscriptItem(
-                currentRun.chatTranscriptItems,
-                assistantMessageId,
-                { timelineItems: currentTimeline },
-              ),
-              progressTimelineItems: currentTimeline,
-            }))
-          },
+          history: runHistory,
+          onProgress: applyAgentProgress,
           sceneStore: runSceneStore,
         },
       )
@@ -1023,7 +1021,7 @@ export function AppShell() {
 
           const failedTimelineItems = createAgentProgressTimeline(
             runEvents,
-            agentHistoryRef.current.getSnapshot(),
+            runHistory.getSnapshot(),
           )
 
           updateAgentRunView(runId, (currentRun) => ({
@@ -1801,25 +1799,6 @@ function observePanelOcclusionWidth(
     window.removeEventListener('resize', queueMeasure)
     panel.removeEventListener('transitionend', queueMeasure)
   }
-}
-
-function upsertAgentEvent(
-  events: readonly AgentLoopEvent[],
-  event: AgentLoopEvent,
-) {
-  const existingEventIndex = events.findIndex(
-    (currentEvent) => currentEvent.id === event.id,
-  )
-
-  if (existingEventIndex < 0) {
-    return [...events, event]
-  }
-
-  const nextEvents = [...events]
-
-  nextEvents[existingEventIndex] = event
-
-  return nextEvents
 }
 
 function updateAgentTranscriptItem(

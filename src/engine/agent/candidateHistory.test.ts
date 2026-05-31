@@ -238,6 +238,38 @@ describe('createCandidateHistory', () => {
     expect(timeline.some((item) => item.kind === 'attempt_footer')).toBe(false)
   })
 
+  it('does not append unmatched validation attempts under a running step', () => {
+    const history = createCandidateHistory({ runId: 'run-no-orphan-attempt' })
+    const invalidCandidate = createInvalidValidationFixtureAsset()
+
+    history.recordValidationAttempt(
+      invalidCandidate,
+      validateManifestAssetCandidate(invalidCandidate).report,
+    )
+
+    const timeline = createAgentProgressTimeline(
+      [
+        {
+          detail: null,
+          id: 'run-no-orphan-attempt:1:requesting_model',
+          label: 'Request candidate',
+          state: 'requesting_model',
+          status: 'running',
+        },
+      ],
+      history.getSnapshot(),
+    )
+
+    expect(timeline.map((item) => item.label)).toEqual([
+      'Initial attempt',
+      'Request candidate',
+    ])
+    expect(
+      timeline.some((item) => item.label === 'Candidate validation failed'),
+    ).toBe(false)
+    expect(timeline.some((item) => item.kind === 'attempt_footer')).toBe(false)
+  })
+
   it('keeps full validation steps for successful attempts', () => {
     const history = createCandidateHistory({ runId: 'run-success-steps' })
     const validCandidate = createValidValidationFixtureAsset()
