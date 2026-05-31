@@ -68,6 +68,8 @@ Implemented baseline QC includes:
 - no-op control detection when authored control limits clamp to no actual joint motion
 - material emission animation timing and visible-motion checks
 - material-side intent checks for open/cutaway lathe surfaces
+- connectorTube endpoint support in the physical support graph
+- shape-aware visual-pair relation metrics shared by overlap QC, contact checks, support reachability, and repair probes
 
 Authored checks are for prompt-critical exact claims:
 
@@ -87,6 +89,12 @@ The browser harness currently uses Three.js `Box3` bounds, projection intervals,
 
 There is one important refinement: hollow `torus` and `tube` visuals are decomposed into segment bounds for overlap checks. A whole-visual AABB treats a ring or grille like a filled disk, which caused false-positive guard-versus-rotor failures in live headless fan runs. Segment proxies preserve the same signal/check surface while letting hollow grilles, cages, rims, and rings protect moving internals without being treated as solid blockers.
 
+The relation layer now lives in `src/engine/geometry/relationMetrics.ts`. It creates shared visual-pair proxies for overlap, contact, support, and probe reporting. Long solid visuals are subdivided along their dominant local axis before world-space AABB testing, so a rotated boom, rail, beam, axle, or truss member does not behave like its entire swept bounding box is filled. `torus`, `tube`, and `connectorTube` keep their polyline segment proxies. This is still deterministic approximate geometry, but it removes a major source of overlap/contact oscillation without changing the validation signal surface.
+
+Sampled-pose overlap QC also suppresses world-frame AABB artifacts when two parts have the same relative transform as the rest pose. If a whole rigid subassembly yaws together, the part pair should not gain new collisions only because its proxies are axis-aligned in world space. Relative-motion pairs are still checked normally, so a blade spinning into a guard or a bridge leaf hitting a tower remains sampled-pose evidence.
+
+`expect_contact` is no longer just "distance <= tolerance." Contact checks also bound hidden penetration. The default allows only a small manufacturing-style seating tolerance; intentional deeper seated/captured fits should set `expect_contact.maxPenetration` or use `expect_gap.maxPenetration` and a scoped `allow_overlap`. This prevents an authored contact check from accidentally proving a deep collision.
+
 Future mesh-level overlap/contact checks should keep the same signal and check schema so repair feedback does not need a second redesign.
 
 ## Allowances
@@ -100,7 +108,11 @@ Overlap allowances are matched against reported part and optional visual pairs. 
 
 Overlap allowances are also a structure-level contract now, not just prompt guidance. Every `allow_overlap` must have a matching authored proof check for the same part pair. When the allowance names `visualAId` and `visualBId`, the proof check must reference that same visual pair through `expect_contact`, `expect_gap`, `expect_overlap`, or `expect_within`. Broad part-pair overlap allowances remain valid only when there is a matching proof check, but they emit a warning because they make accidental part-wide collisions harder to distinguish from intentional fitted contact.
 
+Authored relation checks between multi-visual parts now warn when they omit exact visual ids. Broad part-level checks can still be useful for simple one-visual parts, but bridge cables, deck trusses, guards, rails, brackets, and other composed assemblies should prove the exact mount/anchor/hanger visual pair. This keeps repair feedback focused on the physical relationship that needs repair.
+
 Disconnected visual islands inside one part remain non-blocking warnings because generated hard-surface assets sometimes use panel/trim composition where a stricter rule could cause repair churn. Prompt guidance now asks the model to keep visuals within a part physically continuous or split separate mounted pieces into fixed child parts.
+
+`allow_isolated_part` is intentionally narrow. It can still document isolated decor, but mechanical/support roles such as wheels, hinges, controls, housings, bases, handles, fasteners, mechanisms, and unspecified parts must establish a visible support path through contact, fixed mounting, or connectorTube endpoints. This avoids validation-success assets where prompt-critical pieces float with an allowance.
 
 ## Dev Fixtures
 

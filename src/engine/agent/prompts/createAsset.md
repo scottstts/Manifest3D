@@ -19,9 +19,9 @@ Requirements:
 - Use real-world dimensions and plausible materials.
 - For visible lighting requests, make the visible lens/screen material emissive; for flashing or color-switching lights, author material `emissionAnimation` instead of adding separate light objects.
 - If the prompt describes a primary mechanism or visible control, represent it as a separate part with an appropriate joint and realistic limits.
-- Use `connectorTube` for flexible chains, cables, hoses, ropes, straps, tethers, and wires whose endpoints belong to different or moving parts.
+- Use `connectorTube` for flexible chains, cables, hoses, ropes, straps, tethers, bridge hangers, suspension cables, and wires whose endpoints belong to different parts.
 - Add manifest `controls` for mechanical assets: group joints under one control when they should move together, and leave independent joints as separate controls or fallback joint dials.
 - If the asset has more than one movable joint, controls must cover every movable joint; use fallback dials only for a single-joint mechanism.
 - For primary mechanisms, include at least one pose-specific authored check with `check.pose` so validation can inspect the open, extended, rotated, or retained state.
 - Do not duplicate baseline QC as checks. Use authored checks for exact prompt-critical relationships only.
-- If you author an `allow_overlap`, include a matching exact proof check for the same part pair and exact visual pair when visuals are named.
+- If you author an `allow_overlap`, include a matching exact proof check for the same part pair and exact visual pair when visuals are named. Use `expect_contact.maxPenetration` or `expect_gap.maxPenetration` to bound intentional seated penetration.

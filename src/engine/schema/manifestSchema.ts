@@ -320,6 +320,7 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       visualAId: nonEmptyId.optional(),
       visualBId: nonEmptyId.optional(),
       contactTolerance: nonNegativeNumber.optional(),
+      maxPenetration: nonNegativeNumber.optional(),
       pose: manifestPoseSpecSchema.optional(),
     })
     .strict(),

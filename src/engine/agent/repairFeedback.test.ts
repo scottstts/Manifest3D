@@ -310,7 +310,24 @@ describe('renderValidationSignals', () => {
           },
         ],
         parts: [],
+        relations: [
+          {
+            closestVisualPair: 'chain-visual<->drawbridge-panel',
+            distance: 0,
+            id: 'relation:1',
+            overlapDepth: [0.01, 0.02, 0.03],
+            overlapVolume: 0.000006,
+            partAId: 'chain',
+            partBId: 'drawbridge',
+            penetrationDepth: 0.01,
+            signalCode: 'part_overlap_sampled_pose',
+            signalStage: 'sampled_poses',
+          },
+        ],
       },
+      relationLoopHints: [
+        'Recent repairs alternated between overlap and gap/contact failures for chain<->drawbridge.',
+      ],
     })
 
     expect(rendered).toContain('<failure_clusters>')
@@ -318,6 +335,9 @@ describe('renderValidationSignals', () => {
     expect(rendered).toContain('<probe_report>')
     expect(rendered).toContain('jointOriginDistances')
     expect(rendered).toContain('visual=chain-1')
+    expect(rendered).toContain('<relation_loop_hints>')
+    expect(rendered).toContain('failedPairRelations')
+    expect(rendered).toContain('chain-visual<->drawbridge-panel')
     expect(rendered).toContain('pose-resolved endpoint geometry')
   })
 })

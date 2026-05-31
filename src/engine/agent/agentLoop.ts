@@ -393,7 +393,10 @@ export async function runManifestAgentLoop(
     repairTurns += 1
     mode = 'repair'
     candidateJson = candidate.value
-    validationFeedback = renderRepairFeedback(attempt)
+    validationFeedback = renderRepairFeedback(
+      attempt,
+      history.getSnapshot().attempts,
+    )
     scene = dependencies.sceneStore.getSnapshot().scene
 
     const finishRepairFeedback = beginStep(
@@ -426,15 +429,75 @@ export async function runManifestAgentLoop(
   }
 }
 
-function renderRepairFeedback(attempt: CandidateAttempt) {
+function renderRepairFeedback(
+  attempt: CandidateAttempt,
+  attempts: readonly CandidateAttempt[] = [attempt],
+) {
   return renderValidationSignals(attempt.report.bundle, {
     candidateFingerprint: attempt.candidateFingerprint,
     failureClusters: attempt.failureClusters,
     failureStreak: attempt.failureStreak,
     probeReport: attempt.probeReport,
+    relationLoopHints: createRelationLoopHints(attempts),
     repeated: attempt.repeatedFailure,
     revision: attempt.revision,
   })
+}
+
+function createRelationLoopHints(attempts: readonly CandidateAttempt[]) {
+  const recentFailures = attempts
+    .filter((candidateAttempt) => candidateAttempt.status === 'failure')
+    .slice(-5)
+  const relationStatesByPair = new Map<string, Set<string>>()
+
+  for (const candidateAttempt of recentFailures) {
+    for (const cluster of candidateAttempt.failureClusters) {
+      const partPair = cluster.refs.partPair
+
+      if (!partPair) {
+        continue
+      }
+
+      const state = classifyRelationCluster(cluster.kind, cluster.code)
+
+      if (!state) {
+        continue
+      }
+
+      const states = relationStatesByPair.get(partPair) ?? new Set<string>()
+
+      states.add(state)
+      relationStatesByPair.set(partPair, states)
+    }
+  }
+
+  return [...relationStatesByPair.entries()]
+    .filter(([, states]) => states.has('too-close') && states.has('too-far'))
+    .slice(0, 4)
+    .map(([partPair]) =>
+      `Recent repairs alternated between overlap and gap/contact failures for ${partPair}. Treat this as one mounting relation problem: choose exact visual endpoints, add a bracket/saddle/hanger/support path, and use bounded contact or scoped allowance only when the physical fit is intentional.`,
+    )
+}
+
+function classifyRelationCluster(kind: string, code: string) {
+  if (
+    kind === 'real_overlap' ||
+    kind === 'sampled_pose_overlap' ||
+    code.includes('overlap_current_pose') ||
+    code.includes('overlap_sampled_pose')
+  ) {
+    return 'too-close'
+  }
+
+  if (
+    kind === 'exact_contact_gap' ||
+    code === 'expect_contact_failed' ||
+    code === 'expect_gap_failed'
+  ) {
+    return 'too-far'
+  }
+
+  return null
 }
 
 function applyRepairPatch(currentCandidate: unknown, patchCandidate: unknown) {
@@ -495,6 +558,7 @@ function renderPatchApplicationFeedback({
     failureStreak > 1
       ? `This patch-application error has repeated ${failureStreak} times. Do not send the same rejected operation or value again.`
       : 'The rejected patch was not applied.'
+  const pathHints = createPatchApplicationPathHints(message, rejectedPatchSummary)
 
   return [
     '<patch_application_error>',
@@ -506,13 +570,42 @@ function renderPatchApplicationFeedback({
     '<rejected_patch_summary>',
     rejectedPatchSummary,
     '</rejected_patch_summary>',
+    pathHints.length > 0 ? ['', '<path_hints>', ...pathHints, '</path_hints>'].join('\n') : '',
     '',
     'Return a valid JSON object with a top-level `patch` array.',
-    'Use only `add`, `replace`, and `remove` operations with RFC 6901 JSON Pointer paths into the current candidate JSON.',
+    'Use only `add`, `replace`, and `remove` operations with RFC 6901 JSON Pointer paths into the current candidate JSON. You may address existing array items by stable id with virtual path segments such as `/parts/byId/deck-truss/visuals/byId/deck-panel/transform/position`; the harness resolves those ids against the current candidate before applying the patch.',
     'For transform vectors, geometry sizes, connector endpoint positions, and point arrays, use concrete numeric arrays with the required length; never use an empty array.',
     'Preserve unrelated stable ids and geometry.',
     '</patch_application_error>',
-  ].join('\n')
+  ].filter(Boolean).join('\n')
+}
+
+function createPatchApplicationPathHints(
+  message: string,
+  rejectedPatchSummary: string,
+) {
+  const combined = `${message}\n${rejectedPatchSummary}`
+  const hints: string[] = []
+
+  if (
+    /\/joints\/(?:\d+|byId\/[^/\s]+)\/limits/.test(combined) &&
+    /\b(?:position|rotation|scale)\b/.test(combined)
+  ) {
+    hints.push(
+      '- Joint `limits` only accepts `lower`, `upper`, `effort`, and `velocity`. To move or rotate a joint frame, patch `/joints/byId/<joint-id>/origin/position`, `/origin/rotation`, or `/origin/scale`.',
+    )
+  }
+
+  if (
+    /\/joints\/(?:\d+|byId\/[^/\s]+)\/limits/.test(combined) &&
+    /\b(?:schemaVersion|parts|materials|checks|allowances)\b/.test(combined)
+  ) {
+    hints.push(
+      '- The rejected value looks like a whole asset object placed into one nested field. Patch only the specific nested property that should change.',
+    )
+  }
+
+  return hints
 }
 
 function createPatchApplicationErrorSignature(

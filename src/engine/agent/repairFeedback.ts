@@ -11,6 +11,7 @@ export type RenderValidationFeedbackOptions = {
   failureClusters?: readonly ValidationFailureCluster[]
   failureStreak?: number
   probeReport?: ManifestProbeReport | null
+  relationLoopHints?: readonly string[]
   repeated?: boolean
   revision?: number
 }
@@ -76,6 +77,15 @@ export function renderValidationSignals(
       '<failure_clusters>',
       renderFailureClusters(failureClusters),
       '</failure_clusters>',
+    )
+  }
+
+  if (options.relationLoopHints && options.relationLoopHints.length > 0) {
+    parts.push(
+      '',
+      '<relation_loop_hints>',
+      options.relationLoopHints.map((hint) => `- ${hint}`).join('\n'),
+      '</relation_loop_hints>',
     )
   }
 
@@ -248,6 +258,16 @@ function renderProbeReport(report: ManifestProbeReport) {
     for (const connector of report.connectors.slice(0, 8)) {
       lines.push(
         `- visual=${connector.id} owner=${connector.ownerPartId} endpoints=${connector.startPartId}->${connector.endPartId} length=${connector.length?.toFixed(4) ?? 'unavailable'} radius=${connector.radius}`,
+      )
+    }
+  }
+
+  if (report.relations.length > 0) {
+    lines.push('failedPairRelations:')
+
+    for (const relation of report.relations.slice(0, 8)) {
+      lines.push(
+        `- parts=${relation.partAId}<->${relation.partBId} signal=${relation.signalStage}/${relation.signalCode} closestVisualPair=${relation.closestVisualPair ?? 'unavailable'} distance=${relation.distance?.toFixed(4) ?? 'unavailable'} penetration=${relation.penetrationDepth?.toFixed(4) ?? 'unavailable'} overlapVolume=${relation.overlapVolume?.toExponential(3) ?? 'unavailable'}`,
       )
     }
   }

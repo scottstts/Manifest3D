@@ -6,6 +6,7 @@ import {
   pointToBoxDistance,
 } from '../geometry/measurements'
 import { findCurrentPoseVisualOverlaps } from '../geometry/overlapChecks'
+import { findClosestVisualRelation } from '../geometry/relationMetrics'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import type { ValidationSignal } from '../schema/validationTypes'
 import { createValidationSignal } from './reportBuilder'
@@ -258,6 +259,7 @@ function validateFloatingParts(
   }
 
   const reachablePartIds = collectPhysicallyReachableParts(
+    asset,
     rootPart.id,
     asset.parts.map((part) => part.id),
     builtAsset,
@@ -271,7 +273,7 @@ function validateFloatingParts(
       continue
     }
 
-    if (allowedPartIds.has(part.id)) {
+    if (allowedPartIds.has(part.id) && canAllowIsolatedPart(part.role)) {
       signals.push(
         createValidationSignal(
           'isolated_part',
@@ -280,6 +282,24 @@ function validateFloatingParts(
           {
             refs: { partId: part.id },
             severity: 'note',
+            source: 'baseline_qc',
+            stage: 'baseline_qc',
+          },
+        ),
+      )
+      continue
+    }
+
+    if (allowedPartIds.has(part.id)) {
+      signals.push(
+        createValidationSignal(
+          'isolated_part',
+          'isolated_part_allowance_rejected',
+          `Part "${part.id}" is physically isolated, and its role "${part.role ?? 'unspecified'}" should not use an isolation allowance.`,
+          {
+            details:
+              'Mechanical, support, wheel, hinge, control, housing, handle, base, and unspecified parts need a visible support path through contact, a fixed mount, or connectorTube endpoints.',
+            refs: { partId: part.id },
             source: 'baseline_qc',
             stage: 'baseline_qc',
           },
@@ -499,6 +519,7 @@ function collectConnectedVisuals(
 }
 
 function collectPhysicallyReachableParts(
+  asset: ManifestAsset,
   rootPartId: string,
   partIds: readonly string[],
   builtAsset: BuiltManifestAsset,
@@ -506,6 +527,7 @@ function collectPhysicallyReachableParts(
 ) {
   const pending = [rootPartId]
   const visited = new Set<string>()
+  const connectorAdjacency = createConnectorSupportAdjacency(asset)
 
   while (pending.length > 0) {
     const partId = pending.pop()
@@ -516,26 +538,71 @@ function collectPhysicallyReachableParts(
 
     visited.add(partId)
 
-    const bounds = builtAsset.partBounds.get(partId)
-
-    if (!bounds) {
-      continue
-    }
-
     for (const candidatePartId of partIds) {
       if (visited.has(candidatePartId)) {
         continue
       }
 
-      const candidateBounds = builtAsset.partBounds.get(candidatePartId)
-
-      if (candidateBounds && boxesTouchOrOverlap(bounds, candidateBounds, tolerance)) {
+      if (
+        connectorAdjacency.get(partId)?.has(candidatePartId) ||
+        partsHaveSupportContact(builtAsset, partId, candidatePartId, tolerance)
+      ) {
         pending.push(candidatePartId)
       }
     }
   }
 
   return visited
+}
+
+function partsHaveSupportContact(
+  builtAsset: BuiltManifestAsset,
+  partAId: string,
+  partBId: string,
+  tolerance: number,
+) {
+  const relation = findClosestVisualRelation(builtAsset, {
+    partAId,
+    partBId,
+  })
+
+  return Boolean(relation && relation.distance <= tolerance)
+}
+
+function createConnectorSupportAdjacency(asset: ManifestAsset) {
+  const adjacency = new Map<string, Set<string>>()
+
+  function connect(left: string, right: string) {
+    if (left === right) {
+      return
+    }
+
+    const leftSet = adjacency.get(left) ?? new Set<string>()
+    const rightSet = adjacency.get(right) ?? new Set<string>()
+
+    leftSet.add(right)
+    rightSet.add(left)
+    adjacency.set(left, leftSet)
+    adjacency.set(right, rightSet)
+  }
+
+  for (const part of asset.parts) {
+    for (const visual of part.visuals) {
+      if (visual.geometry.type !== 'connectorTube') {
+        continue
+      }
+
+      connect(part.id, visual.geometry.start.partId)
+      connect(part.id, visual.geometry.end.partId)
+      connect(visual.geometry.start.partId, visual.geometry.end.partId)
+    }
+  }
+
+  return adjacency
+}
+
+function canAllowIsolatedPart(role: ManifestAsset['parts'][number]['role']) {
+  return role === 'decor'
 }
 
 function formatOverlapDetails(depth: THREE.Vector3, volume: number) {

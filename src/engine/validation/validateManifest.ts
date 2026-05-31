@@ -101,11 +101,11 @@ export function validateManifestAssetCandidate(
     const builtAsset = buildManifestAsset(asset)
 
     try {
-      probeReport = createManifestProbeReport(asset, builtAsset)
       signals.push(...runBaselineQc(asset, builtAsset))
       signals.push(...runPromptChecks(asset, builtAsset))
-      signals.push(...runSampledPoseValidation(asset))
+      signals.push(...runSampledPoseValidation(asset, builtAsset))
       signals.push(...runExportReadiness(asset, builtAsset.group))
+      probeReport = createManifestProbeReport(asset, builtAsset, signals)
     } finally {
       disposeManifestObject(builtAsset.group)
     }

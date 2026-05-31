@@ -254,6 +254,64 @@ describe('runManifestAgentLoop', () => {
     )
   })
 
+  it('adds targeted path hints for joint limit patch mistakes', async () => {
+    const requests: AgentRequest[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const client = createQueuedClient(
+      [
+        {
+          candidate: createInvalidValidationFixtureAsset(),
+          rawText: '{}',
+          responseId: 'resp_invalid',
+          status: 'ok',
+        },
+        {
+          candidate: {
+            patch: [
+              {
+                op: 'replace',
+                path: '/joints/byId/crate-lid-hinge/limits',
+                value: {
+                  position: [0, 0, 0],
+                  rotation: [0, 0, 0],
+                  scale: [1, 1, 1],
+                },
+              },
+            ],
+          },
+          rawText: '{}',
+          responseId: 'resp_bad_limits_patch',
+          status: 'ok',
+        },
+        {
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
+          rawText: '{}',
+          responseId: 'resp_valid',
+          status: 'ok',
+        },
+      ],
+      requests,
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        runId: 'run-joint-limit-patch-hint',
+        scene: emptyScene,
+        userPrompt: 'Create a hinged utility crate.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(requests[2].prompt.user).toContain('<path_hints>')
+    expect(requests[2].prompt.user).toContain('Joint `limits` only accepts')
+    expect(requests[2].prompt.user).toContain('/joints/byId/<joint-id>/origin/position')
+  })
+
   it('uses ten repair turns by default before failing', async () => {
     const sceneStore = createSceneStore(emptyScene)
     const client = createQueuedClient(

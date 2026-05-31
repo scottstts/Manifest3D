@@ -25,6 +25,7 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   signals.push(...validateUniqueIds(asset, controls))
   signals.push(...validateRefs(asset, controls))
   signals.push(...validateAllowanceRefs(asset))
+  signals.push(...validateAuthoredRelationCheckScope(asset))
   signals.push(...validateOverlapAllowanceContracts(asset))
   signals.push(...validateSurfaceSideContracts(asset))
   signals.push(...validateControlMotionRanges(asset, controls))
@@ -32,6 +33,57 @@ export function validateStructure(asset: ManifestAsset): ValidationSignal[] {
   signals.push(...validateMaterialEmissionAnimations(asset))
   signals.push(...validateJointTree(asset))
   signals.push(...validateJointSemantics(asset))
+
+  return signals
+}
+
+function validateAuthoredRelationCheckScope(asset: ManifestAsset): ValidationSignal[] {
+  const signals: ValidationSignal[] = []
+  const visualCountByPartId = new Map(
+    asset.parts.map((part) => [part.id, part.visuals.length]),
+  )
+
+  for (const [checkIndex, check] of asset.checks.entries()) {
+    const pair = getRelationCheckPartVisualPair(check)
+
+    if (!pair) {
+      continue
+    }
+
+    const leftVisualCount = visualCountByPartId.get(pair.partAId) ?? 0
+    const rightVisualCount = visualCountByPartId.get(pair.partBId) ?? 0
+
+    if (
+      pair.visualAId &&
+      pair.visualBId ||
+      leftVisualCount <= 1 &&
+      rightVisualCount <= 1
+    ) {
+      continue
+    }
+
+    signals.push(
+      createValidationSignal(
+        'authored_checks',
+        'authored_relation_check_broad_scope',
+        `Authored ${check.type} check between "${pair.partAId}" and "${pair.partBId}" should target exact visual ids when either part has multiple visuals.`,
+        {
+          details:
+            'Broad part-level relation checks use aggregate part geometry and can hide which mount, cable, rail, or bracket is supposed to touch. Prefer exact visual ids for prompt-critical relationships and allowance proof checks.',
+          path: `/checks/${checkIndex}`,
+          refs: {
+            partAId: pair.partAId,
+            partBId: pair.partBId,
+            ...(pair.visualAId ? { visualAId: pair.visualAId } : {}),
+            ...(pair.visualBId ? { visualBId: pair.visualBId } : {}),
+          },
+          severity: 'warning',
+          source: 'checks',
+          stage: 'structure',
+        },
+      ),
+    )
+  }
 
   return signals
 }
@@ -736,6 +788,39 @@ function proofCheckMatchesAllowance(
     case 'part_exists':
     case 'expect_material_side':
       return false
+    default:
+      return assertNever(check)
+  }
+}
+
+function getRelationCheckPartVisualPair(check: ManifestCheck) {
+  switch (check.type) {
+    case 'expect_contact':
+    case 'expect_overlap':
+      return {
+        partAId: check.partAId,
+        partBId: check.partBId,
+        visualAId: check.visualAId,
+        visualBId: check.visualBId,
+      }
+    case 'expect_gap':
+      return {
+        partAId: check.positivePartId,
+        partBId: check.negativePartId,
+        visualAId: check.positiveVisualId,
+        visualBId: check.negativeVisualId,
+      }
+    case 'expect_within':
+      return {
+        partAId: check.innerPartId,
+        partBId: check.outerPartId,
+        visualAId: check.innerVisualId,
+        visualBId: check.outerVisualId,
+      }
+    case 'joint_exists':
+    case 'part_exists':
+    case 'expect_material_side':
+      return null
     default:
       return assertNever(check)
   }

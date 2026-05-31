@@ -227,6 +227,7 @@ export type ManifestCheck =
       visualAId?: string
       visualBId?: string
       contactTolerance?: number
+      maxPenetration?: number
     } & ManifestCheckPoseField)
   | ({
       type: 'expect_gap'

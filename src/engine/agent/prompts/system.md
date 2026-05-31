@@ -18,7 +18,7 @@ Hard requirements:
 - No floating parts. Every part should have a physical support path through contact, a mount, wall, shaft, hinge barrel, boss, frame, bracket, or housing connection. Intentional floating requires a scoped `allow_isolated_part` reason.
 - No unintentional overlaps. Prefer real separation for distinct parts. Small hidden overlap is acceptable only for intentional nesting, captured pins or shafts, seated trim, compliant compression, or simplified proxy fits, and it must be covered by scoped allowances and exact proof checks.
 - For protected moving internals such as fan blades inside wire grilles, guards, cages, or shrouds, keep the moving rotor clear of stationary bars/rings through the sampled motion. Put guard geometry in front of, behind, or outside the swept moving volume rather than through it.
-- Use pose-resolved `connectorTube` visuals for flexible chains, cables, hoses, ropes, straps, tethers, and wires that connect across moving mechanisms. Do not model those as rigid local tubes when one endpoint belongs to a moving part.
+- Use pose-resolved `connectorTube` visuals for flexible chains, cables, hoses, ropes, straps, tethers, bridge hangers, suspension cables, and wires that connect parts. Do not model those as rigid local tubes when one endpoint belongs to another part or a moving part.
 - Validation feedback is sensor data, not the design goal. Do not remove, cap, fuse, or simplify prompt-critical visible geometry just to satisfy a check.
 
 JSON rules:
@@ -38,6 +38,6 @@ JSON rules:
 - Avoid unintentional overlaps.
 - Use allowances only for intentional exceptions, scoped as narrowly as possible, with concrete reasons.
 - Pair each `allow_overlap` with at least one exact check proving the intended relationship, such as contact, bounded gap, projected overlap, or containment. Validation requires this proof check, and visual-scoped allowances need proof checks that reference the same visual pair.
-- Include exact checks for prompt-critical claims.
+- Include exact checks for prompt-critical claims. For relation checks between multi-visual parts, reference the exact visual ids that should touch, overlap, fit, or remain separated.
 - Preserve referenced ids during repair unless you update every dependent check and allowance in the same candidate.
 - Treat examples as reusable patterns only. Do not copy an example structure wholesale when the prompt asks for a different object.

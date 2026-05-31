@@ -1,6 +1,7 @@
 import {
   buildManifestAsset,
   disposeManifestObject,
+  type BuiltManifestAsset,
 } from '../geometry/assetBuilder'
 import {
   createGeneratedJointPoseSamples,
@@ -8,7 +9,11 @@ import {
   type JointPoseSample,
   type JointPoseValues,
 } from '../geometry/jointPoses'
-import { findCurrentPoseVisualOverlaps } from '../geometry/overlapChecks'
+import {
+  findCurrentPoseVisualOverlaps,
+  type GeometryOverlapFinding,
+} from '../geometry/overlapChecks'
+import * as THREE from 'three/webgpu'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import type { ValidationSignal } from '../schema/validationTypes'
 import { createValidationSignal } from './reportBuilder'
@@ -20,14 +25,24 @@ import {
 
 const sampledPoseOverlapToleranceMeters = 0.001
 const sampledPoseOverlapVolumeToleranceCubicMeters = 1e-8
+const relativeTransformTolerance = 1e-6
 
-export function runSampledPoseValidation(asset: ManifestAsset) {
+const overlapOptions = {
+  overlapTolerance: sampledPoseOverlapToleranceMeters,
+  volumeTolerance: sampledPoseOverlapVolumeToleranceCubicMeters,
+}
+
+export function runSampledPoseValidation(
+  asset: ManifestAsset,
+  restBuiltAsset?: BuiltManifestAsset,
+) {
   const poseSpecificChecks = asset.checks
     .map((check, index) => ({ check, index }))
     .filter(({ check }) => check.pose)
   const generatedSamples = createGeneratedJointPoseSamples(asset)
   const authoredSamples = createAuthoredPoseSamples(asset, poseSpecificChecks)
   const signals: ValidationSignal[] = []
+  const activeRestBuiltAsset = restBuiltAsset ?? buildManifestAsset(asset)
 
   signals.push(...authoredSamples.signals)
 
@@ -35,32 +50,48 @@ export function runSampledPoseValidation(asset: ManifestAsset) {
     ...generatedSamples,
     ...authoredSamples.samples,
   ])
+  const restOverlapKeys = new Set(
+    findCurrentPoseVisualOverlaps(activeRestBuiltAsset, overlapOptions).map(
+      getOverlapFindingKey,
+    ),
+  )
 
-  for (const sample of allSamples) {
-    const builtAsset = buildManifestAsset(asset, {
-      jointPoses: sample.poses,
-    })
+  try {
+    for (const sample of allSamples) {
+      const builtAsset = buildManifestAsset(asset, {
+        jointPoses: sample.poses,
+      })
 
-    try {
-      signals.push(...runSampledPoseOverlapQc(asset, sample, builtAsset))
-
-      const checksForPose = poseSpecificChecks.filter(
-        ({ check }) =>
-          check.pose && resolvedPoseKey(asset, check.pose) === poseValuesKey(sample.poses),
-      )
-
-      if (checksForPose.length > 0) {
+      try {
         signals.push(
-          ...runPromptChecks(asset, builtAsset, {
-            checks: checksForPose,
-            includeMissingChecksWarning: false,
-            poseLabel: formatSampleLabel(sample),
-            stage: 'sampled_poses',
+          ...runSampledPoseOverlapQc(asset, sample, builtAsset, {
+            restBuiltAsset: activeRestBuiltAsset,
+            restOverlapKeys,
           }),
         )
+
+        const checksForPose = poseSpecificChecks.filter(
+          ({ check }) =>
+            check.pose && resolvedPoseKey(asset, check.pose) === poseValuesKey(sample.poses),
+        )
+
+        if (checksForPose.length > 0) {
+          signals.push(
+            ...runPromptChecks(asset, builtAsset, {
+              checks: checksForPose,
+              includeMissingChecksWarning: false,
+              poseLabel: formatSampleLabel(sample),
+              stage: 'sampled_poses',
+            }),
+          )
+        }
+      } finally {
+        disposeManifestObject(builtAsset.group)
       }
-    } finally {
-      disposeManifestObject(builtAsset.group)
+    }
+  } finally {
+    if (!restBuiltAsset) {
+      disposeManifestObject(activeRestBuiltAsset.group)
     }
   }
 
@@ -115,15 +146,20 @@ function createAuthoredPoseSamples(
 function runSampledPoseOverlapQc(
   asset: ManifestAsset,
   sample: JointPoseSample,
-  builtAsset: ReturnType<typeof buildManifestAsset>,
+  builtAsset: BuiltManifestAsset,
+  restContext: {
+    restBuiltAsset: BuiltManifestAsset
+    restOverlapKeys: ReadonlySet<string>
+  },
 ) {
   const signals: ValidationSignal[] = []
-  const findings = findCurrentPoseVisualOverlaps(builtAsset, {
-    overlapTolerance: sampledPoseOverlapToleranceMeters,
-    volumeTolerance: sampledPoseOverlapVolumeToleranceCubicMeters,
-  })
+  const findings = findCurrentPoseVisualOverlaps(builtAsset, overlapOptions)
 
   for (const finding of findings) {
+    if (isRigidSharedPoseArtifact(finding, builtAsset, restContext)) {
+      continue
+    }
+
     const details = [
       formatOverlapDetails(finding.depth, finding.volume),
       `pose=${formatSampleLabel(sample)}`,
@@ -142,6 +178,7 @@ function runSampledPoseOverlapQc(
             refs: {
               partAId: finding.partAId,
               partBId: finding.partBId,
+              poseValues: formatPoseValues(sample.poses),
               visualAId: finding.visualAId,
               visualBId: finding.visualBId,
             },
@@ -165,6 +202,7 @@ function runSampledPoseOverlapQc(
           refs: {
             partAId: finding.partAId,
             partBId: finding.partBId,
+            poseValues: formatPoseValues(sample.poses),
             visualAId: finding.visualAId,
             visualBId: finding.visualBId,
           },
@@ -176,6 +214,84 @@ function runSampledPoseOverlapQc(
   }
 
   return signals
+}
+
+function isRigidSharedPoseArtifact(
+  finding: GeometryOverlapFinding,
+  builtAsset: BuiltManifestAsset,
+  {
+    restBuiltAsset,
+    restOverlapKeys,
+  }: {
+    restBuiltAsset: BuiltManifestAsset
+    restOverlapKeys: ReadonlySet<string>
+  },
+) {
+  if (restOverlapKeys.has(getOverlapFindingKey(finding))) {
+    return false
+  }
+
+  return haveSameRelativePartTransform(
+    restBuiltAsset,
+    builtAsset,
+    finding.partAId,
+    finding.partBId,
+  )
+}
+
+function haveSameRelativePartTransform(
+  restBuiltAsset: BuiltManifestAsset,
+  sampledBuiltAsset: BuiltManifestAsset,
+  partAId: string,
+  partBId: string,
+) {
+  const restRelative = getPartRelativeMatrix(restBuiltAsset, partAId, partBId)
+  const sampledRelative = getPartRelativeMatrix(sampledBuiltAsset, partAId, partBId)
+
+  if (!restRelative || !sampledRelative) {
+    return false
+  }
+
+  return matricesApproximatelyEqual(
+    restRelative,
+    sampledRelative,
+    relativeTransformTolerance,
+  )
+}
+
+function getPartRelativeMatrix(
+  builtAsset: BuiltManifestAsset,
+  partAId: string,
+  partBId: string,
+) {
+  const partA = builtAsset.partGroups.get(partAId)
+  const partB = builtAsset.partGroups.get(partBId)
+
+  if (!partA || !partB) {
+    return null
+  }
+
+  return new THREE.Matrix4()
+    .copy(partA.matrixWorld)
+    .invert()
+    .multiply(partB.matrixWorld)
+}
+
+function matricesApproximatelyEqual(
+  left: THREE.Matrix4,
+  right: THREE.Matrix4,
+  tolerance: number,
+) {
+  return left.elements.every(
+    (value, index) => Math.abs(value - right.elements[index]) <= tolerance,
+  )
+}
+
+function getOverlapFindingKey(finding: GeometryOverlapFinding) {
+  return [
+    `${finding.partAId}:${finding.visualAId}`,
+    `${finding.partBId}:${finding.visualBId}`,
+  ].sort().join('|')
 }
 
 function dedupeSamples(samples: readonly JointPoseSample[]) {

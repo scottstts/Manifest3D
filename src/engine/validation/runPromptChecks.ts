@@ -2,12 +2,15 @@ import * as THREE from 'three/webgpu'
 import type { BuiltManifestAsset } from '../geometry/assetBuilder'
 import {
   axisContains,
-  boxDistance,
   getProjectedGap,
   getProjectedOverlap,
   normalizeAxes,
 } from '../geometry/measurements'
 import { normalizeManifestMaterialSide } from '../geometry/materialSide'
+import {
+  findVisualRelations,
+  type VisualPairRelation,
+} from '../geometry/relationMetrics'
 import type { ManifestAsset, ManifestCheck } from '../schema/manifestTypes'
 import type { ValidationSignal, ValidationStage } from '../schema/validationTypes'
 import { createValidationSignal } from './reportBuilder'
@@ -37,6 +40,9 @@ export type RunPromptChecksOptions = {
   poseLabel?: string
   stage?: ValidationStage
 }
+
+const defaultContactToleranceMeters = 0.005
+const defaultContactMaxPenetrationMeters = 0.006
 
 export function runPromptChecks(
   asset: ManifestAsset,
@@ -259,21 +265,50 @@ function runContactCheck(
     ]
   }
 
-  const contactTolerance = check.contactTolerance ?? 0.005
-  const distance = boxDistance(resolved.boundsA, resolved.boundsB)
+  const contactTolerance = check.contactTolerance ?? defaultContactToleranceMeters
+  const maxPenetration =
+    check.maxPenetration ?? defaultContactMaxPenetrationMeters
+  const relation = selectBestContactRelation(
+    findVisualRelations(builtAsset, {
+      partAId: check.partAId,
+      partBId: check.partBId,
+      visualAId: check.visualAId,
+      visualBId: check.visualBId,
+    }),
+    {
+      contactTolerance,
+      maxPenetration,
+    },
+  )
 
-  if (distance <= contactTolerance) {
+  if (
+    relation &&
+    relation.distance <= contactTolerance &&
+    relation.penetrationDepth <= maxPenetration
+  ) {
     return []
   }
+
+  const details = relation
+    ? [
+        `minDistance=${relation.distance.toFixed(4)}`,
+        `penetrationDepth=${relation.penetrationDepth.toFixed(4)}`,
+        `contactTolerance=${contactTolerance}`,
+        `maxPenetration=${maxPenetration}`,
+        `closestVisualPair=${relation.visualAId}<->${relation.visualBId}`,
+      ].join(' ')
+    : `contactTolerance=${contactTolerance} maxPenetration=${maxPenetration}`
 
   return [
     createCheckFailure(
       'exact_contact_gap',
       'expect_contact_failed',
-      `Expected "${check.partAId}" to contact "${check.partBId}", but measured gap is ${distance.toFixed(4)}m.`,
+      relation && relation.penetrationDepth > maxPenetration
+        ? `Expected "${check.partAId}" to contact "${check.partBId}", but the closest relation penetrates too deeply.`
+        : `Expected "${check.partAId}" to contact "${check.partBId}", but measured gap is ${relation?.distance.toFixed(4) ?? 'unavailable'}m.`,
       path,
       resolved.refs,
-      `minDistance=${distance.toFixed(4)} contactTolerance=${contactTolerance}`,
+      details,
       context,
     ),
   ]
@@ -458,6 +493,49 @@ function runWithinCheck(
       context,
     ),
   ]
+}
+
+function selectBestContactRelation(
+  relations: readonly VisualPairRelation[],
+  options: {
+    contactTolerance: number
+    maxPenetration: number
+  },
+) {
+  return relations.reduce<VisualPairRelation | null>((best, relation) => {
+    if (!best) {
+      return relation
+    }
+
+    const relationViolation = getContactViolationScore(relation, options)
+    const bestViolation = getContactViolationScore(best, options)
+
+    if (relationViolation !== bestViolation) {
+      return relationViolation < bestViolation ? relation : best
+    }
+
+    if (relation.distance !== best.distance) {
+      return relation.distance < best.distance ? relation : best
+    }
+
+    return relation.penetrationDepth < best.penetrationDepth ? relation : best
+  }, null)
+}
+
+function getContactViolationScore(
+  relation: VisualPairRelation,
+  options: {
+    contactTolerance: number
+    maxPenetration: number
+  },
+) {
+  const gapViolation = Math.max(0, relation.distance - options.contactTolerance)
+  const penetrationViolation = Math.max(
+    0,
+    relation.penetrationDepth - options.maxPenetration,
+  )
+
+  return gapViolation + penetrationViolation
 }
 
 function findVisualEntry(asset: ManifestAsset, visualId: string) {

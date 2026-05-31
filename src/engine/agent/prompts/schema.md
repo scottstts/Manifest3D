@@ -56,7 +56,7 @@ Geometry authoring guidance:
 - Use `roundedBox` for softened manufactured housings, panels, padded blocks, cases, seats, and controls that should not read as sharp placeholder boxes.
 - For every `roundedBox`, set `radius <= min(size[0], size[1], size[2]) / 2`. Prefer visibly subtle radii on thin panels and small details; if the form should be fully pill-shaped, use `capsule` instead.
 - Use `capsule` for pill-shaped handles, rounded rails, grips, rubber feet, bumpers, soft bars, and small retained pins with rounded ends.
-- Use `connectorTube` for flexible chains, cables, hoses, ropes, straps, tethers, and wires that visually connect two parts, especially when one endpoint is on a movable part. It has `{ "type": "connectorTube", "start": { "partId", "position" }, "end": { "partId", "position" }, "radius", "sag" }`; endpoint `position` values are local to their referenced parts.
+- Use `connectorTube` for flexible chains, cables, hoses, ropes, straps, tethers, static suspension cables, bridge hangers, and wires that visually connect two parts, especially when one endpoint is on a movable part. It has `{ "type": "connectorTube", "start": { "partId", "position" }, "end": { "partId", "position" }, "radius", "sag" }`; endpoint `position` values are local to their referenced parts.
 - Do not represent visible hollow bodies or open cavities as one solid box or capped cylinder.
 - For protective grilles, cages, guards, and shrouds around moving internals, model the guard as stationary bars/rings with real clearance around the moving part's swept volume.
 - Keep visual ids stable and meaningful because checks and allowances may reference them directly.
@@ -84,7 +84,7 @@ Authored checks should prove prompt-critical exact relationships:
 - `part_exists`
 - `joint_exists`
 - `expect_material_side`
-- `expect_contact`
+- `expect_contact` with optional `contactTolerance` and `maxPenetration`. Use exact `visualAId`/`visualBId` for multi-visual assemblies. Use `maxPenetration: 0` for surface touch, or a small positive value only for intentional seated/captured fits.
 - `expect_gap`
 - `expect_overlap`
 - `expect_within`
@@ -96,4 +96,4 @@ Allowances:
 - `allow_overlap` for intentional scoped overlap, preferably exact visual pairs.
 - `allow_isolated_part` only when a physically isolated part is intentional.
 - Broad part-pair allowances are a last resort and still need a concrete reason.
-- Intentional overlap must be paired with `expect_contact`, `expect_gap`, `expect_overlap`, or `expect_within` for the same part pair. If the allowance has `visualAId`/`visualBId`, the proof check must reference that same visual pair.
+- Intentional overlap must be paired with `expect_contact`, `expect_gap`, `expect_overlap`, or `expect_within` for the same part pair. If the allowance has `visualAId`/`visualBId`, the proof check must reference that same visual pair. For seated contacts, bound the penetration explicitly with `expect_contact.maxPenetration` or `expect_gap.maxPenetration` instead of relying on unbounded contact.

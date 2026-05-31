@@ -116,7 +116,13 @@ function applyOperation(
     }
   }
 
-  const target = resolveParent(document, tokens)
+  const concreteTokens = resolveVirtualJsonPointer(document, tokens)
+
+  if (concreteTokens.status === 'error') {
+    return concreteTokens
+  }
+
+  const target = resolveParent(document, concreteTokens.tokens)
 
   if (target.status === 'error') {
     return target
@@ -229,6 +235,85 @@ function resolveParent(document: unknown, tokens: readonly string[]) {
     key: tokens[tokens.length - 1],
     parent: current,
     status: 'ok' as const,
+  }
+}
+
+function resolveVirtualJsonPointer(document: unknown, tokens: readonly string[]) {
+  let current = document
+  const concreteTokens: string[] = []
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    const nextToken = tokens[index + 1]
+
+    if (
+      isRecord(current) &&
+      Array.isArray(current[token]) &&
+      nextToken === 'byId'
+    ) {
+      const id = tokens[index + 2]
+
+      if (!id) {
+        return {
+          message: `Virtual id path "${concreteTokens.concat(token, nextToken).join('/')}" is missing an id segment.`,
+          status: 'error' as const,
+        }
+      }
+
+      const itemIndex = current[token].findIndex(
+        (item) => isRecord(item) && item.id === id,
+      )
+
+      if (itemIndex < 0) {
+        return {
+          message: `No item with id "${id}" exists under array path "/${concreteTokens.concat(token).join('/')}".`,
+          status: 'error' as const,
+        }
+      }
+
+      concreteTokens.push(token, String(itemIndex))
+      current = current[token][itemIndex]
+      index += 2
+      continue
+    }
+
+    concreteTokens.push(token)
+
+    if (index === tokens.length - 1) {
+      break
+    }
+
+    if (Array.isArray(current)) {
+      const arrayIndex = Number(token)
+
+      if (
+        !Number.isInteger(arrayIndex) ||
+        arrayIndex < 0 ||
+        arrayIndex >= current.length
+      ) {
+        return {
+          message: `Array index "${token}" is out of range.`,
+          status: 'error' as const,
+        }
+      }
+
+      current = current[arrayIndex]
+      continue
+    }
+
+    if (!isRecord(current) || isUnsafeObjectKey(token) || !(token in current)) {
+      return {
+        message: `Path segment "${token}" does not exist.`,
+        status: 'error' as const,
+      }
+    }
+
+    current = current[token]
+  }
+
+  return {
+    status: 'ok' as const,
+    tokens: concreteTokens,
   }
 }
 

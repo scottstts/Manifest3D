@@ -1,11 +1,18 @@
 import * as THREE from 'three/webgpu'
-import type { BuiltManifestAsset } from '../geometry/assetBuilder'
+import {
+  buildManifestAsset,
+  disposeManifestObject,
+  type BuiltManifestAsset,
+} from '../geometry/assetBuilder'
 import { getNormalizedJointAxis } from '../geometry/jointPoses'
+import type { JointPoseValues } from '../geometry/jointPoses'
 import type {
   ManifestAsset,
   ManifestGeometry,
   ManifestVector3,
 } from '../schema/manifestTypes'
+import type { ValidationSignal } from '../schema/validationTypes'
+import { findClosestVisualRelation } from '../geometry/relationMetrics'
 
 export type BoundsProbe = {
   center: ManifestVector3
@@ -44,6 +51,19 @@ export type ConnectorProbe = {
   startWorld: ManifestVector3 | null
 }
 
+export type RelationProbe = {
+  closestVisualPair: string | null
+  distance: number | null
+  id: string
+  overlapDepth: ManifestVector3 | null
+  overlapVolume: number | null
+  partAId: string
+  partBId: string
+  penetrationDepth: number | null
+  signalCode: string
+  signalStage: string
+}
+
 export type ManifestProbeReport = {
   assetBounds: BoundsProbe | null
   assetId: string
@@ -51,25 +71,36 @@ export type ManifestProbeReport = {
   connectors: ConnectorProbe[]
   joints: JointProbe[]
   parts: PartProbe[]
+  relations: RelationProbe[]
 }
 
 export function createManifestProbeReport(
   asset: ManifestAsset,
   builtAsset: BuiltManifestAsset,
+  signals: readonly ValidationSignal[] = [],
 ): ManifestProbeReport {
-  return {
-    assetBounds: serializeBounds(builtAsset.bounds),
-    assetId: asset.id,
-    assetName: asset.name,
-    connectors: createConnectorProbes(asset, builtAsset),
-    joints: createJointProbes(asset, builtAsset),
-    parts: asset.parts.map((part) => ({
-      bounds: serializeBounds(builtAsset.partBounds.get(part.id) ?? null),
-      id: part.id,
-      name: part.name,
-      role: part.role ?? null,
-      visualCount: part.visuals.length,
-    })),
+  const sampledPoseAssets = new Map<string, BuiltManifestAsset>()
+
+  try {
+    return {
+      assetBounds: serializeBounds(builtAsset.bounds),
+      assetId: asset.id,
+      assetName: asset.name,
+      connectors: createConnectorProbes(asset, builtAsset),
+      joints: createJointProbes(asset, builtAsset),
+      parts: asset.parts.map((part) => ({
+        bounds: serializeBounds(builtAsset.partBounds.get(part.id) ?? null),
+        id: part.id,
+        name: part.name,
+        role: part.role ?? null,
+        visualCount: part.visuals.length,
+      })),
+      relations: createRelationProbes(asset, builtAsset, signals, sampledPoseAssets),
+    }
+  } finally {
+    for (const sampledPoseAsset of sampledPoseAssets.values()) {
+      disposeManifestObject(sampledPoseAsset.group)
+    }
   }
 }
 
@@ -138,6 +169,142 @@ function createConnectorProbes(
   }
 
   return probes
+}
+
+function createRelationProbes(
+  asset: ManifestAsset,
+  builtAsset: BuiltManifestAsset,
+  signals: readonly ValidationSignal[],
+  sampledPoseAssets: Map<string, BuiltManifestAsset>,
+): RelationProbe[] {
+  const probes: RelationProbe[] = []
+  const seen = new Set<string>()
+
+  for (const signal of signals) {
+    if (signal.severity !== 'failure') {
+      continue
+    }
+
+    const partAId = signal.refs?.partAId
+    const partBId = signal.refs?.partBId
+
+    if (!partAId || !partBId) {
+      continue
+    }
+
+    const key = [
+      partAId,
+      partBId,
+      signal.refs?.visualAId ?? '',
+      signal.refs?.visualBId ?? '',
+      signal.stage,
+      signal.code,
+    ].join('|')
+
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+
+    const relationBuiltAsset = getRelationProbeBuiltAsset(
+      asset,
+      builtAsset,
+      signal,
+      sampledPoseAssets,
+    )
+    const relation = findClosestVisualRelation(relationBuiltAsset, {
+      partAId,
+      partBId,
+      visualAId: signal.refs?.visualAId,
+      visualBId: signal.refs?.visualBId,
+    })
+
+    probes.push({
+      closestVisualPair: relation
+        ? `${relation.visualAId}<->${relation.visualBId}`
+        : null,
+      distance: relation ? roundMetric(relation.distance) : null,
+      id: `relation:${probes.length + 1}`,
+      overlapDepth: relation ? serializeVector(relation.overlapDepth) : null,
+      overlapVolume: relation ? roundMetric(relation.overlapVolume) : null,
+      partAId,
+      partBId,
+      penetrationDepth: relation ? roundMetric(relation.penetrationDepth) : null,
+      signalCode: signal.code,
+      signalStage: signal.stage,
+    })
+
+    if (probes.length >= 10) {
+      break
+    }
+  }
+
+  return probes
+}
+
+function getRelationProbeBuiltAsset(
+  asset: ManifestAsset,
+  builtAsset: BuiltManifestAsset,
+  signal: ValidationSignal,
+  sampledPoseAssets: Map<string, BuiltManifestAsset>,
+) {
+  if (signal.stage !== 'sampled_poses') {
+    return builtAsset
+  }
+
+  const poseValues = parseSignalJointPoseValues(signal)
+
+  if (!poseValues) {
+    return builtAsset
+  }
+
+  const key = Object.entries(poseValues)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([jointId, value]) => `${jointId}:${value.toFixed(6)}`)
+    .join('|')
+  const existing = sampledPoseAssets.get(key)
+
+  if (existing) {
+    return existing
+  }
+
+  const sampledPoseAsset = buildManifestAsset(asset, {
+    jointPoses: poseValues,
+  })
+
+  sampledPoseAssets.set(key, sampledPoseAsset)
+
+  return sampledPoseAsset
+}
+
+function parseSignalJointPoseValues(signal: ValidationSignal): JointPoseValues | null {
+  const source = signal.refs?.poseValues ?? signal.details?.match(/\bjoints=([^\s]+)/)?.[1]
+
+  if (!source) {
+    return null
+  }
+
+  const poseValues: Record<string, number> = {}
+
+  for (const entry of source.split(',')) {
+    const separatorIndex = entry.lastIndexOf('=')
+
+    if (separatorIndex <= 0) {
+      continue
+    }
+
+    const jointId = entry.slice(0, separatorIndex)
+    const value = Number(entry.slice(separatorIndex + 1))
+
+    if (!jointId || !Number.isFinite(value)) {
+      continue
+    }
+
+    poseValues[jointId] = value
+  }
+
+  return Object.keys(poseValues).length > 0 ? poseValues : null
 }
 
 function resolveLocalPointWorld(

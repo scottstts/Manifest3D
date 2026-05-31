@@ -443,6 +443,9 @@ const checkSchema = {
         contactTolerance: nonNegativeNumberSchema(
           'Nonnegative contact tolerance in meters.',
         ),
+        maxPenetration: nonNegativeNumberSchema(
+          'Maximum allowed hidden penetration in meters when the contact is an intentional seated or captured fit. Use 0 for surface touch.',
+        ),
       },
       [
         'type',
@@ -451,6 +454,7 @@ const checkSchema = {
         'visualAId',
         'visualBId',
         'contactTolerance',
+        'maxPenetration',
       ],
     ),
     ...checkSchemaVariants(

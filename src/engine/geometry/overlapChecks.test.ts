@@ -70,6 +70,17 @@ describe('findCurrentPoseVisualOverlaps', () => {
     }
   })
 
+  it('does not treat the swept AABB of a long rotated solid as filled overlap', () => {
+    const asset = createDiagonalBeamAsset()
+    const builtAsset = buildManifestAsset(asset)
+
+    try {
+      expect(findVisualPairs(builtAsset)).toEqual([])
+    } finally {
+      disposeManifestObject(builtAsset.group)
+    }
+  })
+
   it('allows connectorTube endpoint contact with referenced parts', () => {
     const asset = createConnectorContactAsset()
     const builtAsset = buildManifestAsset(asset)
@@ -100,6 +111,88 @@ function findVisualPairs(builtAsset: ReturnType<typeof buildManifestAsset>) {
   }).map((finding) =>
     [finding.visualAId, finding.visualBId].sort().join('|'),
   )
+}
+
+function createDiagonalBeamAsset(): ManifestAsset {
+  return {
+    allowances: [],
+    checks: [],
+    controls: [],
+    id: 'diagonal-beam-overlap-test',
+    joints: [
+      {
+        childPartId: 'nearby-block-part',
+        id: 'nearby-block-fixed-joint',
+        name: 'Nearby block fixed joint',
+        origin: {},
+        parentPartId: 'beam-part',
+        type: 'fixed',
+      },
+    ],
+    materials: [
+      {
+        color: '#cccccc',
+        id: 'mat-grey',
+        metalness: 0.1,
+        name: 'Grey',
+        roughness: 0.5,
+      },
+    ],
+    metadata: {
+      createdAt: '2026-05-31T00:00:00.000Z',
+      generationStatus: 'ready',
+      sourceImageIds: [],
+      updatedAt: '2026-05-31T00:00:00.000Z',
+    },
+    name: 'Diagonal Beam Overlap Test',
+    parts: [
+      {
+        id: 'beam-part',
+        name: 'Beam',
+        role: 'support',
+        visuals: [
+          {
+            geometry: {
+              size: [2, 0.05, 0.05],
+              type: 'box',
+            },
+            id: 'beam-visual',
+            materialId: 'mat-grey',
+            name: 'Beam visual',
+            transform: {
+              position: [0, 0, 0],
+              rotation: [0, 0, Math.PI / 4],
+              scale: [1, 1, 1],
+            },
+          },
+        ],
+      },
+      {
+        id: 'nearby-block-part',
+        name: 'Nearby Block',
+        role: 'support',
+        visuals: [
+          {
+            geometry: {
+              size: [0.1, 0.1, 0.1],
+              type: 'box',
+            },
+            id: 'nearby-block-visual',
+            materialId: 'mat-grey',
+            name: 'Nearby block visual',
+            transform: {
+              position: [0, 0.6, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+            },
+          },
+        ],
+      },
+    ],
+    prompt: 'Test segmented solid relation proxies.',
+    schemaVersion: 2,
+    units: 'meters',
+  }
 }
 
 function createRingAndBladeAsset({

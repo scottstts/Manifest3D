@@ -192,6 +192,14 @@ export function createAllowedOverlapValidationFixtureAsset(): ManifestAsset {
   return {
     ...asset,
     id: 'allowed-overlap-validation-crate',
+    checks: asset.checks.map((check) =>
+      check.type === 'expect_contact'
+        ? {
+            ...check,
+            maxPenetration: 0.08,
+          }
+        : check,
+    ),
     allowances: [
       {
         partAId: 'crate-base',

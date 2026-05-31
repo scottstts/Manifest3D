@@ -382,6 +382,127 @@ describe('validateManifestAssetCandidate', () => {
     )
   })
 
+  it('does not let expect_contact hide deep penetration unless it is explicitly bounded', () => {
+    const asset = createOverlappingValidationFixtureAsset()
+
+    asset.allowances = [
+      {
+        partAId: 'crate-base',
+        partBId: 'crate-lid',
+        reason: 'The lid is intentionally seated into the gasket.',
+        type: 'allow_overlap',
+        visualAId: 'crate-base-shell',
+        visualBId: 'crate-lid-panel',
+      },
+    ]
+
+    const unboundedResult = validateManifestAssetCandidate(asset)
+
+    asset.checks = asset.checks.map((check) =>
+      check.type === 'expect_contact'
+        ? {
+            ...check,
+            maxPenetration: 0.08,
+          }
+        : check,
+    )
+
+    const boundedResult = validateManifestAssetCandidate(asset)
+
+    expect(unboundedResult.report.valid).toBe(false)
+    expect(unboundedResult.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'expect_contact_failed',
+          stage: 'checks',
+        }),
+      ]),
+    )
+    expect(boundedResult.report.valid).toBe(true)
+  })
+
+  it('warns when authored relation checks are broad on multi-visual parts', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.parts[0].visuals.push({
+      geometry: {
+        size: [0.2, 0.04, 0.12],
+        type: 'box',
+      },
+      id: 'crate-base-front-lip',
+      materialId: 'mat-violet',
+      name: 'Base front lip',
+      transform: {
+        position: [0, 0.17, 0],
+      },
+    })
+    asset.checks.push({
+      partAId: 'crate-base',
+      partBId: 'crate-lid',
+      type: 'expect_contact',
+    })
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(true)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'authored_relation_check_broad_scope',
+          severity: 'warning',
+          stage: 'structure',
+        }),
+      ]),
+    )
+  })
+
+  it('rejects isolation allowances for mechanical support parts', () => {
+    const asset = createValidValidationFixtureAsset()
+
+    asset.joints[0] = {
+      ...asset.joints[0],
+      origin: {
+        position: [4, 0.34, 0],
+      },
+    }
+    asset.allowances = [
+      {
+        partId: 'crate-lid',
+        reason: 'This lid should not be allowed to float.',
+        type: 'allow_isolated_part',
+      },
+    ]
+
+    const result = validateManifestAssetCandidate(asset)
+
+    expect(result.report.valid).toBe(false)
+    expect(result.report.bundle.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'isolated_part_allowance_rejected',
+          refs: {
+            partId: 'crate-lid',
+          },
+        }),
+      ]),
+    )
+  })
+
+  it('adds failed-pair relation measurements to the probe report', () => {
+    const result = validateManifestAssetCandidate(
+      createOverlappingValidationFixtureAsset(),
+    )
+
+    expect(result.probeReport?.relations[0]).toMatchObject({
+      closestVisualPair: 'crate-base-shell<->crate-lid-panel',
+      partAId: 'crate-base',
+      partBId: 'crate-lid',
+      signalCode: 'part_overlap_current_pose',
+      signalStage: 'baseline_qc',
+    })
+    expect(result.probeReport?.relations[0]?.penetrationDepth).toBeGreaterThan(0)
+  })
+
   it('rejects allowances that reference missing or mismatched ids', () => {
     const asset = createValidValidationFixtureAsset()
 
@@ -845,6 +966,13 @@ describe('validateManifestAssetCandidate', () => {
         (signal) => signal.code === 'part_overlap_current_pose',
       ),
     ).toBe(false)
+    expect(
+      result.probeReport?.relations.find(
+        (relation) =>
+          relation.signalCode === 'part_overlap_sampled_pose' &&
+          relation.signalStage === 'sampled_poses',
+      )?.penetrationDepth,
+    ).toBeGreaterThan(0)
   })
 })
 

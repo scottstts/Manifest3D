@@ -72,6 +72,8 @@ For each sample, validation builds the asset with those joint values, runs sampl
 
 Generated samples intentionally follow controls rather than sampling every movable joint independently. This matches the UI and dynamic-export contract for linked mechanisms and avoids forcing repairs for impossible single-joint poses, such as one steering knuckle turning while the paired steering control would move both.
 
+Sampled-pose overlap QC is frame-invariant for rigidly shared motion. If two parts have the same relative transform in a sampled pose as they had at rest, a new overlap finding for that pair is treated as an artifact of world-axis proxy boxes and is suppressed unless the same visual pair already overlapped at rest. Relative-motion pairs are still validated, so true articulated collisions remain blocking.
+
 The report can now distinguish failures such as:
 
 - a rest-pose overlap
@@ -98,6 +100,10 @@ Overlap/contact validation is still based on bounds, projection intervals, and d
 
 The current implementation adds a targeted refinement for hollow protective shapes: `torus` and `tube` visuals are split into segment bounds before overlap testing. This prevents circular grilles, cages, rims, and ring guards from behaving like filled disks while still reporting real material intersections when another visual crosses the ring or tube body.
 
+The relation proxy layer has since been generalized: long solid visuals are also subdivided along their dominant local axis before overlap/contact/support checks. This keeps rotated booms, rails, beams, axles, and truss members from behaving like their whole swept AABB is solid. All of these approximate checks now flow through the same visual-pair relation metrics used by contact checks and probe reports, which reduces overlap-versus-contact repair oscillation.
+
+Failed sampled-pose relation probes are measured in the failing pose when the signal carries joint values. This keeps repair feedback from reporting rest-pose distances for a failure that only exists while the mechanism is moved.
+
 That choice is intentional:
 
 - sampled-pose validation needed deterministic report shape first
@@ -112,6 +118,8 @@ The plan allowed mesh-level checks "if needed"; the implementation still avoids 
 Sampled-pose overlap QC reuses authored overlap allowances. Allowed sampled overlaps emit note signals so the repair loop and UI can still see intentional intersections.
 
 This is deliberately conservative: allowances remain explicit, scoped declarations. Sampled-pose validation does not silently ignore overlaps just because an asset is mechanical.
+
+Contact proof checks now distinguish touch from deep penetration. `expect_contact.maxPenetration` can intentionally bound seated/captured fits, while ordinary surface contact should use zero or the small default. Deep overlap should remain an overlap allowance plus bounded proof, not an accidental pass through contact distance.
 
 ## Repair Feedback And Timeline
 
