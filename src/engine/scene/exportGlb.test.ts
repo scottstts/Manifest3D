@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import * as THREE from 'three/webgpu'
-import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
+import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
 import {
   canExportManifestAssetAnimation,
   cloneExportableObject,

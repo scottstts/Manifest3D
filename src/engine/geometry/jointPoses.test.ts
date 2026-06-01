@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
+import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import {
   createGeneratedJointPoseSamples,

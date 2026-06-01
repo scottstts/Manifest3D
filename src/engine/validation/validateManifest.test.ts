@@ -4,7 +4,7 @@ import {
   createInvalidValidationFixtureAsset,
   createOverlappingValidationFixtureAsset,
   createValidValidationFixtureAsset,
-} from '../examples/validationFixtures'
+} from '../testing/validationFixtureAsset'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import { createSceneStore } from '../scene/sceneStore'
 import { createValidationTimeline } from '../agent/validationTimeline'

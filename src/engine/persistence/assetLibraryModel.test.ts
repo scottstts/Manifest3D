@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createInvalidValidationFixtureAsset,
   createValidValidationFixtureAsset,
-} from '../examples/validationFixtures'
+} from '../testing/validationFixtureAsset'
 import { validateManifestAssetCandidate } from '../validation/validateManifest'
 import { createCandidateHistory } from '../agent/candidateHistory'
 import {

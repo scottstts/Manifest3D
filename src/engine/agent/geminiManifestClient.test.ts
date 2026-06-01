@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
+import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
 import type { ManifestScene } from '../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
 import {

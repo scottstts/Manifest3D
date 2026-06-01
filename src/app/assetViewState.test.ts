@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createValidValidationFixtureAsset } from '../engine/examples/validationFixtures'
+import { createValidValidationFixtureAsset } from '../engine/testing/validationFixtureAsset'
 import type { SceneAssetInstance } from '../engine/scene/sceneStore'
 import {
   resolveAssetPanelActiveState,

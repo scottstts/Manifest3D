@@ -1,66 +1,73 @@
-# Phase 4 Agent Design Choices
+# Agent Design
 
-This captures the Phase 4 repair feedback, prompt compiler, candidate history, and freshness decisions that are not obvious from individual files.
+This document describes the implemented Manifest3D agent pipeline: prompt compilation, provider boundaries, candidate freshness, repair feedback, persistence context, and headless stress runs.
 
 ## Prompt Sources
 
-Prompt text is stored as separate markdown files under `src/engine/agent/prompts/` and imported by `promptCompiler.ts` with Vite raw imports. Long prompt strings should not be embedded in `agentLoop.ts`, provider clients, or tests.
+Prompt text lives under `src/engine/agent/prompts/` and is imported by `promptCompiler.ts` through Vite raw imports. Long prompt strings should stay out of `agentLoop.ts`, provider clients, UI code, and tests.
 
-The prompt files are Manifest3D-specific, but they intentionally carry the relevant Articraft designer prompt lessons:
+The prompt contract emphasizes:
 
-- realistic geometry is the primary quality bar
-- use real-world scale and plausible materials
-- prefer `roundedBox` and `capsule` where manufactured objects need softened panels, handles, rails, padded supports, rounded pins, or grips
-- articulate primary visible mechanisms and controls
-- use material `emission` and `emissionAnimation` for visible lights, flashing beacons, LEDs, screens, and color-switching indicators
-- choose material `side` deliberately and add `expect_material_side` for prompt-critical open/cutaway surfaces
-- give multi-joint mechanisms clear `controls` coverage instead of leaving unrelated movable joints as orphan dials
-- avoid floating parts and unsupported visual islands
-- classify overlap as intentional or unintended before repairing it
-- pair intentional overlap allowances with exact proof checks
-- keep `roundedBox` radius within the primitive contract instead of spending a repair turn on impossible corner radii
-- keep visuals inside a part physically continuous, or split separate mounted islands into fixed child parts
-- preserve real clearance for moving rotors, blades, wheels, hinges, and sliders inside stationary guards, grilles, cages, rails, and shrouds
-- treat validation output as sensor data, not as permission to simplify the requested object
-- use concise stable semantic ids and avoid state words like `open`, `closed`, or `extended`
+- realistic geometry as the primary quality bar
+- real-world scale and plausible materials
+- softened manufactured forms through `roundedBox` and `capsule`
+- explicit articulation for primary visible mechanisms and controls
+- material `emission` and `emissionAnimation` for visible lights, LEDs, screens, and flashing or color-changing indicators
+- deliberate material `side` selection, with `expect_material_side` checks for prompt-critical open or cutaway surfaces
+- `controls` coverage for multi-joint mechanisms
+- physically supported parts, with no unsupported visual islands
+- scoped intentional overlap allowances paired with exact proof checks
+- valid primitive parameters, including `roundedBox.radius <= min(size) / 2`
+- stable semantic ids that avoid state words such as `open`, `closed`, or `extended`
+- validation output treated as sensor data, not permission to simplify the requested object
 
-Do not port Articraft's Python/tool instructions into these prompts. Manifest3D agents return strict JSON assets, not editable Python code.
+Manifest3D agents return strict JSON assets for create/edit turns and JSON Patch repair envelopes for repair turns. They do not emit code.
 
 ## Prompt Compiler Contract
 
-`compileManifestPrompt` returns separate `system` and `user` strings plus small metadata. It composes:
+`compileManifestPrompt` returns separate `system` and `user` strings plus compact metadata. It composes the system identity, Contract V2 schema guidance, mode-specific create/edit/repair instructions, current scene summary, selected asset JSON for edit mode, compact candidate JSON for repair mode, image attachment metadata, prior validation feedback, and examples.
 
-- system identity and quality bar
-- compact Contract V2 schema guidance
-- mode-specific create, edit, or repair instructions
-- current scene summary
-- selected asset JSON for edit mode
-- compact/minified candidate JSON for repair mode
-- image attachment metadata
-- prior validation feedback
-- compact examples
+Create and edit mode expect a complete Manifest3D asset. Edit mode requires a selected asset and returns the full revised asset JSON. Repair mode includes the failed candidate and `<validation_signals>` feedback, but expects a JSON Patch envelope. The failed candidate remains complete and is minified in repair prompts to reduce context cost.
 
-Edit mode requires a selected asset and returns the full revised asset JSON. Repair mode includes the failed candidate and `<validation_signals>` feedback, but the model response is a JSON Patch envelope rather than another complete asset. The failed candidate is still complete, but it is minified in repair turns because real headless runs showed pretty-printed candidate JSON was the dominant context cost after signal compaction.
+Image attachments flow through the same prompt compiler metadata and provider request path as ordinary app runs. The headless harness can load local reference image files for stress tests, but that filesystem convenience stays in `test/headless/agentPipelineSmoke.test.ts`.
 
-Image attachments are passed through the same prompt compiler metadata and provider request path as the app. The headless harness can now load local reference image files for stress runs, but that support is contained in `test/headless/agentPipelineSmoke.test.ts`; the app-side agent client still receives ordinary image attachment payloads.
+## Provider Boundary
+
+Provider-specific transport details belong inside provider clients. UI, scene, and persistence code talk through the agent loop and shared provider client interfaces.
+
+OpenAI is the starting provider default. The last provider selected in the Providers panel is cached as the next default. API keys are never persisted outside local `.env` or the current browser session.
+
+Localhost and loopback runs load provider keys only through the dev-server `.env` endpoint. The top-bar status dot is green when at least one local provider key is available. Non-localhost runs use in-memory per-provider keys from the Providers panel, and readiness reflects the currently selected provider.
+
+OpenAI uses Responses API background mode in `openAiManifestClient.ts`: requests set `background: true` and `store: true`, then poll the response id until terminal status. This avoids one long idle HTTP response for high-reasoning strict-schema generations. The tradeoff is that background polling is not ZDR-compatible, so changing it requires a replacement long-running transport strategy.
+
+Gemini repair mode uses a provider-only transport schema. The shared loop still receives canonical JSON Patch operations, but `geminiManifestClient.ts` asks Gemini for `op`, `path`, and JSON-stringified `valueJson`, then parses the values into canonical `{ value: unknown }` operations before returning. This keeps the central repair schema authoritative while avoiding Gemini structured-output schema complexity failures.
 
 ## Candidate History And Freshness
 
-`candidateHistory.ts` is intentionally pure TypeScript and independent from React. It tracks an active run id, candidate revisions, candidate fingerprints, validation attempts, the latest successful attempt, and repeated failure signatures.
+`candidateHistory.ts` is pure TypeScript and independent from React. It tracks an active run id, candidate revisions, stable fingerprints, validation attempts, the latest successful attempt, and repeated failure signatures.
 
-The readiness rule is fingerprint-based:
+The readiness invariant is fingerprint-based:
 
 ```text
 The agent can report ready only when the active candidate fingerprint matches the latest successful validation attempt.
 ```
 
-Calling `markCandidateDraft` after a successful validation clears freshness because the active fingerprint changes. Failed candidates stay in history and are not committed to the scene.
+Calling `markCandidateDraft` after successful validation clears freshness because the active fingerprint changes. Failed candidates remain in history and are not committed to the scene.
 
-Fingerprints use stable serialization so object key order does not change candidate identity. Failure signatures are derived from semantic failure clusters, not from whole reports or raw signal details, so repeated-failure detection focuses on validation behavior rather than report ids, depth/volume measurements, or incidental visual refs.
+Fingerprints use stable serialization so object key order does not change candidate identity. Failure signatures come from semantic failure clusters rather than whole reports or raw measurements. They normalize by stage, kind, code, unordered part pair or stable ref, and sampled-pose key while ignoring incidental details such as depth, volume, report ids, and visual-level noise.
 
-Repair turns use JSON Patch envelopes instead of full replacement assets. The provider response schema switches by prompt mode: create/edit expect a full Manifest3D asset, while repair expects `{ "patch": [...] }`. The harness applies the patch to the current candidate, validates the patched result, and feeds patch-application errors back as repair feedback without mutating the candidate. The repair response schema intentionally permits standalone numeric vectors/point arrays so local vector repairs do not require full object replacement, and it avoids unconstrained empty array patch values because `[]` can otherwise satisfy every typed array branch while producing schema-invalid assets. If the same patch-application error repeats, the repair prompt includes the streak and a compact rejected-patch summary so the model has explicit pressure to change the bad operation rather than resending it.
+Each app run owns its own `CandidateHistory`. `runManifestAgentLoop` emits progress snapshots containing upserted agent events, the matching history snapshot, and projected timeline items.
 
-Provider clients may use different transport schemas as long as the shared loop still receives canonical repair patches. OpenAI can use the central repair patch schema directly. Gemini intentionally does not: Gemini structured output can reject very large or deeply nested schemas, and the central repair schema becomes especially large because JSON Patch `value` must otherwise describe the full Manifest3D asset plus many focused sub-schema replacements. In repair mode, `geminiManifestClient.ts` therefore sends a small Gemini-only transport schema: each operation has `op`, `path`, and for `add`/`replace`, a JSON-encoded `valueJson` string. The Gemini client parses `valueJson` back into the canonical JSON Patch `{ value: unknown }` shape before returning to the agent loop. This is a provider adapter boundary, not a weaker contract: patch application and full patched-asset validation still enforce the central Manifest3D schema before a candidate can advance. Do not copy the Gemini transport schema into the central contract or OpenAI client.
+## Repair Patches
+
+Repair turns return `{ "patch": [...] }`. The harness applies the patch to a cloned candidate, validates the fully patched asset against the Manifest3D schema, and only then accepts it as the next candidate. Patch application errors are fed into the next repair prompt without mutating the candidate.
+
+Repair patches may address existing array entries by stable id through virtual JSON Pointer segments such as `/parts/byId/deck-truss/visuals/byId/deck-panel/transform/position`. The harness resolves those ids against the current candidate before applying ordinary JSON Patch semantics, which reduces stale array-index failures.
+
+The repair response schema permits focused numeric vectors and point arrays. It avoids unconstrained empty array patch values because `[]` can satisfy many typed array branches while producing schema-invalid assets.
+
+Repeated identical patch-application errors are tracked. The next repair prompt includes the streak, a compact rejected-operation summary, and targeted path hints for common mismatches such as writing `position`, `rotation`, or `scale` inside `joint.limits` instead of `joint.origin`.
 
 ## Repair Feedback
 
@@ -77,7 +84,7 @@ Provider clients may use different transport schemas as long as the shared loop 
 </validation_signals>
 ```
 
-Signals remain the source of truth. The rendered feedback is a deterministic projection for the next model turn.
+Signals remain the source of truth. The rendered block is a deterministic projection for the next model turn.
 
 Failure ordering is deliberate:
 
@@ -88,49 +95,46 @@ Failure ordering is deliberate:
 5. authored checks
 6. export
 
-This keeps the model from tuning local geometry before JSON shape, ids, refs, roots, cycles, and joint semantics are valid.
+Schema failures tell the model to fix JSON first. Structural failures emphasize stable ids, references, roots, and joint graph validity. Floating and overlap failures require either a physical fix or scoped allowances with exact proof. Missing exact geometry is treated as a stable-id contract failure.
 
-Repair rules are chosen from the primary failure kind. Schema failures tell the model to fix JSON first. Structural failures emphasize stable ids, refs, roots, and joint graph validity. Floating and overlap failures require either a physical fix or scoped allowances with concrete reasons. Missing exact geometry is treated as a stable-id contract failure.
+Targeted repair rules cover recurring loops, including oversized `roundedBox.radius`, missing overlap proof checks, sampled-pose overlap repair, no-op controls, relation oscillation, and repeated rejected patch operations.
 
-Two common structural repair loops have targeted rules:
+Repair feedback includes candidate revision and fingerprint so the model sees that validation evidence belongs to one exact candidate revision. It can also include `<failure_clusters>` and `<probe_report>` sections. Probe reports contain deterministic geometry measurements such as asset bounds, part bounds, joint-origin distances, connector endpoint measurements, closest visual pair, distance, penetration depth, and overlap volume. They are geometry sensor data, not rendered-image critique.
 
-- `rounded_box_radius_too_large` tells the model to reduce the radius below half of the shortest size component or adjust the size while preserving softened manufactured form.
-- `allowance_overlap_missing_proof_check` tells the model that every intentional overlap allowance needs a matching exact proof check, and visual-scoped allowances need the same visual pair in that proof.
+## Runtime And Persistence Context
 
-Repeated failures and failure streaks are included in the feedback summary so Phase 5 can feed them back into repair turns.
+The LLM transcript is not persisted as a full conversation. Each create/edit run compiles a fresh prompt from current scene state, selected Create viewport asset when editing, optional image attachments, compact attempt context for the selected saved version, and saved user input for that version lineage.
 
-Repair feedback also injects the candidate revision and fingerprint. This mirrors the Articraft freshness invariant: the validation evidence belongs to exactly one candidate revision, any mutation requires fresh validation, and the model should make the smallest focused repair while preserving unrelated stable ids.
+IndexedDB stores asset records, ordered version records, validation attempts per version, optional per-version user input, and persisted agent progress events. Only validated assets are persisted as library versions. Invalid attempts are stored only as context under a saved valid version.
 
-Repair feedback can include two additional diagnostic sections:
+Persistence writes are scoped to the touched logical asset or deleted asset id. Normal saves do not clear and rewrite all stores, which keeps concurrent tabs from overwriting unrelated asset work.
 
-- `<failure_clusters>` groups repeated blocking signals by semantic failure class so mechanism-level loops are visible to the model.
-- `<probe_report>` contains deterministic geometry measurements from the built candidate, such as asset bounds, joint-origin distances, and connector endpoint lengths. This is structured geometric sensor data, not rendered-image critique.
-
-`connectorTube` geometry exists for flexible chains, cables, hoses, ropes, straps, tethers, and wires whose endpoints should follow different parts through articulation. The visual must use an empty or identity transform because its tube path is generated from endpoint part transforms; provider schemas that require full transform fields should emit the identity transform.
+Asset list ordering is by original creation time descending. Opening an asset defaults to its last selected version, falling back to the latest version. The scene store is runtime-only; persisted asset data and active viewport placement are separate.
 
 ## Headless Stress Harness
 
-`test/headless/agentPipelineSmoke.test.ts` is the practical pipeline stress harness. It exercises the same embedded engine and agent loop headlessly, then records candidate JSON, validation reports, request/response exchanges, and GLB artifacts for visual inspection.
+`test/headless/agentPipelineSmoke.test.ts` exercises the same embedded engine and agent loop without the GUI. It records candidate JSON, validation reports, request/response exchanges, progress timelines, probe reports, and GLB artifacts for inspection.
 
-The headless harness deliberately bends around the app rather than the app bending around the test. Test-only conveniences such as Node file shims, local reference-image loading, artifact directory writing, per-attempt GLB materialization, and viewer URL generation live in the test harness. App source should change only for real engine, validation, export, or prompt quality improvements that also matter to interactive runs.
+The harness wraps imported app provider clients for artifact capture, but it does not recreate provider switching or transport plumbing. `HEADLESS_AGENT_PROVIDER` selects the provider for a run and defaults to OpenAI.
 
-Provider requests should go through the imported app provider client factory instead of a headless-only reimplementation of the transport or provider switch. The harness may wrap the client to record prompt and response artifacts, but it should not recreate OpenAI/Gemini request plumbing that already exists in `src/`. `HEADLESS_AGENT_PROVIDER` selects the provider for a run and defaults to OpenAI.
+Headless-only conveniences stay in the test harness: Node file shims, local reference-image loading, artifact directory writing, per-attempt GLB materialization, repeated-failure diagnostic stop, and viewer URL generation. App source should change only for engine, validation, export, prompt, or provider behavior that matters to interactive runs too.
 
-OpenAI uses Responses API background mode by default in `openAiManifestClient.ts`: requests set `background: true` and `store: true`, then poll the response id until it reaches a terminal status. This avoids one long idle HTTP response for high-reasoning, strict-schema asset generations and is shared by the app and headless harness. The tradeoff is that background polling is not ZDR-compatible, so do not silently change it back to `store: false` without replacing the long-running transport strategy.
-
-Current headless stress behavior:
+Current stress-run behavior:
 
 - the default run budget is one hour
 - ready candidates export static GLB artifacts
-- assets with movable joints or material emission animation also export dynamic GLB artifacts when animation export is supported
-- every schema-parseable attempt gets its own static and, when applicable, dynamic GLB export under that attempt's artifact directory so validation pressure can be compared against visual quality over repair turns
-- every buildable attempt records a deterministic `probe.json` artifact, and summaries include semantic failure clusters for loop analysis
+- assets with movable joints or material emission animation also export dynamic GLB artifacts
+- every schema-parseable attempt exports inspection GLBs when possible
+- every buildable attempt records a deterministic `probe.json`
+- summaries include semantic failure clusters for loop analysis
 - local reference images can be supplied through `HEADLESS_AGENT_IMAGE_PATH` or `HEADLESS_AGENT_IMAGE_PATHS`
-- default artifacts live under `test/headless/artifacts/headless-agent/` so `test/headless/glb_viewer.html` can serve them directly from a simple local HTTP server
+- default artifacts live under `test/headless/artifacts/headless-agent/`
 - summary JSON records exported GLB paths and viewer URLs
 
-## Timeline Projection
+## Progress Timeline
 
-`validationTimeline.ts` still supports timeline rows from one validation report, and now also supports candidate-history projection. Candidate-attempt rows summarize revision, fingerprint, and repeated-failure streak before the per-stage validation rows.
+`validationTimeline.ts` supports projection from a single validation report and from candidate history. Candidate-attempt rows summarize revision, fingerprint, and repeated-failure streak before per-stage validation rows.
 
-The timeline is not the validation model. Future UI should continue deriving rows from candidate history and validation reports rather than mutating timeline state directly.
+The app-facing progress timeline is built by interleaving agent loop events with candidate validation attempts. It is sectioned by attempt: `Initial attempt`, then `Repair N`. Completed `validating_candidate` events are normalized into candidate result rows. Failed attempts show concise validation summaries; successful attempts keep the full validation step trace. Routine provider details stay hidden, while failed agent events may show one concise detail line.
+
+The timeline is a projection, not the validation model. UI code should derive it from candidate history, validation reports, and agent events rather than mutating timeline state directly.

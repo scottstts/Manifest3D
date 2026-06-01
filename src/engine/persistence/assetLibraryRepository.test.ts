@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCandidateHistory } from '../agent/candidateHistory'
-import { createValidValidationFixtureAsset } from '../examples/validationFixtures'
+import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
 import { validateManifestAssetCandidate } from '../validation/validateManifest'
 import {
   createEmptyAssetLibrarySnapshot,

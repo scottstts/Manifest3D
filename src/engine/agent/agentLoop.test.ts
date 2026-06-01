@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createInvalidValidationFixtureAsset,
   createValidValidationFixtureAsset,
-} from '../examples/validationFixtures'
+} from '../testing/validationFixtureAsset'
 import { createSceneStore } from '../scene/sceneStore'
 import type { ManifestScene } from '../schema/manifestTypes'
 import {
