@@ -1,4 +1,5 @@
 export type PathTracingFrameState = {
+  needsFinalPost: boolean
   maxSamples: number
   needsSceneUpload: boolean
   sampleCount: number
@@ -8,6 +9,17 @@ export type PathTracingSampleLimitState = {
   interactionSampleLimit: number
   isCameraInteractionActive: boolean
   maxSamples: number
+}
+
+export type PathTracingFinalPostState = {
+  isCameraInteractionActive: boolean
+  maxSamples: number
+  needsFinalPost: boolean
+  sampleCount: number
+}
+
+export type PathTracingWorkDeferralState = {
+  hasPendingInput: boolean
 }
 
 export type PathTracingSampleCounterDenoiseStatus =
@@ -44,11 +56,12 @@ export function formatPathTracingSampleCounter(
 }
 
 export function shouldScheduleNextPathTracingFrame({
+  needsFinalPost,
   maxSamples,
   needsSceneUpload,
   sampleCount,
 }: PathTracingFrameState) {
-  return needsSceneUpload || sampleCount < maxSamples
+  return needsSceneUpload || needsFinalPost || sampleCount < maxSamples
 }
 
 export function getPathTracingSampleLimit({
@@ -61,4 +74,23 @@ export function getPathTracingSampleLimit({
   }
 
   return Math.min(maxSamples, Math.max(1, Math.floor(interactionSampleLimit)))
+}
+
+export function shouldRunPathTracingFinalPost({
+  isCameraInteractionActive,
+  maxSamples,
+  needsFinalPost,
+  sampleCount,
+}: PathTracingFinalPostState) {
+  return (
+    !isCameraInteractionActive &&
+    needsFinalPost &&
+    sampleCount >= maxSamples
+  )
+}
+
+export function shouldDeferPathTracingWork({
+  hasPendingInput,
+}: PathTracingWorkDeferralState) {
+  return hasPendingInput
 }

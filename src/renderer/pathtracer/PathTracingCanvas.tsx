@@ -36,6 +36,8 @@ import {
 import {
   formatPathTracingSampleCounter,
   getPathTracingSampleLimit,
+  shouldDeferPathTracingWork,
+  shouldRunPathTracingFinalPost,
   shouldScheduleNextPathTracingFrame,
   type PathTracingSampleCounterDenoiseStatus,
 } from './pathTracingFrameScheduler'
@@ -49,6 +51,9 @@ import {
   writePathTracingMaxSamplePreference,
   type PathTracingMaxSampleCount,
 } from './pathTracingSampleCountPreference'
+import {
+  createPathTracingBvhWorker,
+} from './pathTracingBvhWorker'
 import { rebuildPathTracingViewportScene } from './pathTracingScene'
 import { resetRendererViewportToCanvasCssSize } from './pathTracingRendererViewport'
 
@@ -123,7 +128,10 @@ export function PathTracingCanvas({
   const needsSceneUploadRef = useRef(false)
   const lastPublishedSampleCounterTextRef = useRef<string | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const deferredFrameTimeoutRef = useRef<number | null>(null)
+  const finalPostDirtyRef = useRef(true)
   const requestFrameRef = useRef<(() => void) | null>(null)
+  const sceneUploadPromiseRef = useRef<Promise<void> | null>(null)
   const sampleOptions = useMemo(() => getPathTracingMaxSampleOptions(), [])
   const [selectedMaxSamples, setSelectedMaxSamples] =
     useState<PathTracingMaxSampleCount>(() =>
@@ -197,6 +205,7 @@ export function PathTracingCanvas({
     )
     const scene = new THREE.Scene()
     const pathTracer = new WebGLPathTracer(renderer)
+    const bvhWorker = createPathTracingBvhWorker()
     const texturePass = new TexturePass()
     const outputPass = new OutputPass()
     const composer = new EffectComposer(renderer)
@@ -219,7 +228,16 @@ export function PathTracingCanvas({
     pathTracer.lowResScale = 1
     pathTracer.renderScale = 1
     pathTracer.rasterizeScene = false
-    pathTracer.renderToCanvas = false
+    pathTracer.renderToCanvas = true
+    pathTracer.renderToCanvasCallback = (_target, rawRenderer, quad) => {
+      const currentAutoClear = rawRenderer.autoClear
+
+      resetRendererViewportToCanvasCssSize(rawRenderer)
+      rawRenderer.autoClear = false
+      quad.render(rawRenderer)
+      rawRenderer.autoClear = currentAutoClear
+    }
+    pathTracer.setBVHWorker(bvhWorker)
     pathTracer.tiles.set(...pathTracingViewportConfig.tiles)
     pathTracer.textureSize.set(
       pathTracingViewportConfig.maxTextureSize,
@@ -254,6 +272,7 @@ export function PathTracingCanvas({
       assetBloomPipeline.dispose()
       texturePass.dispose()
       outputPass.dispose()
+      bvhWorker.dispose()
       renderer.dispose()
     }
   }, [])
@@ -268,6 +287,7 @@ export function PathTracingCanvas({
     }
 
     syncPathTracingRendererSize(runtime, viewportSize, rendererDpr)
+    finalPostDirtyRef.current = true
     resetPathTracingCameraAndSamples({
       lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth: currentLeftPanelOcclusionWidthRef.current,
@@ -292,6 +312,7 @@ export function PathTracingCanvas({
       return
     }
 
+    finalPostDirtyRef.current = true
     resetPathTracingCameraAndSamples({
       lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth,
@@ -321,6 +342,7 @@ export function PathTracingCanvas({
       worldMode,
     })
     needsSceneUploadRef.current = true
+    finalPostDirtyRef.current = true
     publishPathTracingSampleCount({
       lastPublishedSampleCounterTextRef,
       maxSamples: currentMaxSamplesRef.current,
@@ -339,6 +361,7 @@ export function PathTracingCanvas({
 
   useEffect(() => {
     currentDenoiseEnabledRef.current = denoiseEnabled
+    finalPostDirtyRef.current = true
     requestPathTracingFrame(requestFrameRef)
   }, [denoiseEnabled])
 
@@ -350,6 +373,7 @@ export function PathTracingCanvas({
   useEffect(() => {
     currentMaxSamplesRef.current = selectedMaxSamples
     writePathTracingMaxSamplePreference(selectedMaxSamples)
+    finalPostDirtyRef.current = true
 
     const runtime = runtimeRef.current
 
@@ -368,11 +392,72 @@ export function PathTracingCanvas({
     let isDisposed = false
 
     function requestFrame() {
-      if (isDisposed || animationFrameRef.current !== null) {
+      if (
+        isDisposed ||
+        animationFrameRef.current !== null ||
+        deferredFrameTimeoutRef.current !== null
+      ) {
         return
       }
 
       animationFrameRef.current = requestAnimationFrame(render)
+    }
+
+    function requestDeferredFrame() {
+      if (
+        isDisposed ||
+        animationFrameRef.current !== null ||
+        deferredFrameTimeoutRef.current !== null
+      ) {
+        return
+      }
+
+      deferredFrameTimeoutRef.current = window.setTimeout(() => {
+        deferredFrameTimeoutRef.current = null
+        requestFrame()
+      }, pathTracingViewportConfig.scheduler.inputPendingDelayMs)
+    }
+
+    function startSceneUpload(runtime: PathTracingRuntime) {
+      if (sceneUploadPromiseRef.current) {
+        return
+      }
+
+      applyCameraSnapshotToPathTracingCamera(
+        runtime.camera,
+        currentCameraSnapshotRef.current,
+        currentViewportSizeRef.current,
+        currentLeftPanelOcclusionWidthRef.current,
+        currentRightPanelOcclusionWidthRef.current,
+      )
+      needsSceneUploadRef.current = false
+      finalPostDirtyRef.current = true
+      publishPathTracingSampleCount({
+        lastPublishedSampleCounterTextRef,
+        maxSamples: currentMaxSamplesRef.current,
+        sampleCount: 0,
+        sampleCounterRef,
+      })
+
+      const uploadPromise = uploadSceneToPathTracer(runtime)
+
+      sceneUploadPromiseRef.current = uploadPromise
+
+      void uploadPromise
+        .catch((error: unknown) => {
+          if (!isDisposed) {
+            console.error('Path tracing scene upload failed.', error)
+          }
+        })
+        .finally(() => {
+          if (sceneUploadPromiseRef.current === uploadPromise) {
+            sceneUploadPromiseRef.current = null
+          }
+
+          if (!isDisposed) {
+            requestFrame()
+          }
+        })
     }
 
     function render() {
@@ -384,22 +469,22 @@ export function PathTracingCanvas({
         return
       }
 
-      if (needsSceneUploadRef.current) {
-        applyCameraSnapshotToPathTracingCamera(
-          runtime.camera,
-          currentCameraSnapshotRef.current,
-          currentViewportSizeRef.current,
-          currentLeftPanelOcclusionWidthRef.current,
-          currentRightPanelOcclusionWidthRef.current,
-        )
-        uploadSceneToPathTracer(runtime)
-        needsSceneUploadRef.current = false
-        publishPathTracingSampleCount({
-          lastPublishedSampleCounterTextRef,
-          maxSamples: currentMaxSamplesRef.current,
-          sampleCount: 0,
-          sampleCounterRef,
+      if (sceneUploadPromiseRef.current) {
+        return
+      }
+
+      if (
+        shouldDeferPathTracingWork({
+          hasPendingInput: hasPendingPathTracingInput(),
         })
+      ) {
+        requestDeferredFrame()
+        return
+      }
+
+      if (needsSceneUploadRef.current) {
+        startSceneUpload(runtime)
+        return
       }
 
       const maxSamples = currentMaxSamplesRef.current
@@ -409,65 +494,77 @@ export function PathTracingCanvas({
         isCameraInteractionActive: currentCameraInteractionActiveRef.current,
         maxSamples,
       })
+      let didRenderSample = false
 
       if (runtime.pathTracer.samples < sampleLimit) {
         runtime.pathTracer.renderSample()
+        finalPostDirtyRef.current = true
+        didRenderSample = true
       }
 
       const displayedSampleCount = Math.min(
         maxSamples,
         Math.floor(runtime.pathTracer.samples),
       )
-      const finalSampleReached =
-        !currentCameraInteractionActiveRef.current &&
-        runtime.pathTracer.samples >= maxSamples
-      const willUseDenoise = shouldUsePathTracingDenoise({
-        enabled:
-          !currentCameraInteractionActiveRef.current &&
-          pathTracingViewportConfig.denoise.enabled &&
-          currentDenoiseEnabledRef.current,
+      const shouldRunFinalPost = shouldRunPathTracingFinalPost({
+        isCameraInteractionActive: currentCameraInteractionActiveRef.current,
         maxSamples,
+        needsFinalPost: finalPostDirtyRef.current,
         sampleCount: runtime.pathTracer.samples,
       })
 
-      if (willUseDenoise) {
-        publishPathTracingSampleCount({
-          denoiseStatus: 'denoising',
-          lastPublishedSampleCounterTextRef,
-          maxSamples,
-          sampleCount: displayedSampleCount,
-          sampleCounterRef,
-        })
-      }
-
-      const texturePassResult = getPathTracingTexturePassMap(
-        runtime,
-        !currentCameraInteractionActiveRef.current &&
-          currentDenoiseEnabledRef.current,
-        maxSamples,
-      )
-
-      resetRendererViewportToCanvasCssSize(runtime.renderer)
-      runtime.texturePass.map = runtime.assetBloomPipeline.render({
-        camera: runtime.camera,
-        inputTexture: texturePassResult.texture,
-        renderer: runtime.renderer,
-        scene: runtime.scene,
-      })
-      runtime.composer.render()
       publishPathTracingSampleCount({
-        denoiseStatus:
-          texturePassResult.denoiseStatus ??
-          (finalSampleReached ? 'not-denoised' : 'idle'),
         lastPublishedSampleCounterTextRef,
         maxSamples,
         sampleCount: displayedSampleCount,
         sampleCounterRef,
       })
 
+      if (shouldRunFinalPost) {
+        if (didRenderSample) {
+          requestFrame()
+          return
+        }
+
+        const finalPostWillUseDenoise = shouldUsePathTracingDenoise({
+          enabled:
+            pathTracingViewportConfig.denoise.enabled &&
+            currentDenoiseEnabledRef.current,
+          maxSamples,
+          sampleCount: runtime.pathTracer.samples,
+        })
+
+        if (finalPostWillUseDenoise) {
+          publishPathTracingSampleCount({
+            denoiseStatus: 'denoising',
+            lastPublishedSampleCounterTextRef,
+            maxSamples,
+            sampleCount: displayedSampleCount,
+            sampleCounterRef,
+          })
+        }
+
+        const denoiseStatus = renderFinalPathTracingPost(
+          runtime,
+          currentDenoiseEnabledRef.current,
+          maxSamples,
+        )
+
+        finalPostDirtyRef.current = false
+        publishPathTracingSampleCount({
+          denoiseStatus,
+          lastPublishedSampleCounterTextRef,
+          maxSamples,
+          sampleCount: displayedSampleCount,
+          sampleCounterRef,
+        })
+        return
+      }
+
       if (
         shouldScheduleNextPathTracingFrame({
           maxSamples: sampleLimit,
+          needsFinalPost: shouldRunFinalPost,
           needsSceneUpload: needsSceneUploadRef.current,
           sampleCount: runtime.pathTracer.samples,
         })
@@ -482,10 +579,16 @@ export function PathTracingCanvas({
     return () => {
       isDisposed = true
       requestFrameRef.current = null
+      sceneUploadPromiseRef.current = null
 
       if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current)
         animationFrameRef.current = null
+      }
+
+      if (deferredFrameTimeoutRef.current !== null) {
+        window.clearTimeout(deferredFrameTimeoutRef.current)
+        deferredFrameTimeoutRef.current = null
       }
     }
   }, [])
@@ -639,12 +742,35 @@ function applyCameraSnapshotToPathTracingCamera(
   })
 }
 
-function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
+async function uploadSceneToPathTracer(runtime: PathTracingRuntime) {
   runtime.scene.updateMatrixWorld(true)
-  runtime.pathTracer.setScene(runtime.scene, runtime.camera)
+  await runtime.pathTracer.setSceneAsync(runtime.scene, runtime.camera)
   runtime.emissiveMeshSampler.update(runtime.scene)
   runtime.pathTracer.reset()
   runtime.denoisePipeline.reset()
+}
+
+function renderFinalPathTracingPost(
+  runtime: PathTracingRuntime,
+  denoiseEnabled: boolean,
+  maxSamples: number,
+): PathTracingSampleCounterDenoiseStatus {
+  const texturePassResult = getPathTracingTexturePassMap(
+    runtime,
+    denoiseEnabled,
+    maxSamples,
+  )
+
+  resetRendererViewportToCanvasCssSize(runtime.renderer)
+  runtime.texturePass.map = runtime.assetBloomPipeline.render({
+    camera: runtime.camera,
+    inputTexture: texturePassResult.texture,
+    renderer: runtime.renderer,
+    scene: runtime.scene,
+  })
+  runtime.composer.render()
+
+  return texturePassResult.denoiseStatus ?? 'not-denoised'
 }
 
 function getPathTracingTexturePassMap(
@@ -678,5 +804,23 @@ function getPathTracingTexturePassMap(
   }
 }
 
+type NavigatorWithScheduling = Navigator & {
+  scheduling?: {
+    isInputPending?: (options?: { includeContinuous?: boolean }) => boolean
+  }
+}
+
+function hasPendingPathTracingInput() {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+
+  const scheduling = (navigator as NavigatorWithScheduling).scheduling
+  const isInputPending = scheduling?.isInputPending
+
+  return isInputPending
+    ? isInputPending.call(scheduling, { includeContinuous: true })
+    : false
+}
 
 export default PathTracingCanvas

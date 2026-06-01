@@ -68,6 +68,9 @@ export const pathTracingViewportConfig = {
   maxTextureSize: 1024,
   minSamples: 1,
   renderDelayMs: 0,
+  scheduler: {
+    inputPendingDelayMs: 16,
+  },
   toneMappingExposure: 1,
   tiles: [1, 1] as const,
 }

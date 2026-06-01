@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   formatPathTracingSampleCounter,
   getPathTracingSampleLimit,
+  shouldDeferPathTracingWork,
+  shouldRunPathTracingFinalPost,
   shouldScheduleNextPathTracingFrame,
 } from './pathTracingFrameScheduler'
 
@@ -10,6 +12,7 @@ describe('path tracing viewport frame scheduling', () => {
     expect(
       shouldScheduleNextPathTracingFrame({
         maxSamples: 256,
+        needsFinalPost: false,
         needsSceneUpload: false,
         sampleCount: 255,
       }),
@@ -20,6 +23,7 @@ describe('path tracing viewport frame scheduling', () => {
     expect(
       shouldScheduleNextPathTracingFrame({
         maxSamples: 256,
+        needsFinalPost: false,
         needsSceneUpload: false,
         sampleCount: 256,
       }),
@@ -30,7 +34,19 @@ describe('path tracing viewport frame scheduling', () => {
     expect(
       shouldScheduleNextPathTracingFrame({
         maxSamples: 256,
+        needsFinalPost: false,
         needsSceneUpload: true,
+        sampleCount: 256,
+      }),
+    ).toBe(true)
+  })
+
+  it('keeps one more frame for a dirty final post pass after accumulation completes', () => {
+    expect(
+      shouldScheduleNextPathTracingFrame({
+        maxSamples: 256,
+        needsFinalPost: true,
+        needsSceneUpload: false,
         sampleCount: 256,
       }),
     ).toBe(true)
@@ -54,6 +70,51 @@ describe('path tracing viewport frame scheduling', () => {
         maxSamples: 256,
       }),
     ).toBe(256)
+  })
+})
+
+describe('shouldRunPathTracingFinalPost', () => {
+  it('runs final post once accumulation reaches the max sample target', () => {
+    expect(
+      shouldRunPathTracingFinalPost({
+        isCameraInteractionActive: false,
+        maxSamples: 128,
+        needsFinalPost: true,
+        sampleCount: 128,
+      }),
+    ).toBe(true)
+  })
+
+  it('does not run final post while camera interaction is still active', () => {
+    expect(
+      shouldRunPathTracingFinalPost({
+        isCameraInteractionActive: true,
+        maxSamples: 128,
+        needsFinalPost: true,
+        sampleCount: 128,
+      }),
+    ).toBe(false)
+  })
+
+  it('does not rerun final post when the final output is clean', () => {
+    expect(
+      shouldRunPathTracingFinalPost({
+        isCameraInteractionActive: false,
+        maxSamples: 128,
+        needsFinalPost: false,
+        sampleCount: 128,
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('shouldDeferPathTracingWork', () => {
+  it('yields path tracing work while the browser reports pending input', () => {
+    expect(shouldDeferPathTracingWork({ hasPendingInput: true })).toBe(true)
+  })
+
+  it('continues path tracing work when there is no pending input', () => {
+    expect(shouldDeferPathTracingWork({ hasPendingInput: false })).toBe(false)
   })
 })
 

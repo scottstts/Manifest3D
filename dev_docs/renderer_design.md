@@ -103,6 +103,12 @@ Render tuning such as bounces, bloom, emission gain, texture size, tile layout, 
 
 The live path tracer viewport uses a `1x1` tile layout so early convergence fills the whole viewport. Accumulation stops once the selected max sample count is reached and restarts only when path tracer inputs change.
 
+During progressive accumulation, the raw path-tracer target is presented directly to the canvas. Do not run asset bloom, EffectComposer output, or denoising per sample. The post stack is a final-frame operation: after the selected max sample count is reached and camera interaction is inactive, run final denoise if enabled, then asset bloom/composer once, and mark that final output clean until an input change dirties it again.
+
+Path-tracer scene upload uses `WebGLPathTracer.setSceneAsync()` with a `three-mesh-bvh` BVH worker. This moves BVH construction off the main thread, though path-tracer scene conversion and static geometry merge still perform synchronous setup before the worker task starts. Avoid starting concurrent scene uploads; queue later scene/camera changes behind the current upload.
+
+The path-tracing frame loop is cooperative. Each scheduled frame should do only one expensive class of work: upload, one raw sample, or one final post pass. If the browser reports pending input, defer the next path-tracing unit briefly rather than competing with UI interaction.
+
 The sample counter is viewport UI, not a render-tuning knob. It displays accumulated samples against the selected max-sample target. The counter is clickable and persists one of the supported targets: `128`, `256`, or `512`. Raising the target continues the existing accumulation; lowering it changes the completion threshold without resetting the existing texture.
 
 ## Path Tracer Camera Mirroring
@@ -147,7 +153,7 @@ This keeps navigation responsive while avoiding expensive full-sample accumulati
 
 The WebGL2 path tracer has an isolated final-frame denoise pass in `pathTracingDenoisePipeline.ts`. It is not part of the default WebGPU renderer.
 
-Denoising is controlled by a path-tracer-only Denoiser toggle. The preference defaults off and persists in localStorage. When enabled, denoising runs only after progressive accumulation reaches the selected max sample count. During progressive accumulation, the raw `WebGLPathTracer` target feeds the existing post stack.
+Denoising is controlled by a path-tracer-only Denoiser toggle. The preference defaults off and persists in localStorage. When enabled, denoising runs only after progressive accumulation reaches the selected max sample count. During progressive accumulation, the raw `WebGLPathTracer` target is displayed directly without post-processing.
 
 The denoise pipeline is a non-ML GPU postprocess with no npm dependency. It rasterizes guide buffers from the path-tracing scene and camera: high-precision view normals, linearized depth, material transparency/roughness/emissive protection/object keys, and albedo/metalness.
 
