@@ -5,6 +5,7 @@ import {
   manifestRepairPatchResponseFormatName,
   manifestRepairPatchResponseJsonSchema,
 } from '../schema/manifestContract'
+import { modelConfig } from '../config/modelConfig'
 import type { ManifestScene } from '../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
 import {
@@ -318,6 +319,42 @@ describe('createOpenAIManifestClient', () => {
       message: '<html>cloudflare timeout</html>',
       status: 'error',
       statusCode: 520,
+    })
+  })
+
+  it('normalizes invalid OpenAI model errors', async () => {
+    const prompt = compileManifestPrompt({
+      mode: 'create',
+      scene: emptyScene,
+      userPrompt: 'Create a small box.',
+    })
+    const fetcher = vi.fn().mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            message: 'The model `gpt-missing` does not exist or you do not have access to it.',
+          },
+        },
+        { status: 404, statusText: 'not found' },
+      ),
+    )
+    const client = createOpenAIManifestClient({
+      apiKey: 'sk-test',
+      fetcher,
+      maxCreateRetries: 0,
+      model: {
+        ...modelConfig,
+        model: 'gpt-missing',
+      },
+    })
+
+    const result = await client.generateAsset({ prompt })
+
+    expect(result).toMatchObject({
+      message:
+        'OpenAI could not use model "gpt-missing". Check the Model ID in Providers and try again.',
+      status: 'error',
+      statusCode: 404,
     })
   })
 

@@ -11,6 +11,7 @@ import type {
   AgentResponse,
   OpenAIManifestClient,
 } from './providerClient'
+import { createProviderModelHttpErrorMessage } from './providerModelErrors'
 
 type FetchLike = (
   input: RequestInfo | URL,
@@ -89,7 +90,7 @@ export function createOpenAIManifestClient(
 
       if (!createResult.response.ok) {
         return {
-          message: createOpenAIHttpErrorMessage(createResult),
+          message: createOpenAIHttpErrorMessage(createResult, config.model),
           responseId: extractResponseId(createResult.json),
           status: 'error',
           statusCode: createResult.response.status,
@@ -115,6 +116,7 @@ export function createOpenAIManifestClient(
         endpoint,
         fetcher,
         maxPollRetries,
+        modelId: config.model,
         pollIntervalMs,
         responseId,
         retryDelayMs,
@@ -253,6 +255,7 @@ async function pollOpenAIBackgroundResponse({
   endpoint,
   fetcher,
   maxPollRetries,
+  modelId,
   pollIntervalMs,
   responseId,
   retryDelayMs,
@@ -262,6 +265,7 @@ async function pollOpenAIBackgroundResponse({
   endpoint: string
   fetcher: FetchLike
   maxPollRetries: number
+  modelId: string
   pollIntervalMs: number
   responseId: string
   retryDelayMs: number
@@ -319,7 +323,7 @@ async function pollOpenAIBackgroundResponse({
 
       if (!pollResult.response.ok) {
         return {
-          message: createOpenAIHttpErrorMessage(pollResult),
+          message: createOpenAIHttpErrorMessage(pollResult, modelId),
           responseId: extractResponseId(pollResult.json) ?? responseId,
           status: 'error',
           statusCode: pollResult.response.status,
@@ -465,8 +469,21 @@ async function cancelOpenAIBackgroundResponse({
   }
 }
 
-function createOpenAIHttpErrorMessage(result: OpenAIResponseResult) {
+function createOpenAIHttpErrorMessage(
+  result: OpenAIResponseResult,
+  modelId: string,
+) {
   const extracted = extractErrorMessage(result.json)
+  const modelErrorMessage = createProviderModelHttpErrorMessage({
+    message: extracted ?? result.rawText.trim(),
+    modelId,
+    providerLabel: 'OpenAI',
+    statusCode: result.response.status,
+  })
+
+  if (modelErrorMessage) {
+    return modelErrorMessage
+  }
 
   if (extracted) {
     return extracted

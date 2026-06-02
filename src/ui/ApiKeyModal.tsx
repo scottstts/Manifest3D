@@ -1,31 +1,48 @@
 import type { FormEvent, MouseEvent } from 'react'
 import { useCallback, useEffect, useId, useState } from 'react'
 import {
+  getProviderReasoningEffortOptions,
   modelProviderOptions,
   type ModelProvider,
+  type ReasoningEffort,
 } from '../engine/config/modelConfig'
 import { getProviderLabel } from '../engine/agent/providerPreference'
+import type { ProviderModelSettings } from '../engine/agent/providerModelSettings'
 
 type ApiKeyModalProps = {
   isOpen: boolean
+  modelSettings: ProviderModelSettings
   provider: ModelProvider
   showApiKeyInput: boolean
   onCancel: () => void
+  onModelIdChange: (provider: ModelProvider, modelId: string) => void
   onProviderChange: (provider: ModelProvider) => void
+  onReasoningEffortChange: (
+    provider: ModelProvider,
+    reasoningEffort: ReasoningEffort,
+  ) => void
+  onResetModelId: (provider: ModelProvider) => void
+  onResetReasoningEffort: (provider: ModelProvider) => void
   onSubmit: (provider: ModelProvider, apiKey: string) => void
 }
 
 export function ApiKeyModal({
   isOpen,
+  modelSettings,
   provider,
   showApiKeyInput,
   onCancel,
+  onModelIdChange,
   onProviderChange,
+  onReasoningEffortChange,
+  onResetModelId,
+  onResetReasoningEffort,
   onSubmit,
 }: ApiKeyModalProps) {
   const [apiKey, setApiKey] = useState('')
   const titleId = useId()
   const trimmedApiKey = apiKey.trim()
+  const reasoningEffortOptions = getProviderReasoningEffortOptions(provider)
   const handleCancel = useCallback(() => {
     setApiKey('')
     onCancel()
@@ -73,6 +90,10 @@ export function ApiKeyModal({
     onProviderChange(provider)
   }
 
+  function handleReasoningEffortSelectChange(reasoningEffort: ReasoningEffort) {
+    onReasoningEffortChange(provider, reasoningEffort)
+  }
+
   return (
     <div
       aria-labelledby={titleId}
@@ -84,7 +105,6 @@ export function ApiKeyModal({
       <form className="api-key-modal__surface" onSubmit={handleSubmit}>
         <h2 id={titleId}>Providers</h2>
         <label className="api-key-modal__field api-key-modal__provider-field">
-          <span>Provider</span>
           <select
             autoFocus={!showApiKeyInput}
             value={provider}
@@ -96,13 +116,59 @@ export function ApiKeyModal({
           >
             {modelProviderOptions.map((option) => (
               <option key={option} value={option}>
-                {getProviderLabel(option)}
+                {getProviderLabel(option).toLowerCase()}
               </option>
             ))}
           </select>
         </label>
+        <div className="api-key-modal__settings">
+          <div className="api-key-modal__setting-row">
+            <input
+              aria-label="Model ID"
+              autoComplete="off"
+              spellCheck={false}
+              type="text"
+              value={modelSettings.modelId}
+              onChange={(event) =>
+                onModelIdChange(provider, event.currentTarget.value)
+              }
+            />
+            <button
+              className="api-key-modal__default-button"
+              type="button"
+              onClick={() => onResetModelId(provider)}
+            >
+              Use Default
+            </button>
+          </div>
+          <div className="api-key-modal__setting-row">
+            <select
+              aria-label="Reasoning Effort"
+              value={modelSettings.reasoningEffort}
+              onChange={(event) =>
+                handleReasoningEffortSelectChange(
+                  event.currentTarget.value as ReasoningEffort,
+                )
+              }
+            >
+              {reasoningEffortOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <button
+              className="api-key-modal__default-button"
+              type="button"
+              onClick={() => onResetReasoningEffort(provider)}
+            >
+              Use Default
+            </button>
+          </div>
+        </div>
         {showApiKeyInput && (
           <>
+            <div className="api-key-modal__section-rule" aria-hidden="true" />
             <label className="api-key-modal__field">
               <span className="sr-only">{getProviderLabel(provider)} API key</span>
               <input

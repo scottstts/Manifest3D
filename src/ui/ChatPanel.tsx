@@ -15,7 +15,7 @@ import type { ValidationReport } from '../engine/schema/validationTypes'
 import { AgentTimeline } from './AgentTimeline'
 import { PromptComposer } from './PromptComposer'
 
-export type ChatPanelPromptMode = 'creating' | 'editing'
+export type ChatPanelPromptMode = 'create' | 'edit'
 
 export type ChatPanelTranscriptItem =
   | {
@@ -155,18 +155,22 @@ export function ChatPanel({
           <PanelRightClose aria-hidden="true" />
         )}
       </button>
-      {!isCollapsed && !isWorkspaceDisabled && (
-        <div className="chat-panel__mode-bar">
-          <span className={`chat-panel__mode-pill is-${mode}`}>{mode}</span>
-          <button
-            aria-label="Start new asset"
-            className="chat-panel__new-asset"
-            title="Start new asset"
-            type="button"
-            onClick={onNewAsset}
-          >
-            <Plus aria-hidden="true" />
-          </button>
+      {!isCollapsed && (
+        <div className="chat-panel__header">
+          {!isWorkspaceDisabled && (
+            <div className="chat-panel__mode-bar">
+              <span className={`chat-panel__mode-pill is-${mode}`}>{mode}</span>
+              <button
+                aria-label="Start new asset"
+                className="chat-panel__new-asset"
+                title="Start new asset"
+                type="button"
+                onClick={onNewAsset}
+              >
+                <Plus aria-hidden="true" />
+              </button>
+            </div>
+          )}
         </div>
       )}
       <div

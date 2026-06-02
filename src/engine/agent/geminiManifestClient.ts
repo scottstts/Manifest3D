@@ -9,6 +9,7 @@ import type {
   AgentResponse,
   ManifestProviderClient,
 } from './providerClient'
+import { createProviderModelHttpErrorMessage } from './providerModelErrors'
 
 type FetchLike = (
   input: RequestInfo | URL,
@@ -160,7 +161,7 @@ export function createGeminiManifestClient(
 
       if (!response.ok) {
         return {
-          message: extractGeminiErrorMessage(json) ?? response.statusText,
+          message: createGeminiHttpErrorMessage(json, response, config.model),
           responseId: extractGeminiResponseId(json),
           status: 'error',
           statusCode: response.status,
@@ -451,6 +452,30 @@ function extractGeminiErrorMessage(value: unknown): string | null {
   }
 
   return null
+}
+
+function createGeminiHttpErrorMessage(
+  json: unknown,
+  response: Response,
+  modelId: string,
+) {
+  const extracted = extractGeminiErrorMessage(json)
+  const modelErrorMessage = createProviderModelHttpErrorMessage({
+    message: extracted ?? response.statusText,
+    modelId,
+    providerLabel: 'Gemini',
+    statusCode: response.status,
+  })
+
+  if (modelErrorMessage) {
+    return modelErrorMessage
+  }
+
+  return (
+    extracted ||
+    response.statusText ||
+    `Gemini request failed with HTTP ${response.status}.`
+  )
 }
 
 function extractGeminiRefusal(value: unknown): string | null {

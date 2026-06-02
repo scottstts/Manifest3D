@@ -62,6 +62,14 @@ import {
   readPreferredModelProvider,
   writePreferredModelProvider,
 } from '../engine/agent/providerPreference'
+import {
+  readProviderModelSettings,
+  resetProviderModelId,
+  resetProviderReasoningEffort,
+  updateProviderModelId,
+  updateProviderReasoningEffort,
+  writeProviderModelSettings,
+} from '../engine/agent/providerModelSettings'
 import type { AgentImageAttachment } from '../engine/agent/providerClient'
 import {
   findAssetLibraryVersion,
@@ -109,7 +117,10 @@ import {
   type MaterialAnimationValues,
 } from '../engine/geometry/materialAnimations'
 import { modelConfig } from '../engine/config/modelConfig'
-import type { ModelProvider } from '../engine/config/modelConfig'
+import type {
+  ModelProvider,
+  ReasoningEffort,
+} from '../engine/config/modelConfig'
 import {
   resolveAssetPanelActiveState,
   resolveCreatePromptMode,
@@ -161,6 +172,9 @@ const composeHistoryLimit = 40
 export function AppShell() {
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider>(
     () => readPreferredModelProvider(),
+  )
+  const [providerModelSettings, setProviderModelSettings] = useState(() =>
+    readProviderModelSettings(),
   )
   const [startupProviderApiKeyStatus, setStartupProviderApiKeyStatus] =
     useState(() => resolveStartupProviderApiKeyStatus())
@@ -341,13 +355,15 @@ export function AppShell() {
     startupProviderApiKeyStatus,
     sessionApiKeys,
   )
+  const selectedProviderModelSettings = providerModelSettings[selectedProvider]
   const providerClient = useMemo(
     () =>
       createManifestProviderClient({
         apiKey: selectedProviderApiKey,
+        modelSettings: selectedProviderModelSettings,
         provider: selectedProvider,
       }),
-    [selectedProvider, selectedProviderApiKey],
+    [selectedProvider, selectedProviderApiKey, selectedProviderModelSettings],
   )
   const hasSessionApiKey = Boolean(sessionApiKeys[selectedProvider])
   const isApiKeyLoaded = isProviderApiKeyLoaded(
@@ -1136,6 +1152,66 @@ export function AppShell() {
     writePreferredModelProvider(provider)
   }, [])
 
+  const commitProviderModelSettings = useCallback(
+    (
+      resolveNextSettings: Parameters<
+        typeof setProviderModelSettings
+      >[0],
+    ) => {
+      setProviderModelSettings((currentSettings) => {
+        const nextSettings =
+          typeof resolveNextSettings === 'function'
+            ? resolveNextSettings(currentSettings)
+            : resolveNextSettings
+
+        writeProviderModelSettings(nextSettings)
+
+        return nextSettings
+      })
+    },
+    [],
+  )
+
+  const handleProviderModelIdChange = useCallback(
+    (provider: ModelProvider, modelId: string) => {
+      commitProviderModelSettings((currentSettings) =>
+        updateProviderModelId(currentSettings, provider, modelId),
+      )
+    },
+    [commitProviderModelSettings],
+  )
+
+  const handleProviderReasoningEffortChange = useCallback(
+    (provider: ModelProvider, reasoningEffort: ReasoningEffort) => {
+      commitProviderModelSettings((currentSettings) =>
+        updateProviderReasoningEffort(
+          currentSettings,
+          provider,
+          reasoningEffort,
+        ),
+      )
+    },
+    [commitProviderModelSettings],
+  )
+
+  const handleProviderModelIdDefault = useCallback(
+    (provider: ModelProvider) => {
+      commitProviderModelSettings((currentSettings) =>
+        resetProviderModelId(currentSettings, provider),
+      )
+    },
+    [commitProviderModelSettings],
+  )
+
+  const handleProviderReasoningEffortDefault = useCallback(
+    (provider: ModelProvider) => {
+      commitProviderModelSettings((currentSettings) =>
+        resetProviderReasoningEffort(currentSettings, provider),
+      )
+    },
+    [commitProviderModelSettings],
+  )
+
   const handleApiKeySubmit = useCallback((provider: ModelProvider, apiKey: string) => {
     setSelectedProvider(provider)
     writePreferredModelProvider(provider)
@@ -1747,10 +1823,15 @@ export function AppShell() {
       />
       <ApiKeyModal
         provider={selectedProvider}
+        modelSettings={selectedProviderModelSettings}
         isOpen={isApiKeyModalOpen}
         showApiKeyInput={canUseInAppApiKeyInput}
         onCancel={() => setIsApiKeyModalOpen(false)}
+        onModelIdChange={handleProviderModelIdChange}
         onProviderChange={handleProviderChange}
+        onReasoningEffortChange={handleProviderReasoningEffortChange}
+        onResetModelId={handleProviderModelIdDefault}
+        onResetReasoningEffort={handleProviderReasoningEffortDefault}
         onSubmit={handleApiKeySubmit}
       />
     </div>

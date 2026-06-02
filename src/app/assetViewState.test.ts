@@ -52,7 +52,7 @@ describe('asset view state', () => {
         activeWorkspace: 'create',
         createInstance: viewedCreateInstance,
       }),
-    ).toBe('editing')
+    ).toBe('edit')
   })
 
   it('marks the active pending create row while a create run is the current view', () => {
@@ -78,7 +78,7 @@ describe('asset view state', () => {
         activeWorkspace: 'create',
         createInstance: null,
       }),
-    ).toBe('creating')
+    ).toBe('create')
   })
 
   it('keeps compose panel state tied to actual compose object selection', () => {

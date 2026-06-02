@@ -35,7 +35,7 @@ Image attachments flow through the same prompt compiler metadata and provider re
 
 Provider-specific transport details belong inside provider clients. UI, scene, and persistence code talk through the agent loop and shared provider client interfaces.
 
-OpenAI is the starting provider default. The last provider selected in the Providers panel is cached as the next default. API keys are never persisted outside local `.env` or the current browser session.
+OpenAI is the starting provider default. The last provider selected in the Providers panel is cached as the next default. Per-provider Model ID and Reasoning Effort preferences are cached in localStorage and default from `modelConfig.ts`; OpenAI maps reasoning effort to `reasoning.effort` with `none`/`low`/`medium`/`high`/`xhigh`, while Gemini maps it to `thinkingConfig.thinkingLevel` with `minimal`/`low`/`medium`/`high`. API keys are never persisted outside local `.env` or the current browser session.
 
 Localhost and loopback runs load provider keys only through the dev-server `.env` endpoint. The top-bar status dot is green when at least one local provider key is available. Non-localhost runs use in-memory per-provider keys from the Providers panel, and readiness reflects the currently selected provider.
 

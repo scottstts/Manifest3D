@@ -20,7 +20,7 @@ export type AssetPanelActiveState = {
   activeRunId: string | null
 }
 
-export type CreatePromptMode = 'creating' | 'editing'
+export type CreatePromptMode = AgentRunMode
 
 export function resolveViewedAssetInstance({
   activeWorkspace,
@@ -75,12 +75,12 @@ export function resolveCreatePromptMode({
   'activeAgentRun' | 'activeWorkspace' | 'createInstance'
 >): CreatePromptMode {
   if (activeAgentRun) {
-    return activeAgentRun.mode === 'edit' ? 'editing' : 'creating'
+    return activeAgentRun.mode
   }
 
   if (activeWorkspace === 'create' && createInstance) {
-    return 'editing'
+    return 'edit'
   }
 
-  return 'creating'
+  return 'create'
 }

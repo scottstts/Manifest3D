@@ -18,7 +18,7 @@ The app starts with an empty Manifest3D scene. Development fixtures should not b
 
 The logo uses `public/logo.png` plus a responsive glassy SVG wordmark adapted from `refs/logo_demo.html`. The wordmark must fit inside top chrome at mobile-width constraints.
 
-The API Key button shows provider readiness through a status dot. Localhost and loopback load keys through the dev-server `.env` endpoint and keep the modal click-locked. Deployed origins use the in-memory Providers panel. API keys must not enter the built client bundle.
+The API Key button shows provider readiness through a status dot. Localhost and loopback load keys through the dev-server `.env` endpoint and keep the modal click-locked. Deployed origins use the in-memory Providers panel. The Providers panel also exposes per-provider Model ID and Reasoning Effort preferences with per-field default resets. API keys must not enter the built client bundle or browser persistence.
 
 The export control lives in top chrome on the right. It remains visible and is enabled only when the active Create workspace has a viewed asset loaded. Static assets export directly; assets with movable joints or material emission animation expose static and dynamic GLB choices.
 
@@ -36,7 +36,9 @@ Newly generated or loaded Create assets are placed so their full bounds sit abov
 
 ## Prompt Panel
 
-The right panel mode pill says `creating` when no Create asset is loaded or a create run is the active view. It says `editing` whenever the Create viewport is showing an asset, even if the renderer outline selection is cleared.
+The right panel mode pill says `create` when no Create asset is loaded or a create run is the active view. It says `edit` whenever the Create viewport is showing an asset, even if the renderer outline selection is cleared.
+
+The mode pill and new-asset button live in the right panel header row, not as overlays on the scrollable conversation. Timeline and transcript content should start below that header so it cannot scroll underneath the controls.
 
 Starting a new Create asset clears the active runtime transcript, candidate timeline, current Create viewport asset, and selection. It does not delete saved history or stop background runs.
 

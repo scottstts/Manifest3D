@@ -540,7 +540,7 @@ a.viewport-toolbar__button {
   bottom: 12px;
   z-index: 6;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: 24vw;
   min-width: 320px;
   max-width: 420px;
@@ -636,11 +636,14 @@ a.viewport-toolbar__button {
   z-index: 1;
 }
 
+.chat-panel__header {
+  position: relative;
+  z-index: 2;
+  min-height: 42px;
+  padding-right: 48px;
+}
+
 .chat-panel__mode-bar {
-  position: absolute;
-  top: 14px;
-  left: 16px;
-  z-index: 3;
   display: inline-flex;
   gap: 8px;
   align-items: center;
@@ -660,14 +663,12 @@ a.viewport-toolbar__button {
   box-shadow: 0 9px 20px rgb(47 111 159 / 0.18);
 }
 
-.chat-panel__mode-pill.is-create,
-.chat-panel__mode-pill.is-creating {
+.chat-panel__mode-pill.is-create {
   background: #2f80b7;
   box-shadow: 0 9px 20px rgb(47 111 159 / 0.18);
 }
 
-.chat-panel__mode-pill.is-edit,
-.chat-panel__mode-pill.is-editing {
+.chat-panel__mode-pill.is-edit {
   background: #d95f7a;
   box-shadow: 0 9px 20px rgb(166 95 47 / 0.18);
 }
@@ -1180,7 +1181,7 @@ a.viewport-toolbar__button {
   position: relative;
   z-index: 1;
   min-height: 0;
-  padding: 58px 2px 16px;
+  padding: 8px 2px 16px;
   overflow: auto;
 }
 
@@ -1714,8 +1715,8 @@ a.viewport-toolbar__button {
 
 .api-key-modal__surface {
   display: grid;
-  gap: 14px;
-  width: min(500px, calc(100vw - 48px));
+  gap: 8px;
+  width: min(560px, calc(100vw - 48px));
 }
 
 .confirm-modal__surface h2,
@@ -1747,8 +1748,22 @@ a.viewport-toolbar__button {
   font-weight: 900;
 }
 
+.api-key-modal__settings {
+  display: grid;
+  gap: 8px;
+}
+
+.api-key-modal__setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .api-key-modal__field input,
-.api-key-modal__field select {
+.api-key-modal__field select,
+.api-key-modal__setting-row input,
+.api-key-modal__setting-row select {
   width: 100%;
   height: 42px;
   padding: 0 12px;
@@ -1756,6 +1771,7 @@ a.viewport-toolbar__button {
   font: inherit;
   font-size: 0.9rem;
   font-weight: 750;
+  line-height: 1;
   background: rgb(255 255 255 / 0.62);
   border: 1px solid rgb(127 121 219 / 0.24);
   border-radius: 10px;
@@ -1763,16 +1779,52 @@ a.viewport-toolbar__button {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.78);
 }
 
-.api-key-modal__field select {
+.api-key-modal__field select,
+.api-key-modal__setting-row select {
+  appearance: none;
+  padding-right: 42px;
   cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #253074 50%),
+    linear-gradient(135deg, #253074 50%, transparent 50%);
+  background-repeat: no-repeat;
+  background-position:
+    calc(100% - 21px) 50%,
+    calc(100% - 15px) 50%;
+  background-size: 7px 7px;
+}
+
+.api-key-modal__provider-field select,
+.api-key-modal__setting-row input,
+.api-key-modal__setting-row select {
+  padding-left: 12px;
 }
 
 .api-key-modal__field input:focus,
-.api-key-modal__field select:focus {
+.api-key-modal__field select:focus,
+.api-key-modal__setting-row input:focus,
+.api-key-modal__setting-row select:focus {
   border-color: rgb(119 67 234 / 0.58);
   box-shadow:
     0 0 0 3px rgb(119 67 234 / 0.14),
     inset 0 1px 0 rgb(255 255 255 / 0.78);
+}
+
+.api-key-modal__default-button {
+  height: 36px;
+  padding: 0 12px;
+  color: #4a51a6;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+  background: rgb(255 255 255 / 0.58);
+  border: 1px solid rgb(127 121 219 / 0.2);
+  border-radius: 999px;
+}
+
+.api-key-modal__section-rule {
+  height: 1px;
+  background: rgb(127 121 219 / 0.2);
 }
 
 .api-key-modal__notice {

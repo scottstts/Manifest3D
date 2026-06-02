@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
+import { geminiModelConfig } from '../config/modelConfig'
 import type { ManifestScene } from '../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
 import {
@@ -157,6 +158,42 @@ describe('createGeminiManifestClient', () => {
       status: 'unavailable',
     })
     expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('normalizes invalid Gemini model errors', async () => {
+    const prompt = compileManifestPrompt({
+      mode: 'create',
+      scene: emptyScene,
+      userPrompt: 'Create a small box.',
+    })
+    const fetcher = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: {
+            message:
+              'models/gemini-missing is not found for API version v1beta, or is not supported for generateContent.',
+          },
+        }),
+        { status: 404, statusText: 'not found' },
+      ),
+    )
+    const client = createGeminiManifestClient({
+      apiKey: 'gemini-test',
+      fetcher,
+      model: {
+        ...geminiModelConfig,
+        model: 'gemini-missing',
+      },
+    })
+
+    const result = await client.generateAsset({ prompt })
+
+    expect(result).toMatchObject({
+      message:
+        'Gemini could not use model "gemini-missing". Check the Model ID in Providers and try again.',
+      status: 'error',
+      statusCode: 404,
+    })
   })
 })
 
