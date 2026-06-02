@@ -54,21 +54,33 @@ type ControlAnimationKeyframe = {
 type ControlAnimationPlan = {
   control: JointPreviewControl
   duration: number
+  keyframes: ControlAnimationKeyframe[]
   poseValuesByKeyframe: Readonly<Record<string, number>>[]
   times: number[]
 }
 
-type ConnectorMorphTargetPlan = {
-  basePositions: Float32Array
+type ConnectorSegmentTrackPlan = {
   connector: BuiltConnectorVisual
   exportMesh: THREE.Mesh
-  keyframePositions: Array<Float32Array | null>
+  samples: ConnectorSegmentTransform[][]
+  segmentCount: number
+  times: number[]
+}
+
+type ConnectorSegmentTransform = {
+  position: THREE.Vector3
+  quaternion: THREE.Quaternion
+  scale: THREE.Vector3
 }
 
 const animationDurationTickSeconds = 0.1
 const maxAnimationClipDurationSeconds = 60
 const maxJointAnimationAngularStep = Math.PI / 2
 const animationTimeEpsilon = 1e-6
+const connectorExportSampleRateHz = 30
+const connectorExportMaxSegmentCount = 24
+const connectorExportMinSegmentLength = 1e-5
+const connectorSegmentUpAxis = new THREE.Vector3(0, 1, 0)
 const helperObjectTypes = new Set([
   'ArrowHelper',
   'AxesHelper',
@@ -346,9 +358,16 @@ function createManifestAssetAnimationClips(
   const plans = getJointPreviewControls(asset)
     .map((control) => createControlAnimationPlan(control, duration))
     .filter((plan): plan is ControlAnimationPlan => plan !== null)
+  const connectorAnimationTimes =
+    builtAsset.connectorVisuals.length > 0
+      ? createBakedConnectorAnimationTimes(plans, duration)
+      : null
   const tracks: THREE.KeyframeTrack[] = []
 
   for (const plan of plans) {
+    const times = connectorAnimationTimes ?? plan.times
+    const poseValuesByKeyframe = createControlPoseValuesAtTimes(plan, times)
+
     for (const binding of plan.control.bindings) {
       const sourceJointGroup = builtAsset.jointGroups.get(binding.joint.id)
       const exportJointGroup = sourceJointGroup
@@ -362,8 +381,8 @@ function createManifestAssetAnimationClips(
       const track = createJointAnimationTrack(
         binding.joint,
         exportJointGroup,
-        plan.times,
-        plan.poseValuesByKeyframe.map(
+        times,
+        poseValuesByKeyframe.map(
           (poseValues) => poseValues[binding.joint.id],
         ),
         plan.control.wrap,
@@ -380,6 +399,8 @@ function createManifestAssetAnimationClips(
       builtAsset,
       clonedObjects,
       plans,
+      duration,
+      connectorAnimationTimes,
     ),
   )
 
@@ -419,65 +440,137 @@ function createControlAnimationPlan(
   return {
     control,
     duration,
+    keyframes,
     poseValuesByKeyframe,
     times,
   }
+}
+
+function createControlPoseValuesAtTimes(
+  controlPlan: ControlAnimationPlan,
+  times: readonly number[],
+) {
+  return times.map((time) =>
+    resolveAnimationControlPoseValues(
+      controlPlan.control,
+      resolveControlAnimationValueAtTime(controlPlan.keyframes, time),
+    ),
+  )
 }
 
 function createConnectorTubeAnimationTracks(
   builtAsset: BuiltManifestAsset,
   clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
   controlPlans: readonly ControlAnimationPlan[],
+  clipDuration: number,
+  bakedTimes: readonly number[] | null,
 ) {
   if (builtAsset.connectorVisuals.length === 0 || controlPlans.length === 0) {
     return []
   }
 
-  const connectorPlans = createConnectorMorphTargetPlans(
+  const times =
+    bakedTimes ?? createBakedConnectorAnimationTimes(controlPlans, clipDuration)
+
+  if (times.length < 2) {
+    return []
+  }
+
+  const connectorPlans = createConnectorSegmentTrackPlans(
     builtAsset,
     clonedObjects,
+    times,
   )
 
   if (connectorPlans.length === 0) {
     return []
   }
 
-  return controlPlans.flatMap((controlPlan) => {
-    for (const [
-      keyframeIndex,
-      poseValues,
-    ] of controlPlan.poseValuesByKeyframe.entries()) {
-      applyBuiltManifestJointPoses(builtAsset, poseValues)
-
-      for (const connectorPlan of connectorPlans) {
-        const positionAttribute = getPositionAttribute(
-          connectorPlan.connector.mesh.geometry,
-        )
-
-        connectorPlan.keyframePositions[keyframeIndex] =
-          positionAttribute &&
-          positionAttribute.count === connectorPlan.basePositions.length / 3
-            ? copyBufferAttributeArray(positionAttribute)
-            : null
-      }
-    }
-
-    applyBuiltManifestJointPoses(builtAsset, {})
-
-    return connectorPlans.flatMap((connectorPlan) =>
-      createConnectorMorphTargetTracks(
-        controlPlan.control,
-        connectorPlan,
-        controlPlan.times,
-      ),
+  for (const time of times) {
+    applyBuiltManifestJointPoses(
+      builtAsset,
+      resolveCombinedAnimationPoseValues(controlPlans, time),
     )
-  })
+
+    for (const connectorPlan of connectorPlans) {
+      connectorPlan.samples.push(
+        createConnectorSegmentTransforms(
+          connectorPlan.connector,
+          connectorPlan.segmentCount,
+        ),
+      )
+    }
+  }
+
+  applyBuiltManifestJointPoses(builtAsset, {})
+
+  return connectorPlans.flatMap(createConnectorSegmentAnimationTracks)
 }
 
-function createConnectorMorphTargetPlans(
+function createBakedConnectorAnimationTimes(
+  controlPlans: readonly ControlAnimationPlan[],
+  clipDuration: number,
+) {
+  const times = new Set<string>()
+
+  for (
+    let time = 0;
+    time < clipDuration + animationTimeEpsilon;
+    time += 1 / connectorExportSampleRateHz
+  ) {
+    times.add(Math.min(time, clipDuration).toFixed(6))
+  }
+
+  times.add('0.000000')
+  times.add(clipDuration.toFixed(6))
+
+  for (const controlPlan of controlPlans) {
+    for (const time of controlPlan.times) {
+      times.add(time.toFixed(6))
+    }
+  }
+
+  return [...times]
+    .map((time) => Number(time))
+    .filter((time) => Number.isFinite(time))
+    .sort((left, right) => left - right)
+}
+
+function resolveCombinedAnimationPoseValues(
+  controlPlans: readonly ControlAnimationPlan[],
+  time: number,
+) {
+  const poseValues: Record<string, number> = {}
+
+  for (const controlPlan of controlPlans) {
+    Object.assign(
+      poseValues,
+      resolveAnimationControlPoseValues(
+        controlPlan.control,
+        resolveControlAnimationValueAtTime(controlPlan.keyframes, time),
+      ),
+    )
+  }
+
+  return poseValues
+}
+
+function resolveControlAnimationValueAtTime(
+  keyframes: readonly ControlAnimationKeyframe[],
+  time: number,
+) {
+  if (time <= (keyframes[0]?.time ?? 0) + animationTimeEpsilon) {
+    return keyframes[0]?.controlValue ?? 0
+  }
+
+  return resolveControlCycleValueAtTime(keyframes, time)
+}
+
+function createConnectorSegmentTrackPlans(
   builtAsset: BuiltManifestAsset,
   clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
-): ConnectorMorphTargetPlan[] {
+  times: readonly number[],
+): ConnectorSegmentTrackPlan[] {
   return builtAsset.connectorVisuals.flatMap((connector) => {
     const exportMesh = clonedObjects.get(connector.mesh)
 
@@ -485,110 +578,256 @@ function createConnectorMorphTargetPlans(
       return []
     }
 
-    const positionAttribute = getPositionAttribute(exportMesh.geometry)
-
-    if (!positionAttribute) {
-      return []
-    }
-
     return [
       {
-        basePositions: copyBufferAttributeArray(positionAttribute),
         connector,
         exportMesh,
-        keyframePositions: [],
+        samples: [],
+        segmentCount: getConnectorExportSegmentCount(connector),
+        times: [...times],
       },
     ]
   })
 }
 
-function createConnectorMorphTargetTracks(
-  control: JointPreviewControl,
-  plan: ConnectorMorphTargetPlan,
-  times: readonly number[],
+function getConnectorExportSegmentCount(connector: BuiltConnectorVisual) {
+  return Math.max(
+    1,
+    Math.min(
+      connectorExportMaxSegmentCount,
+      connector.geometry.tubularSegments ?? connectorExportMaxSegmentCount,
+    ),
+  )
+}
+
+function createConnectorSegmentTransforms(
+  connector: BuiltConnectorVisual,
+  segmentCount: number,
 ) {
-  const tracks: THREE.KeyframeTrack[] = []
+  const points = sampleConnectorCenterlinePoints(
+    connector.centerlinePoints,
+    segmentCount,
+  )
+  const transforms: ConnectorSegmentTransform[] = []
 
-  for (const [keyframeIndex, positions] of plan.keyframePositions.entries()) {
-    if (!positions || positionsMatch(positions, plan.basePositions)) {
-      continue
-    }
-
-    const morphTargetName = addConnectorMorphTarget(
-      plan.exportMesh,
-      positions,
-      `${control.id}-${plan.connector.visualId}-${keyframeIndex}`,
-    )
-    const values = times.map((_, index) => (index === keyframeIndex ? 1 : 0))
-
-    if (!hasTrackMotion(values, 1)) {
-      continue
-    }
-
-    tracks.push(
-      new THREE.NumberKeyframeTrack(
-        `${plan.exportMesh.uuid}.morphTargetInfluences[${morphTargetName}]`,
-        times,
-        values,
-      ),
+  for (let index = 0; index < segmentCount; index += 1) {
+    transforms.push(
+      createConnectorSegmentTransform(points[index], points[index + 1]),
     )
   }
 
-  if (tracks.length > 0) {
-    plan.exportMesh.updateMorphTargets()
+  return transforms
+}
+
+function sampleConnectorCenterlinePoints(
+  centerlinePoints: readonly THREE.Vector3[],
+  segmentCount: number,
+) {
+  if (centerlinePoints.length >= 2) {
+    return new THREE.CatmullRomCurve3(
+      centerlinePoints.map((point) => point.clone()),
+    ).getPoints(segmentCount)
+  }
+
+  const point = centerlinePoints[0]?.clone() ?? new THREE.Vector3()
+  const points = [point]
+
+  for (let index = 0; index < segmentCount; index += 1) {
+    points.push(point.clone())
+  }
+
+  return points
+}
+
+function createConnectorSegmentTransform(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+): ConnectorSegmentTransform {
+  const delta = end.clone().sub(start)
+  const length = Math.max(delta.length(), connectorExportMinSegmentLength)
+  const direction =
+    delta.lengthSq() > connectorExportMinSegmentLength ** 2
+      ? delta.normalize()
+      : connectorSegmentUpAxis
+
+  return {
+    position: start.clone().add(end).multiplyScalar(0.5),
+    quaternion: new THREE.Quaternion().setFromUnitVectors(
+      connectorSegmentUpAxis,
+      direction,
+    ),
+    scale: new THREE.Vector3(1, length, 1),
+  }
+}
+
+function createConnectorSegmentAnimationTracks(plan: ConnectorSegmentTrackPlan) {
+  if (!connectorSegmentSamplesHaveMotion(plan.samples)) {
+    return []
+  }
+
+  const parent = plan.exportMesh.parent
+
+  if (!parent || plan.samples.length === 0) {
+    return []
+  }
+
+  const segments = createConnectorExportSegments(plan)
+  const tracks: THREE.KeyframeTrack[] = []
+
+  parent.remove(plan.exportMesh)
+
+  for (const segment of segments) {
+    parent.add(segment)
+  }
+
+  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+    const segment = segments[segmentIndex]
+    const positionValues = plan.samples.flatMap((sample) =>
+      sample[segmentIndex].position.toArray(),
+    )
+    const quaternionValues = createConnectorSegmentQuaternionTrackValues(
+      plan.samples,
+      segmentIndex,
+    )
+    const scaleValues = plan.samples.flatMap((sample) =>
+      sample[segmentIndex].scale.toArray(),
+    )
+
+    if (hasTrackMotion(positionValues, 3)) {
+      tracks.push(
+        new THREE.VectorKeyframeTrack(
+          `${segment.uuid}.position`,
+          plan.times,
+          positionValues,
+        ),
+      )
+    }
+
+    if (hasTrackMotion(quaternionValues, 4)) {
+      tracks.push(
+        new THREE.QuaternionKeyframeTrack(
+          `${segment.uuid}.quaternion`,
+          plan.times,
+          quaternionValues,
+        ),
+      )
+    }
+
+    if (hasTrackMotion(scaleValues, 3)) {
+      tracks.push(
+        new THREE.VectorKeyframeTrack(
+          `${segment.uuid}.scale`,
+          plan.times,
+          scaleValues,
+        ),
+      )
+    }
+  }
+
+  if (tracks.length === 0) {
+    for (const segment of segments) {
+      parent.remove(segment)
+      segment.geometry.dispose()
+    }
+
+    parent.add(plan.exportMesh)
+  } else {
+    plan.exportMesh.geometry.dispose()
   }
 
   return tracks
 }
 
-function addConnectorMorphTarget(
-  mesh: THREE.Mesh,
-  positions: Float32Array,
-  name: string,
+function connectorSegmentSamplesHaveMotion(
+  samples: readonly ConnectorSegmentTransform[][],
 ) {
-  const targetName = `connector_${name.replace(/[^A-Za-z0-9_]/g, '_')}`
-  const morphAttribute = new THREE.BufferAttribute(positions, 3)
-  const positionTargets = mesh.geometry.morphAttributes.position ?? []
+  const firstSample = samples[0]
 
-  morphAttribute.name = targetName
-  positionTargets.push(morphAttribute)
-  mesh.geometry.morphAttributes.position = positionTargets
-  mesh.geometry.morphTargetsRelative = false
-
-  return targetName
-}
-
-function getPositionAttribute(geometry: THREE.BufferGeometry) {
-  const attribute = geometry.getAttribute('position')
-
-  return attribute instanceof THREE.BufferAttribute && attribute.itemSize === 3
-    ? attribute
-    : null
-}
-
-function copyBufferAttributeArray(attribute: THREE.BufferAttribute) {
-  const source = attribute.array as ArrayLike<number>
-  const copy = new Float32Array(source.length)
-
-  for (let index = 0; index < source.length; index += 1) {
-    copy[index] = source[index]
-  }
-
-  return copy
-}
-
-function positionsMatch(left: Float32Array, right: Float32Array) {
-  if (left.length !== right.length) {
+  if (!firstSample) {
     return false
   }
 
-  for (let index = 0; index < left.length; index += 1) {
-    if (Math.abs(left[index] - right[index]) > 1e-5) {
-      return false
+  for (const sample of samples.slice(1)) {
+    for (let index = 0; index < firstSample.length; index += 1) {
+      const firstTransform = firstSample[index]
+      const sampleTransform = sample[index]
+
+      if (
+        !firstTransform ||
+        !sampleTransform ||
+        !vectorsAlmostEqual(sampleTransform.position, firstTransform.position) ||
+        !vectorsAlmostEqual(sampleTransform.scale, firstTransform.scale) ||
+        Math.abs(sampleTransform.quaternion.dot(firstTransform.quaternion)) <
+          1 - 1e-6
+      ) {
+        return true
+      }
     }
   }
 
-  return true
+  return false
+}
+
+function createConnectorExportSegments(plan: ConnectorSegmentTrackPlan) {
+  const material = plan.exportMesh.material
+  const firstSample = plan.samples[0] ?? []
+
+  return firstSample.map((transform, index) => {
+    const segment = new THREE.Mesh(
+      new THREE.CylinderGeometry(
+        plan.connector.geometry.radius,
+        plan.connector.geometry.radius,
+        1,
+        plan.connector.geometry.radialSegments ?? 12,
+        1,
+        true,
+      ),
+      material,
+    )
+
+    segment.name = `${plan.exportMesh.name} segment ${index + 1}`
+    segment.castShadow = plan.exportMesh.castShadow
+    segment.receiveShadow = plan.exportMesh.receiveShadow
+    segment.position.copy(transform.position)
+    segment.quaternion.copy(transform.quaternion)
+    segment.scale.copy(transform.scale)
+
+    return segment
+  })
+}
+
+function createConnectorSegmentQuaternionTrackValues(
+  samples: readonly ConnectorSegmentTransform[][],
+  segmentIndex: number,
+) {
+  let previousQuaternion: THREE.Quaternion | null = null
+  const values: number[] = []
+
+  for (const sample of samples) {
+    const quaternion = sample[segmentIndex].quaternion.clone()
+
+    if (previousQuaternion && previousQuaternion.dot(quaternion) < 0) {
+      quaternion.set(
+        -quaternion.x,
+        -quaternion.y,
+        -quaternion.z,
+        -quaternion.w,
+      )
+    }
+
+    values.push(...quaternion.toArray())
+    previousQuaternion = quaternion
+  }
+
+  return values
+}
+
+function vectorsAlmostEqual(left: THREE.Vector3, right: THREE.Vector3) {
+  return (
+    Math.abs(left.x - right.x) <= 1e-6 &&
+    Math.abs(left.y - right.y) <= 1e-6 &&
+    Math.abs(left.z - right.z) <= 1e-6
+  )
 }
 
 function createControlAnimationKeyframes(

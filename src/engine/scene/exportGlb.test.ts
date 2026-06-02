@@ -225,24 +225,71 @@ describe('GLB export', () => {
     expect(Math.min(...angularDistances)).toBeGreaterThan(0.75)
   })
 
-  it('exports connectorTube morph tracks when endpoint parts animate', async () => {
+  it('exports connectorTube endpoint motion as animated segment TRS tracks', async () => {
     const result = await exportManifestAssetGlb(
       createConnectorTubeAnimationFixtureAsset(),
       { mode: 'dynamic' },
     )
-    const gltf = readGlbJson(result.arrayBuffer)
+    const { binaryChunk, json: gltf } = readGlbJsonAndBinary(result.arrayBuffer)
     const animation = gltf.animations?.find(
       (candidate) => candidate.name === 'Validation Crate Motion',
     )
-    const weightChannel = animation?.channels.find(
-      (channel) => channel.target.path === 'weights',
-    )
-    const connectorNode = gltf.nodes?.[weightChannel?.target.node ?? -1]
-    const connectorMesh = gltf.meshes?.[connectorNode?.mesh ?? -1]
 
-    expect(weightChannel).toBeDefined()
-    expect(connectorNode?.name).toBe('Lid retainer cable')
-    expect(connectorMesh?.primitives[0].targets?.length).toBeGreaterThan(0)
+    if (!animation) {
+      throw new Error('Expected connector fixture animation.')
+    }
+
+    const connectorChannels =
+      animation.channels.filter((channel) => {
+        const node = gltf.nodes?.[channel.target.node ?? -1]
+
+        return node?.name?.startsWith('Lid retainer cable segment')
+      }) ?? []
+    const translationChannel = connectorChannels.find(
+      (channel) => channel.target.path === 'translation',
+    )
+    const lidChannel = findAnimationChannelByNodeName(gltf, animation, 'Lid Hinge')
+    const translationSampler = translationChannel
+      ? animation.samplers[translationChannel.sampler]
+      : undefined
+    const lidSampler = lidChannel ? animation.samplers[lidChannel.sampler] : undefined
+
+    if (!translationSampler || !lidSampler) {
+      throw new Error('Expected connector and lid animation samplers.')
+    }
+
+    const translationTimes = readFloatAccessorValues(
+      gltf,
+      binaryChunk,
+      translationSampler.input,
+    )
+    const lidTimes = readFloatAccessorValues(gltf, binaryChunk, lidSampler.input)
+
+    expect(animation.channels.some((channel) => channel.target.path === 'weights')).toBe(false)
+    expect(
+      gltf.meshes?.some((mesh) =>
+        mesh.primitives.some((primitive) => (primitive.targets?.length ?? 0) > 0),
+      ),
+    ).toBe(false)
+    expect(connectorChannels.length).toBeGreaterThan(0)
+    expect(connectorChannels.some((channel) => channel.target.path === 'rotation')).toBe(true)
+    expect(connectorChannels.some((channel) => channel.target.path === 'scale')).toBe(true)
+    expect(translationTimes.length).toBeGreaterThan(30)
+    expect(Math.max(...getSegmentGaps(translationTimes))).toBeLessThanOrEqual(0.034)
+    expect(lidTimes).toHaveLength(translationTimes.length)
+    for (const [index, time] of lidTimes.entries()) {
+      expect(time).toBeCloseTo(translationTimes[index], 5)
+    }
+    expect(
+      hasVectorMotion(
+        readFloatAccessorValues(
+          gltf,
+          binaryChunk,
+          translationSampler.output,
+        ),
+        3,
+      ),
+    ).toBe(true)
   })
 
   it('reuses one exported material slot for visuals sharing a manifest material', async () => {
@@ -1213,6 +1260,22 @@ function hasVisibleQuaternionMotion(values: readonly number[]) {
 
     if (vectorMagnitude > 0.1 && scalarDeviation > 0.1) {
       return true
+    }
+  }
+
+  return false
+}
+
+function hasVectorMotion(values: readonly number[], itemSize: number) {
+  if (values.length <= itemSize) {
+    return false
+  }
+
+  for (let index = itemSize; index < values.length; index += itemSize) {
+    for (let component = 0; component < itemSize; component += 1) {
+      if (Math.abs(values[index + component] - values[component]) > 1e-8) {
+        return true
+      }
     }
   }
 

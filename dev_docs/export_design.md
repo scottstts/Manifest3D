@@ -22,7 +22,7 @@ The exported joint timeline uses the same shared animation speed helper as in-ap
 
 Non-wrapped controls allocate keyframe time by travel distance so oscillating controls move at the same speed in both directions. Rotational segments are subdivided by bound-joint angular travel before quaternion export, including large bounded revolute swings. Wrapped continuous controls use the same subdivision rule for the fastest bound joint scale. This avoids aliasing grouped mechanisms where a secondary joint spins multiple full turns per control cycle, such as a tail rotor bound at a higher scale than the main rotor.
 
-Dynamic export also preserves `connectorTube` endpoint motion with morph-target weight tracks on the connector meshes, so cables and chains follow animated endpoint parts.
+Dynamic export also preserves `connectorTube` endpoint motion by replacing animated connector meshes with short cylinder segments driven by standard node translation, rotation, and scale tracks. Moving connectors are baked at 30 Hz plus authored keyframe times, and joint tracks are sampled on the same baked timeline when connectors are present so endpoint parts and connector segments stay phase-aligned. This avoids relying on morph-target animation support in external GLB viewers while still letting cables and chains follow animated endpoint parts.
 
 ## Material Animation Export
 
@@ -80,5 +80,5 @@ Export tests parse the generated binary GLB JSON chunk rather than only checking
 - dynamic joint export contains real TRS animation tracks with symmetric non-wrapped control timing
 - large revolute swing tracks are subdivided enough to avoid quaternion shortest-path stalls
 - dynamic wrapped grouped controls preserve visible motion for high-scale linked continuous joints
-- dynamic connectorTube export contains morph-target weight tracks
+- dynamic connectorTube export uses densely baked animated segment TRS tracks instead of morph-target weight tracks
 - dynamic material emission export contains pointer-targeted animation channels and real keyframe accessors
