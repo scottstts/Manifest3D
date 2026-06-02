@@ -6,10 +6,14 @@ import {
   type BuiltConnectorVisual,
   type BuiltManifestAsset,
 } from '../geometry/assetBuilder'
-import { hasMaterialEmissionAnimation } from '../geometry/materialAnimations'
+import {
+  getMaterialEmissionAnimationDuration,
+  hasMaterialEmissionAnimation,
+} from '../geometry/materialAnimations'
 import {
   applyManifestTransform,
   getDefaultJointControlValue,
+  getJointAnimationSpeed,
   getJointPreviewControls,
   getMovableJoints,
   getNormalizedJointAxis,
@@ -47,6 +51,13 @@ type ControlAnimationKeyframe = {
   time: number
 }
 
+type ControlAnimationPlan = {
+  control: JointPreviewControl
+  duration: number
+  poseValuesByKeyframe: Readonly<Record<string, number>>[]
+  times: number[]
+}
+
 type ConnectorMorphTargetPlan = {
   basePositions: Float32Array
   connector: BuiltConnectorVisual
@@ -54,6 +65,10 @@ type ConnectorMorphTargetPlan = {
   keyframePositions: Array<Float32Array | null>
 }
 
+const animationDurationTickSeconds = 0.1
+const maxAnimationClipDurationSeconds = 60
+const maxJointAnimationAngularStep = Math.PI / 2
+const animationTimeEpsilon = 1e-6
 const helperObjectTypes = new Set([
   'ArrowHelper',
   'AxesHelper',
@@ -96,7 +111,10 @@ export async function exportManifestAssetGlb(
     }
 
     if ((options.mode ?? 'static') === 'dynamic') {
-      gltf = appendMaterialEmissionAnimationsToGlb(gltf, asset)
+      gltf = appendMaterialEmissionAnimationsToGlb(gltf, asset, {
+        animationName: createManifestAssetAnimationClipName(asset),
+        duration: getManifestAssetAnimationDuration(asset),
+      })
     }
 
     return {
@@ -136,14 +154,14 @@ function createExportableManifestAsset(
       throw new Error(`Asset "${asset.id}" contains no exportable mesh geometry.`)
     }
 
-	    const animations =
-	      mode === 'dynamic'
-	        ? createManifestAssetAnimationClips(
-	            asset,
-	            builtAsset,
-	            clonedObjects,
-	          )
-	        : []
+    const animations =
+      mode === 'dynamic'
+        ? createManifestAssetAnimationClips(
+            asset,
+            builtAsset,
+            clonedObjects,
+          )
+        : []
 
     if (mode === 'dynamic' && getMovableJoints(asset).length > 0 && animations.length === 0) {
       throw new Error(
@@ -205,6 +223,107 @@ export function createGlbFileName(asset: Pick<ManifestAsset, 'id' | 'name'>) {
   return `${baseName}.glb`
 }
 
+function createManifestAssetAnimationClipName(asset: Pick<ManifestAsset, 'name'>) {
+  return `${asset.name} Motion`
+}
+
+function getManifestAssetAnimationDuration(asset: ManifestAsset) {
+  return getCommonAnimationDuration([
+    ...getJointPreviewControls(asset).map(getControlAnimationNaturalDuration),
+    ...asset.materials.map((material) =>
+      material.emissionAnimation
+        ? getMaterialEmissionAnimationDuration(material.emissionAnimation)
+        : 0,
+    ),
+  ])
+}
+
+function getControlAnimationNaturalDuration(control: JointPreviewControl) {
+  const rangeSpan = control.range.max - control.range.min
+  const speed = getJointAnimationSpeed(control.range.unit, rangeSpan)
+
+  if (speed <= 0) {
+    return 0
+  }
+
+  if (control.wrap) {
+    const wrappedSpan =
+      Number.isFinite(rangeSpan) && rangeSpan > 0 ? rangeSpan : Math.PI * 2
+
+    return Math.abs(wrappedSpan) / speed
+  }
+
+  const values = createNonWrappedControlAnimationValues(control)
+  const totalDistance = values
+    .slice(1)
+    .reduce((total, value, index) => total + Math.abs(value - values[index]), 0)
+
+  return totalDistance / speed
+}
+
+function getControlAnimationExportDuration(control: JointPreviewControl) {
+  return quantizeAnimationDuration(getControlAnimationNaturalDuration(control))
+}
+
+function getCommonAnimationDuration(durations: readonly number[]) {
+  const durationTicks = durations
+    .map(animationDurationToTicks)
+    .filter((ticks) => ticks > 0)
+
+  if (durationTicks.length === 0) {
+    return 0
+  }
+
+  const maxDurationTicks = Math.max(...durationTicks)
+  const maxClipTicks = Math.round(
+    maxAnimationClipDurationSeconds / animationDurationTickSeconds,
+  )
+  let commonDurationTicks = 1
+
+  for (const ticks of durationTicks) {
+    commonDurationTicks = cappedLcm(commonDurationTicks, ticks, maxClipTicks)
+
+    if (commonDurationTicks > maxClipTicks) {
+      return maxDurationTicks * animationDurationTickSeconds
+    }
+  }
+
+  return commonDurationTicks * animationDurationTickSeconds
+}
+
+function quantizeAnimationDuration(duration: number) {
+  const ticks = animationDurationToTicks(duration)
+
+  return ticks > 0 ? ticks * animationDurationTickSeconds : 0
+}
+
+function animationDurationToTicks(duration: number) {
+  return Number.isFinite(duration) && duration > animationTimeEpsilon
+    ? Math.max(1, Math.round(duration / animationDurationTickSeconds))
+    : 0
+}
+
+function gcd(left: number, right: number) {
+  let a = Math.abs(left)
+  let b = Math.abs(right)
+
+  while (b > 0) {
+    const next = a % b
+
+    a = b
+    b = next
+  }
+
+  return a || 1
+}
+
+function cappedLcm(left: number, right: number, max: number) {
+  const reducedLeft = Math.abs(left) / gcd(left, right)
+  const absRight = Math.abs(right)
+
+  return reducedLeft > max / absRight ? max + 1 : reducedLeft * absRight
+}
+
 export function downloadGlbExport(result: GlbExportResult) {
   const href = URL.createObjectURL(result.blob)
   const link = document.createElement('a')
@@ -223,19 +342,70 @@ function createManifestAssetAnimationClips(
   builtAsset: BuiltManifestAsset,
   clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
 ) {
-  return getJointPreviewControls(asset)
-    .map((control) =>
-      createControlAnimationClip(control, builtAsset, clonedObjects),
-    )
-    .filter((clip): clip is THREE.AnimationClip => clip !== null)
+  const duration = getManifestAssetAnimationDuration(asset)
+  const plans = getJointPreviewControls(asset)
+    .map((control) => createControlAnimationPlan(control, duration))
+    .filter((plan): plan is ControlAnimationPlan => plan !== null)
+  const tracks: THREE.KeyframeTrack[] = []
+
+  for (const plan of plans) {
+    for (const binding of plan.control.bindings) {
+      const sourceJointGroup = builtAsset.jointGroups.get(binding.joint.id)
+      const exportJointGroup = sourceJointGroup
+        ? clonedObjects.get(sourceJointGroup)
+        : undefined
+
+      if (!exportJointGroup) {
+        continue
+      }
+
+      const track = createJointAnimationTrack(
+        binding.joint,
+        exportJointGroup,
+        plan.times,
+        plan.poseValuesByKeyframe.map(
+          (poseValues) => poseValues[binding.joint.id],
+        ),
+        plan.control.wrap,
+      )
+
+      if (track) {
+        tracks.push(track)
+      }
+    }
+  }
+
+  tracks.push(
+    ...createConnectorTubeAnimationTracks(
+      builtAsset,
+      clonedObjects,
+      plans,
+    ),
+  )
+
+  if (tracks.length === 0) {
+    return []
+  }
+
+  return [
+    new THREE.AnimationClip(
+      createManifestAssetAnimationClipName(asset),
+      duration,
+      tracks,
+    ),
+  ]
 }
 
-function createControlAnimationClip(
+function createControlAnimationPlan(
   control: JointPreviewControl,
-  builtAsset: BuiltManifestAsset,
-  clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
-) {
-  const keyframes = createControlAnimationKeyframes(control)
+  clipDuration: number,
+): ControlAnimationPlan | null {
+  const duration = getControlAnimationExportDuration(control)
+  const keyframes = createControlAnimationKeyframes(
+    control,
+    duration,
+    clipDuration,
+  )
 
   if (keyframes.length < 2) {
     return null
@@ -245,87 +415,63 @@ function createControlAnimationClip(
   const poseValuesByKeyframe = keyframes.map((keyframe) =>
     resolveAnimationControlPoseValues(control, keyframe.controlValue),
   )
-  const tracks: THREE.KeyframeTrack[] = []
 
-  for (const binding of control.bindings) {
-    const sourceJointGroup = builtAsset.jointGroups.get(binding.joint.id)
-    const exportJointGroup = sourceJointGroup
-      ? clonedObjects.get(sourceJointGroup)
-      : undefined
-
-    if (!exportJointGroup) {
-      continue
-    }
-
-    const track = createJointAnimationTrack(
-      binding.joint,
-      exportJointGroup,
-      times,
-      poseValuesByKeyframe.map((poseValues) => poseValues[binding.joint.id]),
-      control.wrap,
-    )
-
-    if (track) {
-      tracks.push(track)
-    }
+  return {
+    control,
+    duration,
+    poseValuesByKeyframe,
+    times,
   }
-
-  tracks.push(
-    ...createConnectorTubeAnimationTracks(
-      control,
-      builtAsset,
-      clonedObjects,
-      times,
-      poseValuesByKeyframe,
-    ),
-  )
-
-  if (tracks.length === 0) {
-    return null
-  }
-
-  return new THREE.AnimationClip(
-    `${control.name} Motion`,
-    times[times.length - 1],
-    tracks,
-  )
 }
 
 function createConnectorTubeAnimationTracks(
-  control: JointPreviewControl,
   builtAsset: BuiltManifestAsset,
   clonedObjects: ReadonlyMap<THREE.Object3D, THREE.Object3D>,
-  times: readonly number[],
-  poseValuesByKeyframe: readonly Readonly<Record<string, number>>[],
+  controlPlans: readonly ControlAnimationPlan[],
 ) {
-  if (builtAsset.connectorVisuals.length === 0 || times.length < 2) {
+  if (builtAsset.connectorVisuals.length === 0 || controlPlans.length === 0) {
     return []
   }
 
-  const plans = createConnectorMorphTargetPlans(builtAsset, clonedObjects)
-
-  if (plans.length === 0) {
-    return []
-  }
-
-  for (const [keyframeIndex, poseValues] of poseValuesByKeyframe.entries()) {
-    applyBuiltManifestJointPoses(builtAsset, poseValues)
-
-    for (const plan of plans) {
-      const positionAttribute = getPositionAttribute(plan.connector.mesh.geometry)
-
-      plan.keyframePositions[keyframeIndex] =
-        positionAttribute && positionAttribute.count === plan.basePositions.length / 3
-          ? copyBufferAttributeArray(positionAttribute)
-          : null
-    }
-  }
-
-  applyBuiltManifestJointPoses(builtAsset, {})
-
-  return plans.flatMap((plan) =>
-    createConnectorMorphTargetTracks(control, plan, times),
+  const connectorPlans = createConnectorMorphTargetPlans(
+    builtAsset,
+    clonedObjects,
   )
+
+  if (connectorPlans.length === 0) {
+    return []
+  }
+
+  return controlPlans.flatMap((controlPlan) => {
+    for (const [
+      keyframeIndex,
+      poseValues,
+    ] of controlPlan.poseValuesByKeyframe.entries()) {
+      applyBuiltManifestJointPoses(builtAsset, poseValues)
+
+      for (const connectorPlan of connectorPlans) {
+        const positionAttribute = getPositionAttribute(
+          connectorPlan.connector.mesh.geometry,
+        )
+
+        connectorPlan.keyframePositions[keyframeIndex] =
+          positionAttribute &&
+          positionAttribute.count === connectorPlan.basePositions.length / 3
+            ? copyBufferAttributeArray(positionAttribute)
+            : null
+      }
+    }
+
+    applyBuiltManifestJointPoses(builtAsset, {})
+
+    return connectorPlans.flatMap((connectorPlan) =>
+      createConnectorMorphTargetTracks(
+        controlPlan.control,
+        connectorPlan,
+        controlPlan.times,
+      ),
+    )
+  })
 }
 
 function createConnectorMorphTargetPlans(
@@ -447,36 +593,248 @@ function positionsMatch(left: Float32Array, right: Float32Array) {
 
 function createControlAnimationKeyframes(
   control: JointPreviewControl,
+  duration: number,
+  clipDuration: number,
 ): ControlAnimationKeyframe[] {
+  const cycleKeyframes = createControlAnimationCycleKeyframes(control, duration)
+
+  return repeatControlAnimationKeyframes(
+    cycleKeyframes,
+    duration,
+    clipDuration,
+  )
+}
+
+function createControlAnimationCycleKeyframes(
+  control: JointPreviewControl,
+  duration: number,
+) {
   if (control.wrap) {
     const min = control.range.min
     const span = control.range.max - control.range.min
     const wrappedSpan = Number.isFinite(span) && span > 0 ? span : Math.PI * 2
-    const duration = 2.4
 
-    return [0, 0.25, 0.5, 0.75, 1].map((phase) => ({
-      controlValue: min + wrappedSpan * phase,
-      time: duration * phase,
-    }))
+    return subdivideControlAnimationWaypoints(control, [
+      {
+        controlValue: min,
+        time: 0,
+      },
+      {
+        controlValue: min + wrappedSpan,
+        time: duration,
+      },
+    ])
   }
 
-  const defaultValue = getDefaultJointControlValue(control)
-  const travelValues = uniqueFiniteValues([
-    normalizeJointControlValue(control, control.range.min),
-    normalizeJointControlValue(control, control.range.max),
-  ]).filter((value) => Math.abs(value - defaultValue) > 1e-8)
-  const values = [defaultValue, ...travelValues, defaultValue]
+  const values = createNonWrappedControlAnimationValues(control)
+  const segmentDistances = values
+    .slice(1)
+    .map((value, index) => Math.abs(value - values[index]))
+  const totalDistance = segmentDistances.reduce(
+    (total, distance) => total + distance,
+    0,
+  )
 
-  if (values.length < 3) {
+  if (values.length < 2 || totalDistance <= 1e-8) {
     return []
   }
 
-  const segmentDuration = 1.2
+  let elapsed = 0
 
-  return values.map((controlValue, index) => ({
-    controlValue,
-    time: segmentDuration * index,
-  }))
+  const waypoints = values.map((controlValue, index) => {
+    if (index > 0) {
+      elapsed += segmentDistances[index - 1] / totalDistance
+    }
+
+    return {
+      controlValue,
+      time: duration * elapsed,
+    }
+  })
+
+  return subdivideControlAnimationWaypoints(control, waypoints)
+}
+
+function subdivideControlAnimationWaypoints(
+  control: JointPreviewControl,
+  waypoints: readonly ControlAnimationKeyframe[],
+) {
+  const keyframes: ControlAnimationKeyframe[] = []
+
+  for (let index = 0; index < waypoints.length - 1; index += 1) {
+    const start = waypoints[index]
+    const end = waypoints[index + 1]
+    const segmentCount = getControlAnimationSegmentCount(
+      control,
+      start.controlValue,
+      end.controlValue,
+    )
+
+    if (index === 0) {
+      keyframes.push(start)
+    }
+
+    for (let step = 1; step <= segmentCount; step += 1) {
+      const phase = step / segmentCount
+
+      keyframes.push({
+        controlValue: lerp(start.controlValue, end.controlValue, phase),
+        time: lerp(start.time, end.time, phase),
+      })
+    }
+  }
+
+  return keyframes
+}
+
+function repeatControlAnimationKeyframes(
+  cycleKeyframes: readonly ControlAnimationKeyframe[],
+  duration: number,
+  clipDuration: number,
+) {
+  if (
+    cycleKeyframes.length < 2 ||
+    duration <= animationTimeEpsilon ||
+    clipDuration <= animationTimeEpsilon
+  ) {
+    return []
+  }
+
+  const repeatedKeyframes: ControlAnimationKeyframe[] = []
+  const cycleCount = Math.ceil(clipDuration / duration - animationTimeEpsilon)
+
+  for (let cycleIndex = 0; cycleIndex < cycleCount; cycleIndex += 1) {
+    const cycleStart = cycleIndex * duration
+
+    for (const [keyframeIndex, keyframe] of cycleKeyframes.entries()) {
+      if (cycleIndex > 0 && keyframeIndex === 0) {
+        continue
+      }
+
+      const time = cycleStart + keyframe.time
+
+      if (time > clipDuration + animationTimeEpsilon) {
+        continue
+      }
+
+      pushControlAnimationKeyframe(repeatedKeyframes, {
+        controlValue: keyframe.controlValue,
+        time: Math.min(time, clipDuration),
+      })
+    }
+  }
+
+  const lastKeyframe = repeatedKeyframes.at(-1)
+
+  if (!lastKeyframe || lastKeyframe.time < clipDuration - animationTimeEpsilon) {
+    repeatedKeyframes.push({
+      controlValue: resolveControlCycleValueAtTime(
+        cycleKeyframes,
+        positiveModulo(clipDuration, duration),
+      ),
+      time: clipDuration,
+    })
+  }
+
+  return repeatedKeyframes
+}
+
+function pushControlAnimationKeyframe(
+  keyframes: ControlAnimationKeyframe[],
+  keyframe: ControlAnimationKeyframe,
+) {
+  const lastKeyframe = keyframes.at(-1)
+
+  if (
+    lastKeyframe &&
+    Math.abs(lastKeyframe.time - keyframe.time) <= animationTimeEpsilon
+  ) {
+    lastKeyframe.controlValue = keyframe.controlValue
+    lastKeyframe.time = keyframe.time
+    return
+  }
+
+  keyframes.push(keyframe)
+}
+
+function resolveControlCycleValueAtTime(
+  keyframes: readonly ControlAnimationKeyframe[],
+  time: number,
+) {
+  if (time <= animationTimeEpsilon) {
+    return keyframes[0]?.controlValue ?? 0
+  }
+
+  for (let index = 1; index < keyframes.length; index += 1) {
+    const previous = keyframes[index - 1]
+    const current = keyframes[index]
+
+    if (time <= current.time + animationTimeEpsilon) {
+      const span = current.time - previous.time
+      const phase =
+        span > animationTimeEpsilon ? (time - previous.time) / span : 1
+
+      return lerp(previous.controlValue, current.controlValue, phase)
+    }
+  }
+
+  return keyframes.at(-1)?.controlValue ?? 0
+}
+
+function getControlAnimationSegmentCount(
+  control: JointPreviewControl,
+  startValue: number,
+  endValue: number,
+) {
+  const controlTravel = endValue - startValue
+  const maxAngularTravel = Math.max(
+    0,
+    ...control.bindings
+      .filter(
+        (binding) =>
+          binding.joint.type === 'revolute' ||
+          binding.joint.type === 'continuous',
+      )
+      .map((binding) =>
+        Number.isFinite(binding.scale)
+          ? Math.abs(binding.scale * controlTravel)
+          : 0,
+      ),
+  )
+
+  return Math.max(
+    1,
+    Math.ceil(maxAngularTravel / maxJointAnimationAngularStep),
+  )
+}
+
+function lerp(start: number, end: number, phase: number) {
+  return start + (end - start) * phase
+}
+
+function positiveModulo(value: number, divisor: number) {
+  return ((value % divisor) + divisor) % divisor
+}
+
+function createNonWrappedControlAnimationValues(control: JointPreviewControl) {
+  const defaultValue = getDefaultJointControlValue(control)
+  const min = normalizeJointControlValue(control, control.range.min)
+  const max = normalizeJointControlValue(control, control.range.max)
+  const values = [defaultValue]
+
+  pushControlAnimationValue(values, max)
+  pushControlAnimationValue(values, min)
+  pushControlAnimationValue(values, defaultValue)
+
+  return values
+}
+
+function pushControlAnimationValue(values: number[], value: number) {
+  const lastValue = values.at(-1)
+
+  if (lastValue === undefined || Math.abs(lastValue - value) > 1e-8) {
+    values.push(value)
+  }
 }
 
 function resolveAnimationControlPoseValues(
@@ -643,28 +1001,6 @@ function hasTrackMotion(values: readonly number[], itemSize: number) {
   }
 
   return false
-}
-
-function uniqueFiniteValues(values: readonly number[]) {
-  const seenValues = new Set<string>()
-  const uniqueValues: number[] = []
-
-  for (const value of values) {
-    if (!Number.isFinite(value)) {
-      continue
-    }
-
-    const key = value.toFixed(8)
-
-    if (seenValues.has(key)) {
-      continue
-    }
-
-    seenValues.add(key)
-    uniqueValues.push(value)
-  }
-
-  return uniqueValues
 }
 
 function mapClonedObjects(

@@ -92,6 +92,7 @@ import {
 } from '../engine/scene/exportGlb'
 import {
   getDefaultJointControlValue,
+  getJointAnimationSpeed,
   getJointControlPreviewValue,
   getJointPreviewControls,
   normalizeJointControlValue,
@@ -1879,14 +1880,6 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement
   )
-}
-
-function getJointAnimationSpeed(unit: JointPreviewControl['range']['unit'], rangeSpan: number) {
-  if (unit === 'meters') {
-    return Math.max(0.08, Math.abs(rangeSpan) / 2)
-  }
-
-  return Math.PI / 2
 }
 
 function formatAgentRunTimeoutStatus(timeoutMs: number) {

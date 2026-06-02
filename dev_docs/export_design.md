@@ -16,7 +16,11 @@ Static assets export directly as GLB. Assets with movable joints or material emi
 
 Static export keeps the canonical rest pose and omits animation channels.
 
-Dynamic export uses the same canonical asset JSON and adds glTF animation clips. Joint animation clips are generated from manifest `controls` or fallback per-joint controls and target exported joint groups with standard TRS animation tracks.
+Dynamic export uses the same canonical asset JSON and adds one asset-level glTF animation clip named `{asset.name} Motion`. Joint animation tracks are generated from manifest `controls` or fallback per-joint controls and target exported joint groups with standard TRS animation tracks. Keeping every exported joint and material animation in one clip is intentional: common glTF viewers often autoplay only the first clip.
+
+The exported joint timeline uses the same shared animation speed helper as in-app preview. Each control keeps its own cycle period inside the single clip; shorter cycles are repeated instead of being stretched to wait for the longest control. Clip duration is chosen as a bounded common duration over quantized control/material periods so common viewers still see one coherent looping clip.
+
+Non-wrapped controls allocate keyframe time by travel distance so oscillating controls move at the same speed in both directions. Rotational segments are subdivided by bound-joint angular travel before quaternion export, including large bounded revolute swings. Wrapped continuous controls use the same subdivision rule for the fastest bound joint scale. This avoids aliasing grouped mechanisms where a secondary joint spins multiple full turns per control cycle, such as a tail rotor bound at a higher scale than the main rotor.
 
 Dynamic export also preserves `connectorTube` endpoint motion with morph-target weight tracks on the connector meshes, so cables and chains follow animated endpoint parts.
 
@@ -31,8 +35,8 @@ Material emission animation is exported as glTF material animation, not as scene
 - declares `KHR_materials_emissive_strength`
 - writes material `emissiveFactor`
 - writes `extensions.KHR_materials_emissive_strength.emissiveStrength`
-- adds pointer-targeted animation channels for `/materials/{index}/emissiveFactor`
-- adds pointer-targeted animation channels for `/materials/{index}/extensions/KHR_materials_emissive_strength/emissiveStrength`
+- appends pointer-targeted animation channels for `/materials/{index}/emissiveFactor` into the asset-level clip
+- appends pointer-targeted animation channels for `/materials/{index}/extensions/KHR_materials_emissive_strength/emissiveStrength` into the asset-level clip
 
 Static export intentionally omits these animation channels.
 
@@ -72,6 +76,9 @@ Export tests parse the generated binary GLB JSON chunk rather than only checking
 - mesh primitives reference material indices
 - exported PBR and emission factors match the Manifest3D material contract
 - static export omits animation channels
-- dynamic joint export contains real TRS animation tracks
+- dynamic export combines joint and material animation channels into one asset-level clip
+- dynamic joint export contains real TRS animation tracks with symmetric non-wrapped control timing
+- large revolute swing tracks are subdivided enough to avoid quaternion shortest-path stalls
+- dynamic wrapped grouped controls preserve visible motion for high-scale linked continuous joints
 - dynamic connectorTube export contains morph-target weight tracks
 - dynamic material emission export contains pointer-targeted animation channels and real keyframe accessors

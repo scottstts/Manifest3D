@@ -163,6 +163,17 @@ export function getDefaultJointControlValue(control: JointPreviewControl) {
   return control.range.defaultValue
 }
 
+export function getJointAnimationSpeed(
+  unit: JointPreviewRange['unit'],
+  rangeSpan: number,
+) {
+  if (unit === 'meters') {
+    return Math.max(0.08, Math.abs(rangeSpan) / 2)
+  }
+
+  return Math.PI / 2
+}
+
 export function getJointControlPreviewValue(
   control: JointPreviewControl,
   jointPoses: JointPoseValues,

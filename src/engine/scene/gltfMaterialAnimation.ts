@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu'
 import {
   getSortedMaterialEmissionKeyframes,
+  resolveMaterialEmissionAtTime,
   type ResolvedMaterialEmission,
 } from '../geometry/materialAnimations'
 import type {
@@ -38,11 +39,13 @@ type GltfAnimation = {
 type GltfAnimationChannel = {
   sampler: number
   target: {
-    extensions: {
+    extensions?: {
       KHR_animation_pointer: {
         pointer: string
       }
     }
+    node?: number
+    path?: string
   }
 }
 
@@ -79,6 +82,18 @@ type FloatAccessorResult = {
   bytes: Uint8Array
 }
 
+type AppendMaterialEmissionAnimationsOptions = {
+  animationName?: string
+  duration?: number
+}
+
+type MaterialEmissionExportKeyframe = {
+  color: string
+  hasEmission: boolean
+  intensity: number
+  time: number
+}
+
 const glbHeaderBytes = 12
 const glbChunkPrefixBytes = 8
 const glbMagic = 0x46546c67
@@ -90,6 +105,7 @@ const webglFloat = 0x1406
 export function appendMaterialEmissionAnimationsToGlb(
   arrayBuffer: ArrayBuffer,
   asset: ManifestAsset,
+  options: AppendMaterialEmissionAnimationsOptions = {},
 ) {
   const parsedGlb = parseGlb(arrayBuffer)
   const json = parsedGlb.json
@@ -121,6 +137,11 @@ export function appendMaterialEmissionAnimationsToGlb(
   json.materials ??= []
   const buffers = json.buffers
   const materials = json.materials
+  const targetAnimation = getOrCreateTargetAnimation(
+    json,
+    options.animationName ?? `${asset.name} Motion`,
+  )
+
   addExtensionDeclaration(json, 'KHR_animation_pointer', true)
   addExtensionDeclaration(json, 'KHR_materials_emissive_strength', true)
 
@@ -133,7 +154,11 @@ export function appendMaterialEmissionAnimationsToGlb(
       )
     }
 
-    const keyframes = getSortedMaterialEmissionKeyframes(animation)
+    const keyframes = getMaterialEmissionExportKeyframes(
+      material,
+      animation,
+      options.duration,
+    )
 
     if (keyframes.length < 2) {
       continue
@@ -164,14 +189,13 @@ export function appendMaterialEmissionAnimationsToGlb(
     })
 
     writeMaterialEmissionBase(materials[materialIndex], firstEmission)
-    json.animations.push(
-      createMaterialEmissionAnimation(
-        animation,
-        materialIndex,
-        timeAccessor.accessorIndex,
-        colorAccessor.accessorIndex,
-        strengthAccessor.accessorIndex,
-      ),
+    appendMaterialEmissionAnimationChannels(
+      targetAnimation,
+      animation,
+      materialIndex,
+      timeAccessor.accessorIndex,
+      colorAccessor.accessorIndex,
+      strengthAccessor.accessorIndex,
     )
   }
 
@@ -182,54 +206,126 @@ export function appendMaterialEmissionAnimationsToGlb(
   return packGlb(json, binaryChunk)
 }
 
-function createMaterialEmissionAnimation(
+function appendMaterialEmissionAnimationChannels(
+  targetAnimation: GltfAnimation,
   animation: ManifestMaterialEmissionAnimation,
   materialIndex: number,
   timeAccessorIndex: number,
   colorAccessorIndex: number,
   strengthAccessorIndex: number,
-): GltfAnimation {
+) {
   const interpolation = gltfInterpolation(animation.interpolation)
+  const colorSamplerIndex = targetAnimation.samplers.length
+  const strengthSamplerIndex = colorSamplerIndex + 1
 
-  return {
-    channels: [
-      {
-        sampler: 0,
-        target: {
-          extensions: {
-            KHR_animation_pointer: {
-              pointer: `/materials/${materialIndex}/emissiveFactor`,
-            },
+  targetAnimation.samplers.push(
+    {
+      input: timeAccessorIndex,
+      interpolation,
+      output: colorAccessorIndex,
+    },
+    {
+      input: timeAccessorIndex,
+      interpolation,
+      output: strengthAccessorIndex,
+    },
+  )
+  targetAnimation.channels.push(
+    {
+      sampler: colorSamplerIndex,
+      target: {
+        extensions: {
+          KHR_animation_pointer: {
+            pointer: `/materials/${materialIndex}/emissiveFactor`,
           },
         },
       },
-      {
-        sampler: 1,
-        target: {
-          extensions: {
-            KHR_animation_pointer: {
-              pointer:
-                `/materials/${materialIndex}` +
-                '/extensions/KHR_materials_emissive_strength/emissiveStrength',
-            },
+    },
+    {
+      sampler: strengthSamplerIndex,
+      target: {
+        extensions: {
+          KHR_animation_pointer: {
+            pointer:
+              `/materials/${materialIndex}` +
+              '/extensions/KHR_materials_emissive_strength/emissiveStrength',
           },
         },
       },
-    ],
-    name: `${animation.name} Emission`,
-    samplers: [
-      {
-        input: timeAccessorIndex,
-        interpolation,
-        output: colorAccessorIndex,
-      },
-      {
-        input: timeAccessorIndex,
-        interpolation,
-        output: strengthAccessorIndex,
-      },
-    ],
+    },
+  )
+}
+
+function getOrCreateTargetAnimation(json: GltfJson, animationName: string) {
+  json.animations ??= []
+
+  const existing =
+    json.animations.find((animation) => animation.name === animationName) ??
+    json.animations[0]
+
+  if (existing) {
+    existing.name = animationName
+    return existing
   }
+
+  const animation: GltfAnimation = {
+    channels: [],
+    name: animationName,
+    samplers: [],
+  }
+
+  json.animations.push(animation)
+
+  return animation
+}
+
+function getMaterialEmissionExportKeyframes(
+  material: ManifestMaterial,
+  animation: ManifestMaterialEmissionAnimation,
+  targetDuration: number | undefined,
+): MaterialEmissionExportKeyframe[] {
+  const keyframes = getSortedMaterialEmissionKeyframes(animation)
+  const animationDuration = keyframes.at(-1)?.time ?? 0
+
+  if (
+    keyframes.length < 2 ||
+    !animation.loop ||
+    targetDuration === undefined ||
+    targetDuration <= animationDuration ||
+    animationDuration <= 0
+  ) {
+    return keyframes
+  }
+
+  const exportKeyframes: MaterialEmissionExportKeyframe[] = [...keyframes]
+
+  for (
+    let cycleOffset = animationDuration;
+    cycleOffset < targetDuration - 1e-8;
+    cycleOffset += animationDuration
+  ) {
+    for (const keyframe of keyframes.slice(1)) {
+      const time = cycleOffset + keyframe.time
+
+      if (time < targetDuration - 1e-8) {
+        exportKeyframes.push({
+          ...keyframe,
+          time,
+        })
+      }
+    }
+  }
+
+  const lastKeyframe = exportKeyframes.at(-1)
+
+  if (!lastKeyframe || lastKeyframe.time < targetDuration - 1e-8) {
+    exportKeyframes.push({
+      ...resolveMaterialEmissionAtTime(material, targetDuration),
+      time: targetDuration,
+    })
+  }
+
+  return exportKeyframes
 }
 
 function appendFloatAccessor(
@@ -280,7 +376,7 @@ function writeMaterialEmissionBase(
 }
 
 function resolveExportKeyframeEmission(
-  keyframe: ManifestMaterialEmissionAnimation['keyframes'][number],
+  keyframe: MaterialEmissionExportKeyframe,
 ): ResolvedMaterialEmission {
   return {
     color: keyframe.color,
