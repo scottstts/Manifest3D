@@ -45,9 +45,11 @@ import type {
 } from '../../src/engine/schema/validationTypes'
 import { safeParseManifestAsset } from '../../src/engine/schema/manifestSchema'
 import { validateManifestAssetCandidate } from '../../src/engine/validation/validateManifest'
+import { createOpenRouterHeadlessManifestClient } from './openRouterHeadlessClient'
 
 type HeadlessAgentResult = Awaited<ReturnType<typeof runManifestAgentLoop>>
 type HeadlessAttempt = HeadlessAgentResult['history']['attempts'][number]
+type HeadlessModelProvider = ModelProvider | 'openrouter'
 
 type CapturedExchange = {
   artifacts: {
@@ -60,7 +62,7 @@ type CapturedExchange = {
   }
   index: number
   metadata: AgentRequest['prompt']['metadata']
-  provider: ModelProvider
+  provider: HeadlessModelProvider
   request: {
     approximateInputTokens: number
     imageAttachmentCount: number
@@ -340,13 +342,16 @@ function createCapturedClient({
   apiKey: string
   artifactRoot: string
   progress?: HeadlessProgressLogger
-  provider: ModelProvider
+  provider: HeadlessModelProvider
   shouldStopBeforeRequest?: () => string | null
 }) {
-  const realClient = createManifestProviderClient({
-    apiKey,
-    provider,
-  })
+  const realClient =
+    provider === 'openrouter'
+      ? createOpenRouterHeadlessManifestClient({ apiKey })
+      : createManifestProviderClient({
+          apiKey,
+          provider,
+        })
   const exchanges: CapturedExchange[] = []
   const client: ManifestProviderClient = {
     async generateAsset(request) {
@@ -571,7 +576,7 @@ function writeHeadlessArtifacts({
   events: readonly AgentLoopEvent[]
   exchanges: readonly CapturedExchange[]
   prompt: string
-  provider: ModelProvider
+  provider: HeadlessModelProvider
   result: Awaited<ReturnType<typeof runManifestAgentLoop>>
   runId: string
   runStartedAt: Date
@@ -899,7 +904,7 @@ function createHeadlessProgressLogger({
 }: {
   artifactRoot: string
   maxRepairTurns: number
-  provider: ModelProvider
+  provider: HeadlessModelProvider
   runId: string
   runTimeoutMs: number
 }): HeadlessProgressLogger {
@@ -1217,13 +1222,19 @@ function writeBinaryArtifact(
   return targetPath
 }
 
-function readHeadlessModelProvider(): ModelProvider {
-  return parseModelProvider(readStringEnv('HEADLESS_AGENT_PROVIDER', 'openai'))
+function readHeadlessModelProvider(): HeadlessModelProvider {
+  const provider = readStringEnv('HEADLESS_AGENT_PROVIDER', 'openai')
+    .trim()
+    .toLowerCase()
+
+  return provider === 'openrouter' ? 'openrouter' : parseModelProvider(provider)
 }
 
-function readRequiredProviderApiKey(provider: ModelProvider) {
+function readRequiredProviderApiKey(provider: HeadlessModelProvider) {
   const apiKey =
-    provider === 'gemini'
+    provider === 'openrouter'
+      ? readFirstEnvOrDotEnv(['OPENROUTER_API_KEY'])
+      : provider === 'gemini'
       ? readFirstEnvOrDotEnv([
           'GEMINI_API_KEY',
           'GOOGLE_API_KEY',

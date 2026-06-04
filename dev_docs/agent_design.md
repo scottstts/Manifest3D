@@ -140,7 +140,7 @@ Asset list ordering is by original creation time descending. Opening an asset de
 
 `test/headless/agentPipelineSmoke.test.ts` exercises the same embedded engine and agent loop without the GUI. It records candidate JSON, validation reports, request/response exchanges, progress timelines, probe reports, and GLB artifacts for inspection.
 
-The harness wraps imported app provider clients for artifact capture, but it does not recreate provider switching or transport plumbing. `HEADLESS_AGENT_PROVIDER` selects the provider for a run and defaults to OpenAI.
+The harness wraps imported app provider clients for artifact capture, but it does not recreate provider switching or transport plumbing. `HEADLESS_AGENT_PROVIDER` selects the provider for a run and defaults to OpenAI. A headless-only OpenRouter adapter is available for provider-path comparison with `HEADLESS_AGENT_PROVIDER=openrouter`; it uses OpenRouter's Responses API endpoint with `openai/gpt-5.5`, keeps the app-facing provider list unchanged, and reads only `OPENROUTER_API_KEY`.
 
 Headless-only conveniences stay in the test harness: Node file shims, local reference-image loading, artifact directory writing, per-attempt GLB materialization, repeated-failure diagnostic stop, and viewer URL generation. App source should change only for engine, validation, export, prompt, or provider behavior that matters to interactive runs too.
 
@@ -155,6 +155,7 @@ Current stress-run behavior:
 - local reference images can be supplied through `HEADLESS_AGENT_IMAGE_PATH` or `HEADLESS_AGENT_IMAGE_PATHS`
 - default artifacts live under `test/headless/artifacts/headless-agent/`
 - summary JSON records exported GLB paths and viewer URLs
+- OpenRouter client-only live smoke is opt-in with `HEADLESS_OPENROUTER_CLIENT_SMOKE=1 npm test -- test/headless/openRouterHeadlessClientLiveSmoke.test.ts`; the one-response full Manifest3D schema smoke is opt-in with `HEADLESS_OPENROUTER_MANIFEST_CLIENT_SMOKE=1 npm test -- test/headless/openRouterHeadlessClientLiveSmoke.test.ts`
 
 ## Progress Timeline
 
