@@ -12,11 +12,14 @@ The prompt contract emphasizes:
 - real-world scale and plausible materials
 - softened manufactured forms through `roundedBox` and `capsule`
 - explicit articulation for primary visible mechanisms and controls
+- CAD-like fitted interfaces for mechanical cutaways, engines, gearboxes, pumps, vehicles, tools, and other precision assemblies
 - material `emission` and `emissionAnimation` for visible lights, LEDs, screens, and flashing or color-changing indicators
 - deliberate material `side` selection, with `expect_material_side` checks for prompt-critical open or cutaway surfaces
 - `controls` coverage for multi-joint mechanisms
 - physically supported parts, with no unsupported visual islands
-- scoped intentional overlap allowances paired with exact proof checks
+- visibly seated blade roots for fans, compressors, turbines, propellers, and other rotating blade assemblies
+- exact bounded fitted-contact proof for seated visual pairs, plus scoped intentional overlap allowances paired with exact proof checks for other exceptions
+- exact contact, bounded-gap, containment, or bounded-penetration checks for prompt-critical mechanical fits
 - valid primitive parameters, including `roundedBox.radius <= min(size) / 2`
 - stable semantic ids that avoid state words such as `open`, `closed`, or `extended`
 - validation output treated as sensor data, not permission to simplify the requested object
@@ -25,7 +28,7 @@ Manifest3D agents return strict JSON assets for create/edit turns and JSON Patch
 
 ## Prompt Compiler Contract
 
-`compileManifestPrompt` returns separate `system` and `user` strings plus compact metadata. It composes the system identity, Contract V2 schema guidance, mode-specific create/edit/repair instructions, current scene summary, selected asset JSON for edit mode, compact candidate JSON for repair mode, image attachment metadata, prior validation feedback, and examples.
+`compileManifestPrompt` returns separate `system` and `user` strings plus compact metadata. It composes the system identity, Contract V2 schema guidance, mode-specific create/edit/repair instructions, current scene summary, selected asset JSON for edit mode, compact candidate JSON for repair mode, image attachment metadata, prior validation feedback, and mode-appropriate examples. Create/edit prompts use full asset examples; repair prompts use compact JSON Patch examples only.
 
 Create and edit mode expect a complete Manifest3D asset. Edit mode requires a selected asset and returns the full revised asset JSON. Repair mode includes the failed candidate and `<validation_signals>` feedback, but expects a JSON Patch envelope. The failed candidate remains complete and is minified in repair prompts to reduce context cost.
 
@@ -61,13 +64,15 @@ Each app run owns its own `CandidateHistory`. `runManifestAgentLoop` emits progr
 
 ## Repair Patches
 
-Repair turns return `{ "patch": [...] }`. The harness applies the patch to a cloned candidate, validates the fully patched asset against the Manifest3D schema, and only then accepts it as the next candidate. Patch application errors are fed into the next repair prompt without mutating the candidate.
+Repair turns return `{ "patch": [...] }`. The harness applies the patch to a cloned candidate, validates the fully patched asset against the Manifest3D schema, and only then accepts it as the next candidate. Patch application errors are fed into the next repair prompt without mutating the candidate. Ordinary repair prompts steer away from root replacement and full-asset output so repair turns stay patch-sized.
 
 Repair patches may address existing array entries by stable id through virtual JSON Pointer segments such as `/parts/byId/deck-truss/visuals/byId/deck-panel/transform/position`. The harness resolves those ids against the current candidate before applying ordinary JSON Patch semantics, which reduces stale array-index failures.
 
 The repair response schema permits focused numeric vectors and point arrays. It avoids unconstrained empty array patch values because `[]` can satisfy many typed array branches while producing schema-invalid assets.
 
-Repeated identical patch-application errors are tracked. The next repair prompt includes the streak, a compact rejected-operation summary, and targeted path hints for common mismatches such as writing `position`, `rotation`, or `scale` inside `joint.limits` instead of `joint.origin`.
+Repeated identical patch-application errors are tracked. The next repair prompt includes the streak, a compact rejected-operation summary, and targeted path hints for common mismatches such as writing `position`, `rotation`, or `scale` inside `joint.limits` instead of `joint.origin`, or placing an authored check object inside a visual `geometry` field instead of patching `/checks`. Geometry-domain hints should also fire from the schema error path alone when a compact rejected-operation summary hides the bad operation. Repair instructions also state the same schema-domain rule before any error occurs.
+
+Patch-application feedback also includes `<repair_target_validation_context>` for the most recent validation attempt. This keeps the original failed candidate revision, fingerprint, failure clusters, and primary failures visible after a rejected patch. Without that context, a repair run can oscillate between schema-only patch correction and the original geometry/QC failure.
 
 ## Repair Feedback
 
@@ -93,13 +98,33 @@ Failure ordering is deliberate:
 3. build/runtime
 4. baseline QC
 5. authored checks
-6. export
+6. sampled-pose QC
+7. renderer-facing material-side hygiene
+8. export
 
-Schema failures tell the model to fix JSON first. Structural failures emphasize stable ids, references, roots, and joint graph validity. Floating and overlap failures require either a physical fix or scoped allowances with exact proof. Missing exact geometry is treated as a stable-id contract failure.
+Schema failures tell the model to fix JSON first. Structural failures emphasize stable ids, references, roots, and joint graph validity. Floating, mechanical-fit, and overlap failures require either a physical fit/support fix, exact bounded fitted-contact proof for intentional seated visual pairs, or scoped allowances with exact proof for other intentional exceptions. Missing exact geometry is treated as a stable-id contract failure.
 
-Targeted repair rules cover recurring loops, including oversized `roundedBox.radius`, missing overlap proof checks, sampled-pose overlap repair, no-op controls, relation oscillation, and repeated rejected patch operations.
+`surface_side_missing_check` is structurally reported because it proves a visual/material contract, but repair feedback ranks it after physical relation failures when both are present. That keeps open/cutaway material hygiene visible without delaying collision, support, sampled-pose, or mechanical-fit repair.
+
+`mechanical_relation_coverage` is also structurally reported, but its feedback must stay mechanical-specific rather than falling through to generic id/root/joint repair instructions. Missing path/coupler parts, weak path evidence, broad multi-visual coupler checks, wrong relation targets, missing fitted-interface checks, missing guided prismatic joints, missing linked guided/rotary controls, missing pose-specific relation evidence for linked motion, and missing linked multi-joint controls should tell the model to add named components, exact relation evidence, and the needed motion graph. Otherwise repairs tend to move decorative parts around, satisfy checks against arbitrary neighbors, or delete requested mechanisms instead of making CAD-like assemblies visually plausible.
+
+Like material-side hygiene, `mechanical_relation_coverage` is build-permissive. The failure still blocks acceptance, but downstream geometry, QC, authored-check, sampled-pose, and export-readiness stages should run so the first repair sees missing evidence and physical defects together instead of discovering collisions one turn later.
+
+Targeted repair rules cover recurring loops, including oversized `roundedBox.radius`, missing overlap proof checks, sampled-pose overlap repair, no-op controls, loose mechanical joint fits, relation oscillation, and repeated rejected patch operations.
 
 Repair feedback includes candidate revision and fingerprint so the model sees that validation evidence belongs to one exact candidate revision. It can also include `<failure_clusters>` and `<probe_report>` sections. Probe reports contain deterministic geometry measurements such as asset bounds, part bounds, joint-origin distances, connector endpoint measurements, closest visual pair, distance, penetration depth, and overlap volume. They are geometry sensor data, not rendered-image critique.
+
+`<response_rules>` can choose a dominant repeated physical failure cluster as the primary repair target even when the first rendered failure is a singleton floating/detail issue. Hard blockers such as schema, build/runtime, root/joint-tree, and model-validity failures still lead, but a large overlap, path-contact, exact-gap, mechanical-fit, or sampled-pose cluster should steer the next repair before incidental one-off physical details.
+
+Relation-loop hints require evidence from distinct failed candidate revisions. A single candidate can report both overlap and gap/contact failures for the same part pair, but that is not an alternating-repair loop and should not trigger the "recent repairs alternated" hint.
+
+Patch-application errors keep a `<repair_target_validation_context>` for the same previous candidate revision because the rejected patch was never validated. Patch application is all-or-nothing: no operation from a rejected patch is partially applied, so the next repair must resend any useful valid operations with the bad operation corrected. That target context must use the same failure ordering as normal validation feedback, so physical overlap/contact/sampled-pose defects still lead over mechanical relation-coverage evidence when both are present.
+
+The agent loop keeps the visual-geometry and authored-check contract boundary strict during repair patches. Valid `expect_*` proof checks misplaced into a visual `geometry` path may be salvaged to `add /checks/-` so useful geometry edits in the same all-or-nothing patch can proceed. Presence checks (`part_exists` and `joint_exists`) are not salvaged from visual geometry because they are no-op repairs for physical contact, overlap, fit, support, clearance, or motion failures. A check-only patch is not a geometry repair and can otherwise create schema-valid but physically inert repair attempts that hide the original failure. Allowance descriptors (`allow_overlap` or `allow_isolated_part`) misplaced into visual geometry are still rerouted to `add /allowances/-` when their references are concrete, because allowances intentionally modify validation interpretation rather than asset shape. Salvage is skipped when the descriptor contains obvious placeholder references such as `x`, `y`, `a`, `b`, `__invalid__`, `part-a`, or `visual-b`; that stays a patch-application error with path/reference hints so impossible checks do not pollute candidate history.
+
+Patch-application feedback places `<path_hints>` immediately after the patch error before the rejected patch summary and preserved validation context. This is deliberate: when a large repair patch writes a check, allowance, whole asset object, control, or pose descriptor into the wrong schema domain, the model should see the exact path rule before reading the long rejected patch dump. The preserved target validation context still follows so the next patch repairs the original physical/mechanical failures rather than sending a schema-only patch.
+
+For repeated CAD-like mechanical relation-coverage failures, repair feedback can emit `<mechanical_contract_summary>`. This groups repeated coverage failures by contract code and affected part ids, such as all rods needing sampled-pose endpoint evidence or all pistons needing sampled-pose guide evidence. The individual validation signals remain authoritative, but the summary tells the model to repair repeated component classes as one mechanism contract instead of adding isolated filler checks.
 
 ## Runtime And Persistence Context
 

@@ -42,7 +42,6 @@ import {
   type ViewportRenderMode,
 } from '../renderer/viewportRenderMode'
 import type { ViewportWorldMode } from '../renderer/viewportWorld'
-import { validateManifestAssetCandidate } from '../engine/validation/validateManifest'
 import {
   runManifestAgentLoop,
   type AgentLoopEvent,
@@ -235,7 +234,6 @@ export function AppShell() {
   const { assetLibraryStore, sceneStore, selectionStore } = useAppStores()
   const librarySnapshot = useAssetLibrarySnapshot(assetLibraryStore)
   const sceneSnapshot = useSceneSnapshot(sceneStore)
-  const { scene } = sceneSnapshot
   const { revision: selectionRevision, selection } =
     useSelectionSnapshot(selectionStore)
   const selectedInstance = selection.targetId
@@ -275,6 +273,12 @@ export function AppShell() {
       )
     : undefined
   const selectedVersionId = viewedAssetInstance?.versionId ?? null
+  const selectedVersion =
+    selectedLibraryAsset && selectedVersionId
+      ? selectedLibraryAsset.versions.find(
+          (version) => version.versionId === selectedVersionId,
+        ) ?? null
+      : null
   const adjacentVersions = getAdjacentAssetVersions(
     selectedLibraryAsset ?? null,
     selectedVersionId,
@@ -283,13 +287,7 @@ export function AppShell() {
     selectedLibraryAsset && adjacentVersions.currentIndex >= 0
       ? `v${adjacentVersions.currentIndex + 1}/${selectedLibraryAsset.versions.length}`
       : null
-  const validationReports = useMemo(
-    () =>
-      scene.assets.map(
-        (asset) => validateManifestAssetCandidate(asset).report,
-      ),
-    [scene.assets],
-  )
+  const validationReports = selectedVersion ? [selectedVersion.validationReport] : []
   const timelineItems = useMemo(
     () =>
       progressTimelineItems.length > 0

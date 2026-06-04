@@ -271,6 +271,12 @@ export const manifestJointControlSchema = z
   .strict()
 
 const manifestAxesSchema = z.enum(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'])
+const manifestPathContactTargetSchema = z
+  .object({
+    partId: nonEmptyId,
+    visualId: nonEmptyId.optional(),
+  })
+  .strict()
 
 export const manifestPoseSpecSchema = z
   .object({
@@ -288,7 +294,7 @@ export const manifestPoseSpecSchema = z
   })
   .strict()
 
-const manifestCheckSchema = z.discriminatedUnion('type', [
+export const manifestCheckSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('part_exists'),
@@ -319,6 +325,18 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       partBId: nonEmptyId,
       visualAId: nonEmptyId.optional(),
       visualBId: nonEmptyId.optional(),
+      contactTolerance: nonNegativeNumber.optional(),
+      maxPenetration: nonNegativeNumber.optional(),
+      pose: manifestPoseSpecSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('expect_path_contacts'),
+      pathPartId: nonEmptyId,
+      pathVisualId: nonEmptyId.optional(),
+      targets: z.array(manifestPathContactTargetSchema).min(1),
+      minContacts: z.number().int().min(1).optional(),
       contactTolerance: nonNegativeNumber.optional(),
       maxPenetration: nonNegativeNumber.optional(),
       pose: manifestPoseSpecSchema.optional(),
@@ -357,6 +375,7 @@ const manifestCheckSchema = z.discriminatedUnion('type', [
       outerPartId: nonEmptyId,
       axes: manifestAxesSchema,
       margin: nonNegativeNumber.optional(),
+      maxPenetration: nonNegativeNumber.optional(),
       innerVisualId: nonEmptyId.optional(),
       outerVisualId: nonEmptyId.optional(),
       pose: manifestPoseSpecSchema.optional(),

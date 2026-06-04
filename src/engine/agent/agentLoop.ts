@@ -1,6 +1,13 @@
 import type { ManifestAsset, ManifestScene } from '../schema/manifestTypes'
-import type { ValidationReport } from '../schema/validationTypes'
-import { manifestAssetSchema } from '../schema/manifestSchema'
+import type {
+  ValidationReport,
+  ValidationSignal,
+} from '../schema/validationTypes'
+import {
+  manifestAssetSchema,
+  manifestCheckSchema,
+  manifestJointControlBindingSchema,
+} from '../schema/manifestSchema'
 import type { SceneStore } from '../scene/sceneStore'
 import { withCommitStep } from '../validation/reportBuilder'
 import {
@@ -24,7 +31,7 @@ import type {
   AgentRequest,
   ManifestProviderClient,
 } from './providerClient'
-import { renderValidationSignals } from './repairFeedback'
+import { orderFailureSignals, renderValidationSignals } from './repairFeedback'
 import { applyJsonPatch } from './jsonPatch'
 import {
   createAgentProgressSnapshot,
@@ -296,6 +303,7 @@ export async function runManifestAgentLoop(
       validationFeedback = renderPatchApplicationFeedback({
         failureStreak: patchApplicationErrorStreak,
         message: candidate.message,
+        repairTargetAttempt: history.getLatestAttempt(),
         rejectedPatchSummary: candidate.rejectedPatchSummary,
       })
       scene = dependencies.sceneStore.getSnapshot().scene
@@ -458,11 +466,14 @@ function renderRepairFeedback(
   })
 }
 
-function createRelationLoopHints(attempts: readonly CandidateAttempt[]) {
+export function createRelationLoopHints(attempts: readonly CandidateAttempt[]) {
   const recentFailures = attempts
     .filter((candidateAttempt) => candidateAttempt.status === 'failure')
     .slice(-5)
-  const relationStatesByPair = new Map<string, Set<string>>()
+  const relationStatesByPair = new Map<
+    string,
+    Map<RelationClusterState, Set<number>>
+  >()
 
   for (const candidateAttempt of recentFailures) {
     for (const cluster of candidateAttempt.failureClusters) {
@@ -478,22 +489,31 @@ function createRelationLoopHints(attempts: readonly CandidateAttempt[]) {
         continue
       }
 
-      const states = relationStatesByPair.get(partPair) ?? new Set<string>()
+      const states =
+        relationStatesByPair.get(partPair) ??
+        new Map<RelationClusterState, Set<number>>()
+      const attemptRevisions = states.get(state) ?? new Set<number>()
 
-      states.add(state)
+      attemptRevisions.add(candidateAttempt.revision)
+      states.set(state, attemptRevisions)
       relationStatesByPair.set(partPair, states)
     }
   }
 
   return [...relationStatesByPair.entries()]
-    .filter(([, states]) => states.has('too-close') && states.has('too-far'))
+    .filter(([, states]) => hasRelationStateAlternation(states))
     .slice(0, 4)
     .map(([partPair]) =>
       `Recent repairs alternated between overlap and gap/contact failures for ${partPair}. Treat this as one mounting relation problem: choose exact visual endpoints, add a bracket/saddle/hanger/support path, and use bounded contact or scoped allowance only when the physical fit is intentional.`,
     )
 }
 
-function classifyRelationCluster(kind: string, code: string) {
+type RelationClusterState = 'too-close' | 'too-far'
+
+function classifyRelationCluster(
+  kind: string,
+  code: string,
+): RelationClusterState | null {
   if (
     kind === 'real_overlap' ||
     kind === 'sampled_pose_overlap' ||
@@ -505,13 +525,36 @@ function classifyRelationCluster(kind: string, code: string) {
 
   if (
     kind === 'exact_contact_gap' ||
+    kind === 'path_contact_fit' ||
     code === 'expect_contact_failed' ||
-    code === 'expect_gap_failed'
+    code === 'expect_gap_failed' ||
+    code === 'expect_path_contacts_failed'
   ) {
     return 'too-far'
   }
 
   return null
+}
+
+function hasRelationStateAlternation(
+  states: ReadonlyMap<RelationClusterState, ReadonlySet<number>>,
+) {
+  const tooCloseAttempts = states.get('too-close')
+  const tooFarAttempts = states.get('too-far')
+
+  if (!tooCloseAttempts || !tooFarAttempts) {
+    return false
+  }
+
+  for (const closeAttempt of tooCloseAttempts) {
+    for (const farAttempt of tooFarAttempts) {
+      if (closeAttempt !== farAttempt) {
+        return true
+      }
+    }
+  }
+
+  return false
 }
 
 function applyRepairPatch(currentCandidate: unknown, patchCandidate: unknown) {
@@ -523,18 +566,167 @@ function applyRepairPatch(currentCandidate: unknown, patchCandidate: unknown) {
     }
   }
 
-  const result = applyJsonPatch(currentCandidate, patchCandidate, {
+  const normalizedPatchCandidate = normalizeRepairPatchCandidate(patchCandidate)
+  const result = applyJsonPatch(currentCandidate, normalizedPatchCandidate, {
     validateResult: validatePatchedManifestAsset,
   })
 
   if (result.status === 'error') {
+    const failedOperationIndex = parsePatchOperationFailureIndex(result.message)
+
     return {
       ...result,
-      rejectedPatchSummary: summarizePatchCandidate(patchCandidate),
+      rejectedPatchSummary: summarizePatchCandidate(normalizedPatchCandidate, {
+        failedOperationIndex,
+      }),
     }
   }
 
   return result
+}
+
+function normalizeRepairPatchCandidate(patchCandidate: unknown) {
+  return normalizeManifestContractObjectsMisplacedInVisualGeometry(
+    normalizeControlObjectMisplacedInControlBinding(
+      normalizeAppendReplaceOperations(patchCandidate),
+    ),
+  )
+}
+
+function normalizeAppendReplaceOperations(patchCandidate: unknown) {
+  if (!isRecord(patchCandidate) || !Array.isArray(patchCandidate.patch)) {
+    return patchCandidate
+  }
+
+  let changed = false
+  const patch = patchCandidate.patch.map((operation) => {
+    if (
+      !isRecord(operation) ||
+      operation.op !== 'replace' ||
+      typeof operation.path !== 'string' ||
+      !operation.path.endsWith('/-')
+    ) {
+      return operation
+    }
+
+    changed = true
+
+    return {
+      ...operation,
+      op: 'add',
+    }
+  })
+
+  if (!changed) {
+    return patchCandidate
+  }
+
+  return {
+    ...patchCandidate,
+    patch,
+  }
+}
+
+function normalizeControlObjectMisplacedInControlBinding(
+  patchCandidate: unknown,
+) {
+  if (!isRecord(patchCandidate) || !Array.isArray(patchCandidate.patch)) {
+    return patchCandidate
+  }
+
+  let changed = false
+  const patch = patchCandidate.patch.map((operation) => {
+    if (
+      !isRecord(operation) ||
+      (operation.op !== 'add' && operation.op !== 'replace') ||
+      typeof operation.path !== 'string' ||
+      !isControlJointBindingAppendPath(operation.path)
+    ) {
+      return operation
+    }
+
+    const binding = getSingleNestedControlBinding(operation.value)
+
+    if (!binding) {
+      return operation
+    }
+
+    changed = true
+
+    return {
+      ...operation,
+      value: binding,
+    }
+  })
+
+  if (!changed) {
+    return patchCandidate
+  }
+
+  return {
+    ...patchCandidate,
+    patch,
+  }
+}
+
+function normalizeManifestContractObjectsMisplacedInVisualGeometry(
+  patchCandidate: unknown,
+) {
+  if (!isRecord(patchCandidate) || !Array.isArray(patchCandidate.patch)) {
+    return patchCandidate
+  }
+
+  let changed = false
+  const patch = patchCandidate.patch.map((operation) => {
+    if (!isRecord(operation)) {
+      return operation
+    }
+
+    const op = operation.op
+    const path = operation.path
+
+    if (
+      (op !== 'add' && op !== 'replace') ||
+      typeof path !== 'string' ||
+      !isVisualGeometryPatchPath(path)
+    ) {
+      return operation
+    }
+
+    if (
+      isAllowanceDescriptorLike(operation.value) &&
+      !hasPlaceholderReferenceId(operation.value)
+    ) {
+      changed = true
+
+      return {
+        op: 'add',
+        path: '/allowances/-',
+        value: operation.value,
+      }
+    }
+
+    if (isSalvageableMisplacedCheckDescriptor(operation.value)) {
+      changed = true
+
+      return {
+        op: 'add',
+        path: '/checks/-',
+        value: operation.value,
+      }
+    }
+
+    return operation
+  })
+
+  if (!changed) {
+    return patchCandidate
+  }
+
+  return {
+    ...patchCandidate,
+    patch,
+  }
 }
 
 function validatePatchedManifestAsset(value: unknown) {
@@ -562,10 +754,12 @@ function validatePatchedManifestAsset(value: unknown) {
 function renderPatchApplicationFeedback({
   failureStreak,
   message,
+  repairTargetAttempt,
   rejectedPatchSummary,
 }: {
   failureStreak: number
   message: string
+  repairTargetAttempt?: CandidateAttempt | null
   rejectedPatchSummary: string
 }) {
   const repeatedMessage =
@@ -579,12 +773,22 @@ function renderPatchApplicationFeedback({
     message,
     '',
     repeatedMessage,
-    'The next patch is still applied to the same previous candidate JSON.',
+    pathHints.length > 0 ? ['', '<path_hints>', ...pathHints, '</path_hints>'].join('\n') : '',
+    '',
+    'The next patch is still applied to the same previous candidate JSON; no operation from the rejected patch was partially applied.',
+    'If the rejected patch contained useful valid operations, resend them in the corrected patch while fixing or removing the bad operation.',
     '',
     '<rejected_patch_summary>',
     rejectedPatchSummary,
     '</rejected_patch_summary>',
-    pathHints.length > 0 ? ['', '<path_hints>', ...pathHints, '</path_hints>'].join('\n') : '',
+    repairTargetAttempt
+      ? [
+          '',
+          '<repair_target_validation_context>',
+          renderPatchRepairTargetContext(repairTargetAttempt),
+          '</repair_target_validation_context>',
+        ].join('\n')
+      : '',
     '',
     'Return a valid JSON object with a top-level `patch` array.',
     'Use only `add`, `replace`, and `remove` operations with RFC 6901 JSON Pointer paths into the current candidate JSON. You may address existing array items by stable id with virtual path segments such as `/parts/byId/deck-truss/visuals/byId/deck-panel/transform/position`; the harness resolves those ids against the current candidate before applying the patch.',
@@ -594,12 +798,112 @@ function renderPatchApplicationFeedback({
   ].filter(Boolean).join('\n')
 }
 
+function renderPatchRepairTargetContext(attempt: CandidateAttempt) {
+  const failures = orderFailureSignals(
+    attempt.report.bundle.signals.filter(
+      (signal) => signal.severity === 'failure',
+    ),
+  ).slice(0, 8)
+  const lines = [
+    `candidateRevision=${attempt.revision}`,
+    `candidateFingerprint=${attempt.candidateFingerprint}`,
+    '- The previous patch was rejected before validation, so the same candidate revision still has these validation failures.',
+    '- Fix the patch shape and continue repairing these target failures; do not send a schema-only or no-op patch.',
+  ]
+
+  if (attempt.failureClusters.length > 0) {
+    lines.push('failureClusters:')
+
+    for (const cluster of attempt.failureClusters.slice(0, 6)) {
+      lines.push(`- count=${cluster.count} ${cluster.label}`)
+    }
+  }
+
+  if (failures.length > 0) {
+    lines.push('primaryFailures:')
+
+    for (const failure of failures) {
+      lines.push(
+        `- [${failure.stage}/${failure.code}] ${failure.summary}${formatTargetFailureRefs(failure.refs)}`,
+      )
+
+      const details = formatSignalDetails(failure)
+
+      if (details) {
+        lines.push(`  details=${details}`)
+      }
+    }
+  }
+
+  return lines.join('\n')
+}
+
+function formatTargetFailureRefs(refs: Record<string, string> | undefined) {
+  if (!refs || Object.keys(refs).length === 0) {
+    return ''
+  }
+
+  return ` refs=${Object.keys(refs)
+    .sort()
+    .map((key) => `${key}=${formatTargetRefValue(key, refs[key])}`)
+    .join(' ')}`
+}
+
+function formatSignalDetails(signal: ValidationSignal) {
+  if (!signal.details) {
+    return null
+  }
+
+  const compacted =
+    signal.stage === 'sampled_poses' || signal.refs?.poseValues
+      ? compactSampledPoseDetails(signal.details)
+      : signal.details
+
+  return compactText(compacted, 560)
+}
+
+function formatTargetRefValue(key: string, value: string) {
+  if (key === 'poseValues') {
+    return summarizePoseVector(value)
+  }
+
+  return compactText(value, 160)
+}
+
+function compactSampledPoseDetails(details: string) {
+  return details
+    .replace(/\bpose=([^();|\n]+?)\s*\([^)]*\)/g, (_match, poseName: string) =>
+      `pose=${poseName.trim()}`,
+    )
+    .replace(/\bjoints=([^\s;|\n]+)/g, (_match, joints: string) =>
+      `joints=${summarizePoseVector(joints)}`,
+    )
+}
+
+function summarizePoseVector(value: string) {
+  const entries = value.split(',').filter(Boolean)
+
+  if (entries.length <= 5) {
+    return value
+  }
+
+  return `${entries.slice(0, 5).join(',')},+${entries.length - 5}`
+}
+
+function compactText(value: string, maxLength: number) {
+  return value.length > maxLength
+    ? `${value.slice(0, Math.max(0, maxLength - 3))}...`
+    : value
+}
+
 function createPatchApplicationPathHints(
   message: string,
   rejectedPatchSummary: string,
 ) {
   const combined = `${message}\n${rejectedPatchSummary}`
   const hints: string[] = []
+  const geometryPrimitiveTypes =
+    '`box`, `roundedBox`, `cylinder`, `sphere`, `cone`, `torus`, `capsule`, `lathe`, `extrude`, `tube`, or `connectorTube`'
 
   if (
     /\/joints\/(?:\d+|byId\/[^/\s]+)\/limits/.test(combined) &&
@@ -611,11 +915,163 @@ function createPatchApplicationPathHints(
   }
 
   if (
+    /\/controls\/(?:\d+|byId\/[^/\s]+)\/limits/.test(combined) &&
+    /\b(?:type|partAId|partBId|visualAId|visualBId|contactTolerance|maxPenetration|expect_)\b/.test(
+      combined,
+    )
+  ) {
+    hints.push(
+      '- Control `limits` only accepts numeric `lower` and `upper`. Do not place authored checks or relation descriptors inside control limits; add `expect_*`, `part_exists`, or `joint_exists` objects under `/checks/-`.',
+    )
+  }
+
+  if (
+    /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints(?:\/\d+|\/-|\b)/.test(
+      combined,
+    ) &&
+    /\bUnrecognized keys: "id", "name", "joints", "limits"/.test(combined)
+  ) {
+    hints.push(
+      '- The rejected value is a full control object placed inside a control `joints` binding array. To append one binding, use only `{ "jointId": "<existing-movable-joint>", "scale": number, "offset": number }` at `/controls/byId/<control-id>/joints/-`; to create a new control, append the full `{ "id", "name", "joints", "limits" }` object at `/controls/-`.',
+    )
+  }
+
+  if (
+    /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints(?:\/\d+|\/-|\b)/.test(
+      combined,
+    ) &&
+    /\b(?:type=joint_exists|jointType|effort|velocity|parentPartId|childPartId|axis|origin)\b/.test(
+      combined,
+    )
+  ) {
+    hints.push(
+      '- Control `joints` entries are control bindings, not joint definitions or `joint_exists` checks. Use `{ "jointId": "<existing-movable-joint>", "scale": number, "offset": number }` in `/controls/byId/<control-id>/joints/-`; add `joint_exists` under `/checks/-`, and patch joint definitions under `/joints/byId/<joint-id>/...`.',
+    )
+  }
+
+  if (
     /\/joints\/(?:\d+|byId\/[^/\s]+)\/limits/.test(combined) &&
     /\b(?:schemaVersion|parts|materials|checks|allowances)\b/.test(combined)
   ) {
     hints.push(
       '- The rejected value looks like a whole asset object placed into one nested field. Patch only the specific nested property that should change.',
+    )
+  }
+
+  if (
+    /\/checks\/(?:\d+|-)\/pose(?:\/|\b)/.test(combined) &&
+    /\b(?:position|rotation|scale)\b/.test(combined)
+  ) {
+    hints.push(
+      '- Authored `check.pose` is a joint pose, not a transform. Use `pose: { "name": "...", "joints": [{ "jointId": "<existing-movable-joint>", "value": number }] }`; patch visual or joint `transform`/`origin` fields separately.',
+    )
+  }
+
+  if (
+    /\/checks\/(?:\d+|-)\/pose(?:\/|\b)/.test(combined) &&
+    /\b(?:schemaVersion|parts|materials|checks|allowances|metadata|units)\b/.test(
+      combined,
+    )
+  ) {
+    hints.push(
+      '- Authored `check.pose` must be only a compact joint pose object: `{ "name": "...", "joints": [{ "jointId": "<existing-movable-joint>", "value": number }] }`. Do not paste a whole asset, part array, material list, checks array, or allowance list inside `pose`.',
+    )
+  }
+
+  if (
+    /\/checks\/(?:\d+|-)\/pose(?:\/|\b)/.test(combined) &&
+    /\b(?:type|partAId|partBId|innerPartId|outerPartId|positivePartId|negativePartId|visualAId|visualBId|axes|contactTolerance|maxPenetration)\b/.test(
+      combined,
+    )
+  ) {
+    hints.push(
+      '- Do not nest another authored check object inside `check.pose`. Put only the sampled joint values in `pose`, and add any additional `expect_*`, `part_exists`, or `joint_exists` object as a separate check under `/checks/-`.',
+    )
+  }
+
+  if (
+    /\/checks\/(?:\d+|-)\/pose\/joints\/\d+/.test(combined) &&
+    /\b(?:jointType|type)\b/.test(combined)
+  ) {
+    hints.push(
+      '- Entries in `check.pose.joints` are joint values, not `joint_exists` checks. Use `{ "jointId": "<existing-movable-joint>", "value": number }` inside `pose.joints`; add any `joint_exists` check as a separate object under `/checks/-`.',
+    )
+  }
+
+  if (
+    /\/checks\/(?:\d+|-)\/pose\/joints\/\d+/.test(combined) &&
+    /\b(?:parentPartId|childPartId|origin|axis|limits|effort|velocity)\b/.test(
+      combined,
+    )
+  ) {
+    hints.push(
+      '- Entries in `check.pose.joints` are sampled joint values, not full joint descriptors. Use `{ "jointId": "<existing-movable-joint>", "value": number }` inside `pose.joints`; patch `/joints/byId/<joint-id>/...` separately if the joint definition itself is wrong.',
+    )
+  }
+
+  if (
+    /\b(?:part|visual|joint|material)[A-Za-z]*Id=(?:x|y|z|a|b|todo|dummy|example|placeholder|replace-me|invalid|invalid-id|__invalid__|fake|part-a|part-b|visual-a|visual-b|joint-a|joint-b)\b/i.test(
+      combined,
+    )
+  ) {
+    hints.push(
+      '- Do not use placeholder reference ids such as `x`, `y`, `a`, `b`, `part-a`, or `visual-b`. Reference existing stable part, visual, joint, and material ids from the supplied candidate, or add the real object before referencing it.',
+    )
+  }
+
+  if (
+    /No item with id "[^"]+" exists under array path "\/(?:parts|joints|materials|controls)/.test(
+      combined,
+    ) ||
+    /Path "\/(?:parts|joints|materials|controls)\/byId\/[^"]+" does not exist/.test(
+      combined,
+    ) ||
+    (
+      /\/(?:parts|joints|materials|controls)\/byId\/[^/\s]+\/.+/.test(
+        combined,
+      ) &&
+      /Path "[^"]+" does not exist/.test(combined)
+    )
+  ) {
+    hints.push(
+      '- Stable `/.../byId/<id>/...` paths only resolve objects that already exist in the current candidate. If the id-bearing object is new, append the complete object to the owning array first, such as `/controls/-`, `/joints/-`, `/parts/-`, or `/parts/byId/<part-id>/visuals/-`; append checks and allowances with `/checks/-` or `/allowances/-`. Patch nested fields only after that id exists.',
+    )
+  }
+
+  if (
+    /Array index "\d+" is out of range/.test(combined) &&
+    /\/(?:checks|allowances|parts|joints|materials|controls)\/\d+/.test(
+      combined,
+    )
+  ) {
+    hints.push(
+      '- A numeric JSON Pointer array index in the rejected operation is out of range for the current candidate. Use `/checks/-` or `/allowances/-` to append new proof or allowance entries, and use stable `/parts/byId/...`, `/joints/byId/...`, or `/controls/byId/...` paths for existing id-bearing objects instead of guessed numeric indexes.',
+    )
+  }
+
+  const targetsVisualGeometry =
+    /\/parts\/(?:\d+|byId\/[^/\s]+)\/visuals\/(?:\d+|byId\/[^/\s]+)\/geometry(?:\/type)?/.test(
+      combined,
+    )
+  const hasInvalidGeometryDiscriminator =
+    targetsVisualGeometry && /Invalid discriminator value/.test(combined)
+
+  if (hasInvalidGeometryDiscriminator) {
+    const looksLikeAllowanceObject =
+      /\b(?:type=allow_|allow_overlap|allow_isolated_part|reason)\b/.test(
+        combined,
+      )
+    const looksLikeCheckObject =
+      /\b(?:type=(?:expect_|part_exists|joint_exists)|partAId|partBId|partId|jointId|positivePartId|negativePartId|innerPartId|outerPartId)\b/.test(
+        combined,
+      )
+
+    hints.push(
+      looksLikeAllowanceObject
+        ? `- The rejected value looks like an allowance object placed into a visual \`geometry\` field. Visual geometry must be a primitive descriptor with type ${geometryPrimitiveTypes}. To add or change an allowance, patch \`/allowances/-\` or an existing \`/allowances/<index>\`; to fix that visual, replace only its \`geometry\` with a valid primitive descriptor.`
+        : looksLikeCheckObject
+          ? `- The rejected value looks like an authored check object placed into a visual \`geometry\` field. Visual geometry must be a primitive descriptor with type ${geometryPrimitiveTypes}. To add or change a relation/material check, patch \`/checks/-\` or an existing \`/checks/<index>\`; to fix that visual, replace only its \`geometry\` with a valid primitive descriptor. A check-only patch is not a geometry repair, and presence checks such as \`part_exists\` and \`joint_exists\` only prove ids exist; they do not repair physical contact, overlap, fit, or motion failures.`
+          : `- The rejected patch writes an invalid visual \`geometry.type\`. Visual geometry must be a primitive descriptor with type ${geometryPrimitiveTypes}. If you meant to add or change an authored check, patch \`/checks/-\` or an existing \`/checks/<index>\`; otherwise replace that visual \`geometry\` with a valid primitive descriptor.`,
     )
   }
 
@@ -629,7 +1085,24 @@ function createPatchApplicationErrorSignature(
   return `${message}\n${rejectedPatchSummary}`
 }
 
-function summarizePatchCandidate(patchCandidate: unknown) {
+function parsePatchOperationFailureIndex(message: string) {
+  const match = message.match(/\bPatch operation (\d+) failed:/)
+  if (!match) {
+    return null
+  }
+
+  const operationNumber = Number.parseInt(match[1] ?? '', 10)
+  if (!Number.isFinite(operationNumber) || operationNumber < 1) {
+    return null
+  }
+
+  return operationNumber - 1
+}
+
+function summarizePatchCandidate(
+  patchCandidate: unknown,
+  options: { failedOperationIndex?: number | null } = {},
+) {
   if (!isRecord(patchCandidate) || !Array.isArray(patchCandidate.patch)) {
     return `response=${summarizePatchValue(patchCandidate)}`
   }
@@ -639,13 +1112,51 @@ function summarizePatchCandidate(patchCandidate: unknown) {
   }
 
   const maxOperations = 6
+  const includedIndexes = new Set<number>()
   const operationLines = patchCandidate.patch
     .slice(0, maxOperations)
-    .map((operation, index) => summarizePatchOperation(operation, index))
+    .map((operation, index) => {
+      includedIndexes.add(index)
+      return summarizePatchOperation(operation, index)
+    })
   const remainingCount = patchCandidate.patch.length - maxOperations
 
   if (remainingCount > 0) {
     operationLines.push(`...and ${remainingCount} more operation(s).`)
+  }
+
+  if (
+    typeof options.failedOperationIndex === 'number' &&
+    options.failedOperationIndex >= 0 &&
+    options.failedOperationIndex < patchCandidate.patch.length &&
+    !includedIndexes.has(options.failedOperationIndex)
+  ) {
+    operationLines.push('Failed operation:')
+    operationLines.push(
+      summarizePatchOperation(
+        patchCandidate.patch[options.failedOperationIndex],
+        options.failedOperationIndex,
+      ),
+    )
+    includedIndexes.add(options.failedOperationIndex)
+  }
+
+  const hiddenSchemaDomainOperations = patchCandidate.patch
+    .map((operation, index) => ({ index, operation }))
+    .filter(
+      ({ index, operation }) =>
+        index >= maxOperations &&
+        !includedIndexes.has(index) &&
+        isSuspiciousSchemaDomainOperation(operation),
+    )
+    .slice(0, 4)
+
+  if (hiddenSchemaDomainOperations.length > 0) {
+    operationLines.push('Flagged hidden schema-domain operation(s):')
+
+    for (const { index, operation } of hiddenSchemaDomainOperations) {
+      operationLines.push(summarizePatchOperation(operation, index))
+    }
   }
 
   return operationLines.join('\n')
@@ -675,8 +1186,11 @@ function summarizePatchValue(value: unknown): string {
     const keySummary = keys.slice(0, 5).join(', ')
     const remainingCount = keys.length - 5
     const suffix = remainingCount > 0 ? `, ...+${remainingCount}` : ''
+    const typeSummary = typeof value.type === 'string' ? `type=${value.type}, ` : ''
+    const referenceSummary = summarizeReferenceIds(value)
+    const referenceSuffix = referenceSummary ? `refs=${referenceSummary}, ` : ''
 
-    return `object(keys=${keySummary}${suffix})`
+    return `object(${typeSummary}${referenceSuffix}keys=${keySummary}${suffix})`
   }
 
   if (typeof value === 'string') {
@@ -686,6 +1200,164 @@ function summarizePatchValue(value: unknown): string {
   }
 
   return String(value)
+}
+
+function isVisualGeometryPatchPath(path: string) {
+  return /\/parts\/(?:\d+|byId\/[^/\s]+)\/visuals\/(?:\d+|byId\/[^/\s]+)\/geometry(?:\/type)?$/.test(
+    path,
+  )
+}
+
+function isControlJointBindingAppendPath(path: string) {
+  return /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints\/-$/.test(path)
+}
+
+function getSingleNestedControlBinding(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.joints) || value.joints.length !== 1) {
+    return null
+  }
+
+  const parsed = manifestJointControlBindingSchema.safeParse(value.joints[0])
+
+  return parsed.success ? parsed.data : null
+}
+
+function isSuspiciousSchemaDomainOperation(operation: unknown) {
+  if (!isRecord(operation) || typeof operation.path !== 'string') {
+    return false
+  }
+
+  return (
+    isVisualGeometryPatchPath(operation.path) &&
+    'value' in operation &&
+    !isPrimitiveGeometryDescriptor(operation.value)
+  )
+}
+
+function isPrimitiveGeometryDescriptor(value: unknown) {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return false
+  }
+
+  return geometryPrimitiveTypeNames.has(value.type)
+}
+
+const geometryPrimitiveTypeNames = new Set([
+  'box',
+  'roundedBox',
+  'cylinder',
+  'sphere',
+  'torus',
+  'cone',
+  'capsule',
+  'lathe',
+  'extrude',
+  'tube',
+  'connectorTube',
+])
+
+function isAllowanceDescriptorLike(value: unknown) {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return false
+  }
+
+  return value.type === 'allow_overlap' || value.type === 'allow_isolated_part'
+}
+
+function isSalvageableMisplacedCheckDescriptor(value: unknown) {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return false
+  }
+
+  if (!value.type.startsWith('expect_')) {
+    return false
+  }
+
+  if (hasPlaceholderReferenceId(value)) {
+    return false
+  }
+
+  return manifestCheckSchema.safeParse(value).success
+}
+
+function hasPlaceholderReferenceId(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(hasPlaceholderReferenceId)
+  }
+
+  if (!isRecord(value)) {
+    return false
+  }
+
+  for (const [key, childValue] of Object.entries(value)) {
+    if (
+      isReferenceIdField(key) &&
+      typeof childValue === 'string' &&
+      isPlaceholderReferenceId(childValue)
+    ) {
+      return true
+    }
+
+    if (hasPlaceholderReferenceId(childValue)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function summarizeReferenceIds(value: Record<string, unknown>) {
+  const refs = Object.entries(value)
+    .filter(
+      ([key, childValue]) =>
+        isReferenceIdField(key) && typeof childValue === 'string',
+    )
+    .slice(0, 6)
+    .map(([key, childValue]) => `${key}=${childValue}`)
+
+  return refs.join(' ')
+}
+
+function isReferenceIdField(key: string) {
+  const normalized = key.toLowerCase()
+
+  return (
+    normalized.endsWith('id') &&
+    (
+      normalized.includes('part') ||
+      normalized.includes('visual') ||
+      normalized.includes('joint') ||
+      normalized.includes('material')
+    )
+  )
+}
+
+function isPlaceholderReferenceId(value: string) {
+  const normalized = value.trim().toLowerCase()
+
+  return (
+    normalized === '' ||
+    normalized === 'x' ||
+    normalized === 'y' ||
+    normalized === 'z' ||
+    normalized === 'a' ||
+    normalized === 'b' ||
+    normalized === 'todo' ||
+    normalized === 'dummy' ||
+    normalized === 'example' ||
+    normalized === 'fake' ||
+    normalized === 'invalid' ||
+    normalized === 'invalid-id' ||
+    normalized === 'placeholder' ||
+    normalized === 'replace-me' ||
+    normalized === '__invalid__' ||
+    normalized === 'part-a' ||
+    normalized === 'part-b' ||
+    normalized === 'visual-a' ||
+    normalized === 'visual-b' ||
+    normalized === 'joint-a' ||
+    normalized === 'joint-b'
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

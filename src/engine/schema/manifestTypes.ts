@@ -204,6 +204,11 @@ export type ManifestPoseSpec = {
   joints: readonly ManifestJointPose[]
 }
 
+export type ManifestPathContactTarget = {
+  partId: string
+  visualId?: string
+}
+
 type ManifestCheckPoseField = {
   pose?: ManifestPoseSpec
 }
@@ -226,6 +231,15 @@ export type ManifestCheck =
       partBId: string
       visualAId?: string
       visualBId?: string
+      contactTolerance?: number
+      maxPenetration?: number
+    } & ManifestCheckPoseField)
+  | ({
+      type: 'expect_path_contacts'
+      pathPartId: string
+      pathVisualId?: string
+      targets: readonly ManifestPathContactTarget[]
+      minContacts?: number
       contactTolerance?: number
       maxPenetration?: number
     } & ManifestCheckPoseField)
@@ -255,6 +269,7 @@ export type ManifestCheck =
       outerPartId: string
       axes: ManifestAxes
       margin?: number
+      maxPenetration?: number
       innerVisualId?: string
       outerVisualId?: string
     } & ManifestCheckPoseField)

@@ -89,7 +89,7 @@ export function compileManifestPrompt(
     input.validationFeedback
       ? tag('validation_feedback', input.validationFeedback.trim())
       : '',
-    tag('examples', examplesPrompt.trim()),
+    tag('examples', formatExamples(input.mode)),
     tag('response_contract', formatResponseContract(input.mode)),
   ])
 
@@ -110,7 +110,9 @@ function formatResponseContract(mode: PromptCompilerMode) {
       'Return exactly one JSON object with a top-level `patch` array.',
       'The patch array must use RFC 6902-style operations with `op`, `path`, and, for add/replace, `value`.',
       'Allowed operations are `add`, `replace`, and `remove`.',
-      'Patch the supplied candidate JSON into the repaired complete asset; do not return the full asset unless replacing the root path "".',
+      'Patch the supplied candidate JSON into the repaired complete asset; do not return a full asset.',
+      'Do not replace the root path "" for ordinary repairs; use focused nested operations against the supplied candidate.',
+      'Never write authored check descriptors such as `part_exists`, `joint_exists`, or `expect_*` into a visual `geometry` field; checks belong under `/checks`.',
       'Use concrete numeric arrays when replacing vectors, sizes, connector endpoint positions, or point arrays; never use [] as a placeholder.',
       'Do not include markdown fences, comments, prose, or multiple candidates.',
     ].join('\n')
@@ -119,6 +121,45 @@ function formatResponseContract(mode: PromptCompilerMode) {
   return [
     'Return exactly one Manifest3D asset JSON object.',
     'Do not include markdown fences, comments, prose, or multiple candidates.',
+  ].join('\n')
+}
+
+function formatExamples(mode: PromptCompilerMode) {
+  if (mode !== 'repair') {
+    return examplesPrompt.trim()
+  }
+
+  return [
+    '# Repair Patch Example',
+    '',
+    'Return only a compact patch envelope. Do not return a complete Manifest3D asset.',
+    '',
+    '```json',
+    JSON.stringify(
+      {
+        patch: [
+          {
+            op: 'replace',
+            path: '/parts/byId/rotor/visuals/byId/rotor-blade-01/transform/position',
+            value: [0, 0.18, 0],
+          },
+          {
+            op: 'add',
+            path: '/checks/-',
+            value: {
+              side: 'double',
+              type: 'expect_material_side',
+              visualId: 'cutaway-shell',
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    '```',
+    '',
+    'If a visual geometry path is wrong, replace it with a primitive geometry descriptor. If an authored check is missing, add it under `/checks/-`.',
   ].join('\n')
 }
 

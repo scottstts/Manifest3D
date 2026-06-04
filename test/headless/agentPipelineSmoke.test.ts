@@ -5,6 +5,7 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import {
@@ -162,7 +163,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
     'runs the real create pipeline and captures every candidate attempt',
     async () => {
       const prompt = readStringEnv('HEADLESS_AGENT_PROMPT', defaultPrompt)
-      const runId = `headless:${safeTimestamp()}`
+      const runId = createHeadlessRunId()
       const artifactRoot = createArtifactRoot(runId)
       const runTimeoutMs = readNumberEnv(
         'HEADLESS_AGENT_RUN_TIMEOUT_MS',
@@ -172,9 +173,9 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 	        'HEADLESS_AGENT_MAX_REPAIR_TURNS',
 	        defaultRepairTurnCap,
 	      )
-	      const repeatedFailureStopper = createHeadlessRepeatedFailureStopper(
-	        readNumberEnv('HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK', 3),
-	      )
+      const repeatedFailureStopper = createHeadlessRepeatedFailureStopper(
+        readNonNegativeNumberEnv('HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK', 3),
+      )
       const abortController = new AbortController()
       const runTimeout = setTimeout(() => {
         abortController.abort()
@@ -1299,6 +1300,12 @@ function readNumberEnv(key: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
+function readNonNegativeNumberEnv(key: string, fallback: number) {
+  const value = Number(process.env[key])
+
+  return Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
 function readBooleanEnv(key: string, fallback: boolean) {
   const value = process.env[key]?.trim().toLowerCase()
 
@@ -1315,6 +1322,10 @@ function isHeadlessAgentEnabled() {
 
 function safeTimestamp() {
   return new Date().toISOString().replace(/[.]/g, '-')
+}
+
+function createHeadlessRunId() {
+  return `headless:${safeTimestamp()}:${process.pid}:${randomUUID().slice(0, 8)}`
 }
 
 class HeadlessFileReader {

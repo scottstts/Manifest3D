@@ -404,8 +404,12 @@ function formatSignalDetail(signal: ValidationSignal) {
       return `Part ${quoteRef(signal, 'partId', 'this part')} is not physically connected to the main body.`
     case 'part_overlap_current_pose':
       return `Parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} overlap in the current pose.`
+    case 'part_overlap_proven_fit':
+      return `Parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} have a bounded fitted-contact proof.`
     case 'part_overlap_sampled_pose':
       return `Parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} overlap in a sampled joint pose.`
+    case 'part_overlap_sampled_pose_proven_fit':
+      return `Parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} have bounded fitted-contact proof in a sampled joint pose.`
     case 'sampled_pose_invalid':
       return 'A pose-specific authored check references a joint pose that cannot be applied.'
     case 'joint_origin_far_from_geometry':
@@ -424,6 +428,10 @@ function formatSignalDetail(signal: ValidationSignal) {
       return 'An authored check references geometry that was not created.'
     case 'expect_contact_failed':
       return `Expected parts ${quoteRef(signal, 'partAId', 'one part')} and ${quoteRef(signal, 'partBId', 'another part')} to touch, but they are separated.`
+    case 'expect_path_contacts_invalid_thresholds':
+      return 'An authored path-contact check asks for more contacts than it lists targets.'
+    case 'expect_path_contacts_failed':
+      return `Expected routed part ${quoteRef(signal, 'pathPartId', 'this path-like part')} to contact more of its supports or targets.`
     case 'expect_gap_invalid_thresholds':
       return 'An authored gap check has inconsistent distance limits.'
     case 'expect_gap_failed':
@@ -434,6 +442,38 @@ function formatSignalDetail(signal: ValidationSignal) {
       return `Expected part ${quoteRef(signal, 'innerPartId', 'one part')} to sit within ${quoteRef(signal, 'outerPartId', 'another part')}, but it is outside the expected bounds.`
     case 'expect_material_side_failed':
       return `Visual ${quoteRef(signal, 'visualId', 'this visual')} does not use the material side declared by its authored check.`
+    case 'mechanical_path_contacts_missing':
+      return `Path-like mechanical part ${quoteRef(signal, 'partId', 'this part')} needs authored contact evidence for its supports or targets.`
+    case 'mechanical_path_rotary_contacts_missing':
+      return `Path-like mechanical part ${quoteRef(signal, 'partId', 'this part')} needs path-contact evidence against the requested rotary supports.`
+    case 'mechanical_path_pose_contacts_missing':
+      return `Path-like mechanical part ${quoteRef(signal, 'partId', 'this part')} needs pose-specific path-contact evidence for linked motion.`
+    case 'mechanical_path_part_missing':
+      return 'The prompt asks for a routed mechanical path such as a belt, chain, cable, or track, but no matching part was created.'
+    case 'mechanical_coupler_contacts_missing':
+      return `Mechanical coupler ${quoteRef(signal, 'partId', 'this part')} needs authored relation evidence at both ends.`
+    case 'mechanical_coupler_endpoint_targets_missing':
+      return `Mechanical coupler ${quoteRef(signal, 'partId', 'this part')} needs endpoint evidence to the guided and rotary mechanism parts it links.`
+    case 'mechanical_coupler_pose_targets_missing':
+      return `Mechanical coupler ${quoteRef(signal, 'partId', 'this part')} needs pose-specific endpoint evidence for linked motion.`
+    case 'mechanical_coupler_part_missing':
+      return 'The prompt asks for a mechanical coupler such as a rod or linkage, but no matching part was created.'
+    case 'mechanical_guided_part_missing':
+      return 'The prompt asks for a guided mechanical component such as a piston or slider, but no matching part was created.'
+    case 'mechanical_guided_interface_target_missing':
+      return `Guided mechanical part ${quoteRef(signal, 'partId', 'this part')} needs evidence for the guide, liner, cylinder, rail, housing, or support constraining it.`
+    case 'mechanical_guided_pose_target_missing':
+      return `Guided mechanical part ${quoteRef(signal, 'partId', 'this part')} needs pose-specific guide evidence for linked motion.`
+    case 'mechanical_guided_motion_joint_missing':
+      return `Guided mechanical part ${quoteRef(signal, 'partId', 'this part')} needs a prismatic joint to its guide for requested linear motion.`
+    case 'mechanical_guided_linked_control_missing':
+      return 'A linked guided mechanism needs one control that drives the guided linear joint and rotary joint together.'
+    case 'mechanical_rotary_part_missing':
+      return 'The prompt asks for a rotary mechanical component such as a shaft, crank, gear, pulley, sprocket, or wheel, but no matching part was created.'
+    case 'mechanical_interface_check_missing':
+      return `Mechanical interface part ${quoteRef(signal, 'partId', 'this part')} needs an authored fitted-interface check.`
+    case 'mechanical_linked_control_missing':
+      return 'A linked mechanical prompt needs at least one control that drives multiple movable joints together.'
     case 'duplicate_part_id':
     case 'duplicate_material_id':
     case 'duplicate_joint_id':

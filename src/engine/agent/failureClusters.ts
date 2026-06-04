@@ -130,16 +130,20 @@ function normalizePair(left: string | undefined, right: string | undefined) {
 }
 
 function extractPoseKey(signal: ValidationSignal) {
-  const details = signal.details ?? ''
-  const joints = details.match(/\bjoints=([^\s]+)/)?.[1]
-
-  if (joints) {
-    return `joints:${joints}`
+  if (signal.stage === 'sampled_poses') {
+    return null
   }
 
-  const pose = details.match(/\bpose=([^;]+)/)?.[1]?.trim()
+  const details = signal.details ?? ''
+  const pose = details.match(/\bpose=([^();|\n]+)/)?.[1]?.trim()
 
-  return pose ? `pose:${pose}` : null
+  if (pose) {
+    return `pose:${pose}`
+  }
+
+  const joints = details.match(/\bjoints=([^\s;|\n]+)/)?.[1]
+
+  return joints ? `joints:${summarizeJointVector(joints)}` : null
 }
 
 function createClusterLabel(
@@ -173,4 +177,14 @@ function hashString(value: string) {
   }
 
   return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}`
+}
+
+function summarizeJointVector(value: string) {
+  const entries = value.split(',').filter(Boolean)
+
+  if (entries.length <= 3) {
+    return value
+  }
+
+  return `${entries.slice(0, 3).join(',')},+${entries.length - 3}`
 }

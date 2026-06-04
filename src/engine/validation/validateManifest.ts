@@ -10,7 +10,6 @@ import type {
 import {
   createValidationReport,
   createValidationSignal,
-  hasBlockingSignals,
 } from './reportBuilder'
 import { runBaselineQc } from './runBaselineQc'
 import { runPromptChecks } from './runPromptChecks'
@@ -77,7 +76,7 @@ export function validateManifestAssetCandidate(
   signals.push(...validateStructure(asset))
   signals.push(...validateGeometryDescriptors(asset))
 
-  if (hasBlockingSignals(signals, ['structure'])) {
+  if (hasBuildBlockingStructureSignals(signals)) {
     markSkipped(skippedStages, [
       'build',
       'baseline_qc',
@@ -189,6 +188,23 @@ function markSkipped(
   for (const stage of stages) {
     skippedStages.add(stage)
   }
+}
+
+function hasBuildBlockingStructureSignals(signals: readonly ValidationSignal[]) {
+  return signals.some(
+    (signal) =>
+      signal.stage === 'structure' &&
+      signal.blocking &&
+      signal.severity === 'failure' &&
+      !isBuildPermissiveStructureSignal(signal),
+  )
+}
+
+function isBuildPermissiveStructureSignal(signal: ValidationSignal) {
+  return (
+    signal.code === 'surface_side_missing_check' ||
+    signal.kind === 'mechanical_relation_coverage'
+  )
 }
 
 function formatSchemaPath(path: readonly (PropertyKey | symbol)[]) {

@@ -59,6 +59,7 @@ Geometry authoring guidance:
 - Use `connectorTube` for flexible chains, cables, hoses, ropes, straps, tethers, static suspension cables, bridge hangers, and wires that visually connect two parts, especially when one endpoint is on a movable part. It has `{ "type": "connectorTube", "start": { "partId", "position" }, "end": { "partId", "position" }, "radius", "sag" }`; endpoint `position` values are local to their referenced parts.
 - Do not represent visible hollow bodies or open cavities as one solid box or capped cylinder.
 - For protective grilles, cages, guards, and shrouds around moving internals, model the guard as stationary bars/rings with real clearance around the moving part's swept volume.
+- For cutaway housings, blocks, heads, covers, guards, frames, rails, and shells, use actual windows, posts, collars, split panels, flanges, or open shell surfaces around moving internals. Do not represent an exposed mechanism by placing a solid block, wall, cover lip, or end plate through the moving parts.
 - Keep visual ids stable and meaningful because checks and allowances may reference them directly.
 - Use one connected part for a manufactured continuous piece. Visuals inside that part should touch, mount, or visibly support each other; otherwise split the separate island into its own fixed child part.
 
@@ -68,6 +69,8 @@ Joints are the assembly source of truth:
 - `revolute`: nonzero axis plus lower and upper limits.
 - `prismatic`: nonzero axis plus lower and upper limits.
 - `continuous`: nonzero axis, positive effort and velocity, no lower or upper limits.
+- Use `prismatic` for guided linear movers such as pistons, sliders, plungers, sleeves, and valves. The parent should be the guide, cylinder, rail, housing, or support that constrains the part, not the rod or linkage that visually contacts it.
+- Use `revolute` for rigid connecting rods, link arms, pushrods, and similar couplers that swing on pins, bearing eyes, clevises, sockets, wrist pins, crank pins, or journals. Do not make a motion-transfer coupler only a fixed child when it should pivot during linked motion.
 
 Controls define the preview dials exposed by the app:
 
@@ -76,7 +79,10 @@ Controls define the preview dials exposed by the app:
 - If an asset has more than one movable joint, include manifest controls that cover every movable joint. Group linked motion such as wheel spin or paired steering under shared controls, and give independent mechanisms separate controls.
 - Each control has `{ "id", "name", "joints", "limits" }`.
 - Each control joint binding has `{ "jointId", "scale", "offset" }` and maps dial value to joint value as `offset + scale * dialValue`.
+- Control `limits` is only `{ "lower": number, "upper": number }`; authored checks and relation descriptors never belong inside control limits.
 - Use one grouped control for linked motion such as four spinning wheels or paired steering knuckles; use separate controls when mechanisms should move independently, such as two separate window hinges.
+- For slider-crank, piston pump, engine, linkage, belt, chain, drivetrain, or gear-train motion, use one grouped control that binds the guided prismatic joint and the rotary joint together with suitable scale and phase.
+- If a rod or linkage has a pivot joint, bind that pivot in the same grouped control as the guided and rotary joints when those parts move as one mechanism.
 - Use `scale: -1` for mirrored motion and `offset` only for intentional phase shifts.
 
 Authored checks should prove prompt-critical exact relationships:
@@ -85,15 +91,20 @@ Authored checks should prove prompt-critical exact relationships:
 - `joint_exists`
 - `expect_material_side`
 - `expect_contact` with optional `contactTolerance` and `maxPenetration`. Use exact `visualAId`/`visualBId` for multi-visual assemblies. Use `maxPenetration: 0` for surface touch, or a small positive value only for intentional seated/captured fits.
+- `expect_path_contacts` for belts, chains, cables, hoses, ropes, straps, wires, tracks, and similar routed or looped parts that must touch multiple wheels, pulleys, sprockets, guides, fittings, supports, or mounts. It has `{ "pathPartId", "pathVisualId", "targets": [{ "partId", "visualId" }], "minContacts", "contactTolerance", "maxPenetration" }`. Use exact path and target visual ids. Use `minContacts` equal to the number of required supports for taut belts, chains, tracks, and wrapped paths; separate one-off `expect_contact` checks are not sufficient path coverage.
 - `expect_gap`
 - `expect_overlap`
-- `expect_within`
+- `expect_within` with optional `margin` and `maxPenetration`. Use exact `innerVisualId`/`outerVisualId` and a small positive `maxPenetration` when a guided or captured inner component intentionally sits inside a liner, sleeve, slot, rail, housing, or bearing and should not be treated as loose overlap.
 - Any check may include `pose: { "name": "...", "joints": [{ "jointId": "...", "value": number }] }` to run it at a sampled joint pose. Use radians for revolute/continuous values and meters for prismatic values.
-- Add pose-specific checks for primary mechanisms: open lids, extended drawers/slides, rotated handles, wheels, hinges, sleeves, retainers, and controls.
+- Add pose-specific checks for primary mechanisms: open lids, extended drawers/slides, rotated handles, wheels, hinges, pistons, sleeves, retainers, and controls. For linked guided mechanisms, include the prismatic and rotary joint values in the same pose.
+- Entries in `check.pose.joints` are sampled values for existing joints, not full joint descriptors. Do not include `id`, `name`, `type`, `parentPartId`, `childPartId`, `origin`, `axis`, or `limits` in pose samples.
+- `check.pose` is not an asset, part, check, or transform container. It must not contain `schemaVersion`, `parts`, `materials`, `checks`, `allowances`, `metadata`, `position`, `rotation`, `scale`, or nested check fields such as `type`, `partAId`, `partBId`, `visualAId`, or `visualBId`.
+- Every part, visual, joint, and material reference in a check must name a real stable id from the asset. Do not use placeholder ids such as `x`, `y`, `a`, `b`, `__invalid__`, `invalid`, `part-a`, `part-b`, `visual-a`, or `visual-b`.
 
 Allowances:
 
 - `allow_overlap` for intentional scoped overlap, preferably exact visual pairs.
 - `allow_isolated_part` only when a physically isolated part is intentional.
 - Broad part-pair allowances are a last resort and still need a concrete reason.
-- Intentional overlap must be paired with `expect_contact`, `expect_gap`, `expect_overlap`, or `expect_within` for the same part pair. If the allowance has `visualAId`/`visualBId`, the proof check must reference that same visual pair. For seated contacts, bound the penetration explicitly with `expect_contact.maxPenetration` or `expect_gap.maxPenetration` instead of relying on unbounded contact.
+- Intentional fitted contact or containment should be proven with exact visual ids and bounded penetration through `expect_contact.maxPenetration`, `expect_path_contacts.maxPenetration`, `expect_gap.maxPenetration`, or `expect_within.maxPenetration`; validation treats that bounded visual-pair proof as a fitted-contact note instead of a collision. Intentional overlap exceptions that are not bounded fitted contacts should use `allow_overlap` plus a matching `expect_contact`, `expect_path_contacts`, `expect_gap`, `expect_overlap`, or `expect_within` proof for the same part pair. If the allowance has `visualAId`/`visualBId`, the proof check must reference that same visual pair.
+- Use `maxPenetration: 0` only for no-penetration surface touch. Captured liners, bearings, collars, sleeves, slots, rails, and seated wrapped paths should use a small positive bound that describes the intended hidden fit.

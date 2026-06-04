@@ -1,6 +1,9 @@
 import * as THREE from 'three/webgpu'
 import type { BuiltManifestAsset } from './assetBuilder'
-import { findOverlappingVisualRelations } from './relationMetrics'
+import {
+  findOverlappingVisualRelations,
+  type VisualRelationOptions,
+} from './relationMetrics'
 
 export type GeometryOverlapFinding = {
   depth: THREE.Vector3
@@ -16,7 +19,7 @@ export function findCurrentPoseVisualOverlaps(
   options: {
     overlapTolerance: number
     volumeTolerance: number
-  },
+  } & VisualRelationOptions,
 ): GeometryOverlapFinding[] {
   return findOverlappingVisualRelations(builtAsset, options).map((relation) => ({
     depth: relation.overlapDepth,

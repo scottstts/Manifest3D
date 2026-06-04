@@ -19,7 +19,165 @@ describe('runSampledPoseValidation', () => {
       ]),
     )
   })
+
+  it('accepts pose-specific bounded fit checks as proof for sampled-pose visual overlap', () => {
+    const asset = createPoseFittedSliderAsset()
+    const signals = runSampledPoseValidation(asset)
+    const signalCodes = signals.map((signal) => signal.code)
+
+    expect(signalCodes).toContain('part_overlap_sampled_pose_proven_fit')
+    expect(signalCodes).not.toContain('part_overlap_sampled_pose')
+  })
+
+  it('accepts pose-specific bounded containment checks as proof for sampled-pose visual overlap', () => {
+    const asset = createPoseFittedSliderAsset()
+
+    asset.checks = [
+      {
+        axes: 'yz',
+        innerPartId: 'slider',
+        innerVisualId: 'slider-block',
+        maxPenetration: 0.02,
+        outerPartId: 'slider-guide',
+        outerVisualId: 'guide-block',
+        pose: {
+          joints: [
+            {
+              jointId: 'slider-stroke',
+              value: -0.025,
+            },
+          ],
+          name: 'seated stroke',
+        },
+        type: 'expect_within',
+      },
+    ]
+
+    const signals = runSampledPoseValidation(asset)
+    const overlapProofSignals = signals.filter(
+      (signal) => signal.code === 'part_overlap_sampled_pose_proven_fit',
+    )
+    const signalCodes = signals.map((signal) => signal.code)
+
+    expect(overlapProofSignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          details: expect.stringContaining('proofCheck=expect_within'),
+        }),
+      ]),
+    )
+    expect(signalCodes).not.toContain('part_overlap_sampled_pose')
+  })
 })
+
+function createPoseFittedSliderAsset(): ManifestAsset {
+  return {
+    allowances: [],
+    checks: [
+      {
+        contactTolerance: 0.004,
+        maxPenetration: 0.02,
+        partAId: 'slider-guide',
+        partBId: 'slider',
+        pose: {
+          joints: [
+            {
+              jointId: 'slider-stroke',
+              value: -0.025,
+            },
+          ],
+          name: 'seated stroke',
+        },
+        type: 'expect_contact',
+        visualAId: 'guide-block',
+        visualBId: 'slider-block',
+      },
+    ],
+    controls: [],
+    id: 'pose-fitted-slider',
+    joints: [
+      {
+        axis: [1, 0, 0],
+        childPartId: 'slider',
+        id: 'slider-stroke',
+        limits: {
+          effort: 2,
+          lower: -0.025,
+          upper: 0,
+          velocity: 0.5,
+        },
+        name: 'Slider stroke',
+        origin: {},
+        parentPartId: 'slider-guide',
+        type: 'prismatic',
+      },
+    ],
+    materials: [
+      {
+        color: '#777777',
+        id: 'mat-guide',
+        metalness: 0.4,
+        name: 'Guide metal',
+        roughness: 0.35,
+      },
+      {
+        color: '#222222',
+        id: 'mat-slider',
+        metalness: 0.2,
+        name: 'Slider metal',
+        roughness: 0.4,
+      },
+    ],
+    metadata: {
+      createdAt: '2026-06-04T00:00:00.000Z',
+      generationStatus: 'ready',
+      sourceImageIds: [],
+      updatedAt: '2026-06-04T00:00:00.000Z',
+    },
+    name: 'Pose fitted slider',
+    parts: [
+      {
+        id: 'slider-guide',
+        name: 'Slider guide',
+        role: 'base',
+        visuals: [
+          {
+            geometry: {
+              size: [0.2, 0.12, 0.12],
+              type: 'box',
+            },
+            id: 'guide-block',
+            materialId: 'mat-guide',
+            transform: {
+              position: [0, 0, 0],
+            },
+          },
+        ],
+      },
+      {
+        id: 'slider',
+        name: 'Slider',
+        role: 'mechanism',
+        visuals: [
+          {
+            geometry: {
+              size: [0.04, 0.08, 0.08],
+              type: 'box',
+            },
+            id: 'slider-block',
+            materialId: 'mat-slider',
+            transform: {
+              position: [0.13, 0, 0],
+            },
+          },
+        ],
+      },
+    ],
+    prompt: 'A mechanical slider seated in a guide at the end of its stroke.',
+    schemaVersion: 2,
+    units: 'meters',
+  }
+}
 
 function createYawingFanCageAsset(): ManifestAsset {
   return {

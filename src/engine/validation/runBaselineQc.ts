@@ -2,13 +2,26 @@ import * as THREE from 'three/webgpu'
 import type { BuiltManifestAsset } from '../geometry/assetBuilder'
 import { getBoundsSize, isFiniteBounds } from '../geometry/bounds'
 import {
+  boxesOverlap,
   boxesTouchOrOverlap,
   pointToBoxDistance,
 } from '../geometry/measurements'
 import { findCurrentPoseVisualOverlaps } from '../geometry/overlapChecks'
-import { findClosestVisualRelation } from '../geometry/relationMetrics'
+import {
+  createVisualRelationProxies,
+  findClosestVisualRelation,
+  type VisualRelationProxy,
+} from '../geometry/relationMetrics'
+import {
+  createMeshRelationIndex,
+  type MeshRelationIndex,
+} from '../geometry/meshRelations'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import type { ValidationSignal } from '../schema/validationTypes'
+import {
+  formatBoundedOverlapProofDetails,
+  getBoundedOverlapProofCheck,
+} from './overlapProofChecks'
 import { createValidationSignal } from './reportBuilder'
 import {
   getAllowanceKey,
@@ -23,20 +36,49 @@ const supportContactToleranceMeters = 0.015
 const overlapToleranceMeters = 0.001
 const overlapVolumeToleranceCubicMeters = 1e-8
 const jointOriginWarningDistanceMeters = 0.25
+const minMovableJointFitToleranceMeters = 0.02
+const maxMovableJointFitToleranceMeters = 0.08
+const movableJointFitAssetSpanScale = 0.015
 
 export function runBaselineQc(
   asset: ManifestAsset,
   builtAsset: BuiltManifestAsset,
 ): ValidationSignal[] {
-  return [
-    ...validateBuiltBounds(asset, builtAsset),
-    ...validateMeshReadiness(builtAsset),
-    ...validateDisconnectedGeometryIslands(asset, builtAsset),
-    ...validateFloatingParts(asset, builtAsset),
-    ...validateCurrentPoseOverlaps(asset, builtAsset),
-    ...validateJointOrigins(asset, builtAsset),
-    ...validateAllowanceNotes(asset),
-  ]
+  const meshRelationIndex = createMeshRelationIndex(builtAsset)
+  const relationProxies = createVisualRelationProxies(builtAsset)
+
+  try {
+    return [
+      ...validateBuiltBounds(asset, builtAsset),
+      ...validateMeshReadiness(builtAsset),
+      ...validateDisconnectedGeometryIslands(
+        asset,
+        builtAsset,
+        meshRelationIndex,
+      ),
+      ...validateFloatingParts(
+        asset,
+        builtAsset,
+        meshRelationIndex,
+      ),
+      ...validateCurrentPoseOverlaps(
+        asset,
+        builtAsset,
+        meshRelationIndex,
+        relationProxies,
+      ),
+      ...validateJointOrigins(asset, builtAsset),
+      ...validateMovableJointFits(
+        asset,
+        builtAsset,
+        meshRelationIndex,
+        relationProxies,
+      ),
+      ...validateAllowanceNotes(asset),
+    ]
+  } finally {
+    meshRelationIndex.dispose()
+  }
 }
 
 function validateBuiltBounds(
@@ -205,6 +247,7 @@ function validateMeshReadiness(builtAsset: BuiltManifestAsset) {
 function validateDisconnectedGeometryIslands(
   asset: ManifestAsset,
   builtAsset: BuiltManifestAsset,
+  meshRelationIndex: MeshRelationIndex,
 ) {
   const signals: ValidationSignal[] = []
 
@@ -219,6 +262,7 @@ function validateDisconnectedGeometryIslands(
       visualIds,
       builtAsset,
       supportContactToleranceMeters,
+      meshRelationIndex,
     )
 
     if (connectedVisualIds.size === visualIds.length) {
@@ -228,6 +272,7 @@ function validateDisconnectedGeometryIslands(
     const disconnectedVisualIds = visualIds.filter(
       (visualId) => !connectedVisualIds.has(visualId),
     )
+    const criticalRole = isMechanicallyCriticalPartRole(part.role)
 
     signals.push(
       createValidationSignal(
@@ -235,8 +280,11 @@ function validateDisconnectedGeometryIslands(
         'part_disconnected_geometry_islands',
         `Part "${part.id}" contains disconnected visual islands: ${disconnectedVisualIds.join(', ')}.`,
         {
+          details: criticalRole
+            ? 'Mechanism, support, wheel, hinge, control, and fastener parts must read as physically continuous or use separate fixed child parts for separately mounted pieces.'
+            : undefined,
           refs: { partId: part.id },
-          severity: 'warning',
+          ...(criticalRole ? {} : { severity: 'warning' as const }),
           source: 'baseline_qc',
           stage: 'baseline_qc',
         },
@@ -250,6 +298,7 @@ function validateDisconnectedGeometryIslands(
 function validateFloatingParts(
   asset: ManifestAsset,
   builtAsset: BuiltManifestAsset,
+  meshRelationIndex: MeshRelationIndex,
 ) {
   const childPartIds = new Set(asset.joints.map((joint) => joint.childPartId))
   const rootPart = asset.parts.find((part) => !childPartIds.has(part.id))
@@ -264,6 +313,7 @@ function validateFloatingParts(
     asset.parts.map((part) => part.id),
     builtAsset,
     supportContactToleranceMeters,
+    meshRelationIndex,
   )
   const allowedPartIds = getAllowedIsolatedPartIds(asset.allowances)
   const signals: ValidationSignal[] = []
@@ -329,10 +379,15 @@ function validateFloatingParts(
 function validateCurrentPoseOverlaps(
   asset: ManifestAsset,
   builtAsset: BuiltManifestAsset,
+  meshRelationIndex: MeshRelationIndex,
+  relationProxies: readonly VisualRelationProxy[],
 ) {
   const signals: ValidationSignal[] = []
+  const currentPoseChecks = asset.checks.filter((check) => !check.pose)
   const findings = findCurrentPoseVisualOverlaps(builtAsset, {
+    meshRelationIndex,
     overlapTolerance: overlapToleranceMeters,
+    proxies: relationProxies,
     volumeTolerance: overlapVolumeToleranceCubicMeters,
   })
 
@@ -345,6 +400,34 @@ function validateCurrentPoseOverlaps(
           `Overlap between "${finding.partAId}" and "${finding.partBId}" is covered by an authored allowance.`,
           {
             details: formatOverlapDetails(finding.depth, finding.volume),
+            refs: {
+              partAId: finding.partAId,
+              partBId: finding.partBId,
+              visualAId: finding.visualAId,
+              visualBId: finding.visualBId,
+            },
+            severity: 'note',
+            source: 'baseline_qc',
+            stage: 'baseline_qc',
+          },
+        ),
+      )
+      continue
+    }
+
+    const proof = getBoundedOverlapProofCheck(finding, currentPoseChecks)
+
+    if (proof) {
+      signals.push(
+        createValidationSignal(
+          'real_overlap',
+          'part_overlap_proven_fit',
+          `Overlap between "${finding.partAId}" and "${finding.partBId}" is covered by a bounded authored fit check.`,
+          {
+            details: [
+              formatOverlapDetails(finding.depth, finding.volume),
+              formatBoundedOverlapProofDetails(proof),
+            ].join(' '),
             refs: {
               partAId: finding.partAId,
               partBId: finding.partBId,
@@ -381,6 +464,85 @@ function validateCurrentPoseOverlaps(
   }
 
   return signals
+}
+
+function validateMovableJointFits(
+  asset: ManifestAsset,
+  builtAsset: BuiltManifestAsset,
+  meshRelationIndex: MeshRelationIndex,
+  relationProxies: readonly VisualRelationProxy[],
+) {
+  const signals: ValidationSignal[] = []
+  const tolerance = getMovableJointFitTolerance(builtAsset.bounds)
+
+  for (const joint of asset.joints) {
+    if (joint.type === 'fixed') {
+      continue
+    }
+
+    if (
+      partsHaveSupportContact(
+        builtAsset,
+        joint.parentPartId,
+        joint.childPartId,
+        tolerance,
+        meshRelationIndex,
+      )
+    ) {
+      continue
+    }
+
+    const relation = findClosestVisualRelation(builtAsset, {
+      partAId: joint.parentPartId,
+      partBId: joint.childPartId,
+    }, {
+      meshRelationIndex,
+      proxies: relationProxies,
+    })
+
+    if (relation && relation.distance <= tolerance) {
+      continue
+    }
+
+    signals.push(
+      createValidationSignal(
+        'mechanical_fit',
+        'movable_joint_missing_close_fit',
+        `Movable joint "${joint.id}" does not have a close visible mechanical fit between parent and child parts.`,
+        {
+          details: relation
+            ? `closestDistance=${relation.distance.toFixed(4)} tolerance=${tolerance.toFixed(4)} closestVisualPair=${relation.visualAId}<->${relation.visualBId}`
+            : `No visual relation was measurable. tolerance=${tolerance.toFixed(4)}`,
+          refs: {
+            childPartId: joint.childPartId,
+            jointId: joint.id,
+            parentPartId: joint.parentPartId,
+          },
+          source: 'baseline_qc',
+          stage: 'baseline_qc',
+        },
+      ),
+    )
+  }
+
+  return signals
+}
+
+function getMovableJointFitTolerance(bounds: THREE.Box3) {
+  const size = getBoundsSize(bounds)
+  const maxSpan = Math.max(size.x, size.y, size.z)
+
+  if (!Number.isFinite(maxSpan) || maxSpan <= 0) {
+    return minMovableJointFitToleranceMeters
+  }
+
+  return Math.min(
+    maxMovableJointFitToleranceMeters,
+    Math.max(
+      minMovableJointFitToleranceMeters,
+      maxSpan * movableJointFitAssetSpanScale,
+    ),
+  )
 }
 
 function validateJointOrigins(
@@ -479,6 +641,7 @@ function collectConnectedVisuals(
   visualIds: readonly string[],
   builtAsset: BuiltManifestAsset,
   tolerance: number,
+  meshRelationIndex: MeshRelationIndex,
 ) {
   const pending = [rootVisualId]
   const visited = new Set<string>()
@@ -509,7 +672,17 @@ function collectConnectedVisuals(
 
       const candidateBounds = builtAsset.visualBounds.get(candidateVisualId)
 
-      if (candidateBounds && boxesTouchOrOverlap(bounds, candidateBounds, tolerance)) {
+      if (
+        candidateBounds &&
+        visualsHaveSupportContact(
+          visualId,
+          candidateVisualId,
+          bounds,
+          candidateBounds,
+          tolerance,
+          meshRelationIndex,
+        )
+      ) {
         pending.push(candidateVisualId)
       }
     }
@@ -518,12 +691,38 @@ function collectConnectedVisuals(
   return visited
 }
 
+function visualsHaveSupportContact(
+  visualAId: string,
+  visualBId: string,
+  boundsA: THREE.Box3,
+  boundsB: THREE.Box3,
+  tolerance: number,
+  meshRelationIndex: MeshRelationIndex,
+) {
+  if (!boxesTouchOrOverlap(boundsA, boundsB, tolerance)) {
+    return false
+  }
+
+  if (!boxesOverlap(boundsA, boundsB, 0)) {
+    return true
+  }
+
+  const meshRelation = meshRelationIndex.getRelation(visualAId, visualBId, {
+    includeDistance: false,
+  })
+
+  return meshRelation
+    ? meshRelation.intersects
+    : true
+}
+
 function collectPhysicallyReachableParts(
   asset: ManifestAsset,
   rootPartId: string,
   partIds: readonly string[],
   builtAsset: BuiltManifestAsset,
   tolerance: number,
+  meshRelationIndex: MeshRelationIndex,
 ) {
   const pending = [rootPartId]
   const visited = new Set<string>()
@@ -545,7 +744,13 @@ function collectPhysicallyReachableParts(
 
       if (
         connectorAdjacency.get(partId)?.has(candidatePartId) ||
-        partsHaveSupportContact(builtAsset, partId, candidatePartId, tolerance)
+        partsHaveSupportContact(
+          builtAsset,
+          partId,
+          candidatePartId,
+          tolerance,
+          meshRelationIndex,
+        )
       ) {
         pending.push(candidatePartId)
       }
@@ -560,13 +765,47 @@ function partsHaveSupportContact(
   partAId: string,
   partBId: string,
   tolerance: number,
+  meshRelationIndex: MeshRelationIndex,
 ) {
-  const relation = findClosestVisualRelation(builtAsset, {
-    partAId,
-    partBId,
-  })
+  const partBoundsA = builtAsset.partBounds.get(partAId)
+  const partBoundsB = builtAsset.partBounds.get(partBId)
 
-  return Boolean(relation && relation.distance <= tolerance)
+  if (
+    !partBoundsA ||
+    !partBoundsB ||
+    !boxesTouchOrOverlap(partBoundsA, partBoundsB, tolerance)
+  ) {
+    return false
+  }
+
+  for (const [visualAId, boundsA] of builtAsset.visualBounds.entries()) {
+    if (builtAsset.visualPartIds.get(visualAId) !== partAId) {
+      continue
+    }
+
+    for (const [visualBId, boundsB] of builtAsset.visualBounds.entries()) {
+      if (
+        builtAsset.visualPartIds.get(visualBId) !== partBId ||
+        !boxesTouchOrOverlap(boundsA, boundsB, tolerance)
+      ) {
+        continue
+      }
+
+      if (!boxesOverlap(boundsA, boundsB, 0)) {
+        return true
+      }
+
+      const meshRelation = meshRelationIndex.getRelation(visualAId, visualBId, {
+        includeDistance: false,
+      })
+
+      if (!meshRelation || meshRelation.intersects) {
+        return true
+      }
+    }
+  }
+
+  return false
 }
 
 function createConnectorSupportAdjacency(asset: ManifestAsset) {
@@ -603,6 +842,19 @@ function createConnectorSupportAdjacency(asset: ManifestAsset) {
 
 function canAllowIsolatedPart(role: ManifestAsset['parts'][number]['role']) {
   return role === 'decor'
+}
+
+function isMechanicallyCriticalPartRole(
+  role: ManifestAsset['parts'][number]['role'],
+) {
+  return (
+    role === 'mechanism' ||
+    role === 'support' ||
+    role === 'wheel' ||
+    role === 'hinge' ||
+    role === 'control' ||
+    role === 'fastener'
+  )
 }
 
 function formatOverlapDetails(depth: THREE.Vector3, volume: number) {

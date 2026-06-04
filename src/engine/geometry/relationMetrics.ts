@@ -6,6 +6,11 @@ import {
   getOverlapDepth,
   getPositiveOverlapVolume,
 } from './measurements'
+import {
+  createMeshRelationIndex,
+  type MeshRelationIndex,
+  type MeshRelationOptions,
+} from './meshRelations'
 import type { ManifestGeometry, ManifestVisual } from '../schema/manifestTypes'
 
 export type VisualRelationProxy = {
@@ -27,6 +32,19 @@ export type VisualPairRelation = {
   visualBId: string
 }
 
+export type VisualRelationPairCandidate = {
+  partAId: string
+  partBId: string
+  visualAId: string
+  visualBId: string
+}
+
+export type VisualRelationOptions = {
+  meshRelationIndex?: MeshRelationIndex
+  proxies?: readonly VisualRelationProxy[]
+  shouldConsiderPair?: (pair: VisualRelationPairCandidate) => boolean
+}
+
 type EndpointContactPartIds = {
   end?: string
   start?: string
@@ -36,6 +54,14 @@ const maxPolylineProxyLengthMeters = 0.08
 const maxPolylineProxySubdivisions = 96
 const maxSolidProxyLengthMeters = 0.16
 const maxSolidProxySubdivisions = 32
+const latheSurfaceProxyThicknessMeters = 0.003
+const minLatheAngularProxySegments = 8
+const maxLatheAngularProxyLengthMeters = 0.12
+const maxLatheAngularProxySegments = 32
+const meshDistanceRefineDistanceMeters = 0.12
+const fullLatheSweep = Math.PI * 2
+const latheSweepEpsilon = 0.0001
+const latheAxisEpsilon = 0.000001
 const torusProxySegments = 48
 
 export function createVisualRelationProxies(
@@ -88,13 +114,14 @@ export function findClosestVisualRelation(
     visualAId?: string
     visualBId?: string
   },
+  options: VisualRelationOptions = {},
 ): VisualPairRelation | null {
   const relations = findVisualRelations(builtAsset, {
     partAId: target.partAId,
     partBId: target.partBId,
     visualAId: target.visualAId,
     visualBId: target.visualBId,
-  })
+  }, options)
 
   return relations.reduce<VisualPairRelation | null>((closest, relation) => {
     if (!closest) {
@@ -117,38 +144,51 @@ export function findVisualRelations(
     visualAId?: string
     visualBId?: string
   },
+  options: VisualRelationOptions = {},
 ): VisualPairRelation[] {
-  const proxies = createVisualRelationProxies(builtAsset).filter((proxy) => {
-    if (proxy.partId === target.partAId) {
-      return !target.visualAId || proxy.visualId === target.visualAId
-    }
-
-    if (proxy.partId === target.partBId) {
-      return !target.visualBId || proxy.visualId === target.visualBId
-    }
-
-    return false
-  })
-  const leftProxies = proxies.filter((proxy) => proxy.partId === target.partAId)
-  const rightProxies = proxies.filter((proxy) => proxy.partId === target.partBId)
+  const proxies = options.proxies ?? createVisualRelationProxies(builtAsset)
+  const leftProxies = proxies.filter(
+    (proxy) =>
+      proxy.partId === target.partAId &&
+      (!target.visualAId || proxy.visualId === target.visualAId),
+  )
+  const rightProxies = proxies.filter(
+    (proxy) =>
+      proxy.partId === target.partBId &&
+      (!target.visualBId || proxy.visualId === target.visualBId),
+  )
   const relationsByVisualPair = new Map<string, VisualPairRelation>()
+  const meshRelationIndex = options.meshRelationIndex ?? createMeshRelationIndex(builtAsset)
 
-  for (const left of leftProxies) {
-    for (const right of rightProxies) {
-      if (
-        left.visualId === right.visualId ||
-        isAllowedConnectorEndpointContact(left, right)
-      ) {
-        continue
+  try {
+    for (const left of leftProxies) {
+      for (const right of rightProxies) {
+        if (
+          left.visualId === right.visualId ||
+          isAllowedConnectorEndpointContact(left, right)
+        ) {
+          continue
+        }
+
+        if (!shouldConsiderVisualPair(left, right, options.shouldConsiderPair)) {
+          continue
+        }
+
+        const relation = refineRelationWithMesh(
+          createProxyRelation(left, right),
+          meshRelationIndex,
+        )
+        const key = getVisualPairKey(relation)
+        const existing = relationsByVisualPair.get(key)
+
+        if (!existing || isMoreRelevantRelation(relation, existing)) {
+          relationsByVisualPair.set(key, relation)
+        }
       }
-
-      const relation = createProxyRelation(left, right)
-      const key = getVisualPairKey(relation)
-      const existing = relationsByVisualPair.get(key)
-
-      if (!existing || isMoreRelevantRelation(relation, existing)) {
-        relationsByVisualPair.set(key, relation)
-      }
+    }
+  } finally {
+    if (!options.meshRelationIndex) {
+      meshRelationIndex.dispose()
     }
   }
 
@@ -160,45 +200,75 @@ export function findOverlappingVisualRelations(
   options: {
     overlapTolerance: number
     volumeTolerance: number
-  },
+  } & VisualRelationOptions,
 ): VisualPairRelation[] {
-  const proxies = createVisualRelationProxies(builtAsset)
+  const proxies = options.proxies ?? createVisualRelationProxies(builtAsset)
   const findingsByPair = new Map<string, VisualPairRelation>()
+  const meshRelationIndex = options.meshRelationIndex ?? createMeshRelationIndex(builtAsset)
 
-  for (let indexA = 0; indexA < proxies.length; indexA += 1) {
-    const proxyA = proxies[indexA]
+  try {
+    for (let indexA = 0; indexA < proxies.length; indexA += 1) {
+      const proxyA = proxies[indexA]
 
-    for (let indexB = indexA + 1; indexB < proxies.length; indexB += 1) {
-      const proxyB = proxies[indexB]
+      for (let indexB = indexA + 1; indexB < proxies.length; indexB += 1) {
+        const proxyB = proxies[indexB]
 
-      if (
-        proxyA.visualId === proxyB.visualId ||
-        proxyA.partId === proxyB.partId ||
-        isAllowedConnectorEndpointContact(proxyA, proxyB)
-      ) {
-        continue
+        if (
+          proxyA.visualId === proxyB.visualId ||
+          proxyA.partId === proxyB.partId ||
+          isAllowedConnectorEndpointContact(proxyA, proxyB)
+        ) {
+          continue
+        }
+
+        if (!shouldConsiderVisualPair(proxyA, proxyB, options.shouldConsiderPair)) {
+          continue
+        }
+
+        if (!boxesOverlap(proxyA.bounds, proxyB.bounds, options.overlapTolerance)) {
+          continue
+        }
+
+        const relation = refineRelationWithMesh(
+          createProxyRelation(proxyA, proxyB),
+          meshRelationIndex,
+          { includeDistance: false },
+        )
+
+        if (relation.overlapVolume <= options.volumeTolerance) {
+          continue
+        }
+
+        const pairKey = getVisualPairKey(relation)
+        const existingFinding = findingsByPair.get(pairKey)
+
+        if (!existingFinding || relation.overlapVolume > existingFinding.overlapVolume) {
+          findingsByPair.set(pairKey, relation)
+        }
       }
-
-      if (!boxesOverlap(proxyA.bounds, proxyB.bounds, options.overlapTolerance)) {
-        continue
-      }
-
-      const relation = createProxyRelation(proxyA, proxyB)
-
-      if (relation.overlapVolume <= options.volumeTolerance) {
-        continue
-      }
-
-      const pairKey = getVisualPairKey(relation)
-      const existingFinding = findingsByPair.get(pairKey)
-
-      if (!existingFinding || relation.overlapVolume > existingFinding.overlapVolume) {
-        findingsByPair.set(pairKey, relation)
-      }
+    }
+  } finally {
+    if (!options.meshRelationIndex) {
+      meshRelationIndex.dispose()
     }
   }
 
   return [...findingsByPair.values()]
+}
+
+function shouldConsiderVisualPair(
+  proxyA: VisualRelationProxy,
+  proxyB: VisualRelationProxy,
+  shouldConsiderPair: VisualRelationOptions['shouldConsiderPair'],
+) {
+  return shouldConsiderPair
+    ? shouldConsiderPair({
+        partAId: proxyA.partId,
+        partBId: proxyB.partId,
+        visualAId: proxyA.visualId,
+        visualBId: proxyB.visualId,
+      })
+    : true
 }
 
 function createGeometryRelationProxies({
@@ -253,6 +323,22 @@ function createGeometryRelationProxies({
         visualId,
       })
     }
+    case 'lathe':
+      if (isOpenOrCutawayLatheGeometry(geometry)) {
+        return createLatheSurfaceRelationProxies({
+          geometry,
+          mesh,
+          partId,
+          visualId,
+        })
+      }
+
+      return createSegmentedSolidRelationProxies({
+        fallbackBounds: bounds,
+        mesh,
+        partId,
+        visualId,
+      })
     default:
       return createSegmentedSolidRelationProxies({
         fallbackBounds: bounds,
@@ -261,6 +347,121 @@ function createGeometryRelationProxies({
         visualId,
       })
   }
+}
+
+function createLatheSurfaceRelationProxies({
+  geometry,
+  mesh,
+  partId,
+  visualId,
+}: {
+  geometry: Extract<ManifestGeometry, { type: 'lathe' }>
+  mesh: THREE.Object3D
+  partId: string
+  visualId: string
+}): VisualRelationProxy[] {
+  if (geometry.points.length < 2) {
+    return []
+  }
+
+  const phiStart = geometry.phiStart ?? 0
+  const phiLength = geometry.phiLength ?? fullLatheSweep
+  const maxRadius = Math.max(
+    ...geometry.points.map(([radius]) => Math.abs(radius)),
+  )
+  const angularSegments = getLatheAngularSegmentCount(
+    maxRadius,
+    phiLength,
+  )
+  const proxies: VisualRelationProxy[] = []
+
+  for (
+    let profileIndex = 0;
+    profileIndex < geometry.points.length - 1;
+    profileIndex += 1
+  ) {
+    const startPoint = geometry.points[profileIndex]
+    const endPoint = geometry.points[profileIndex + 1]
+
+    if (!startPoint || !endPoint) {
+      continue
+    }
+
+    for (
+      let segmentIndex = 0;
+      segmentIndex < angularSegments;
+      segmentIndex += 1
+    ) {
+      const angleA = phiStart + phiLength * segmentIndex / angularSegments
+      const angleB = phiStart + phiLength * (segmentIndex + 1) / angularSegments
+      const surfaceCorners = [
+        createLatheSurfacePoint(startPoint, angleA),
+        createLatheSurfacePoint(startPoint, angleB),
+        createLatheSurfacePoint(endPoint, angleA),
+        createLatheSurfacePoint(endPoint, angleB),
+      ].map((point) => point.applyMatrix4(mesh.matrixWorld))
+      const bounds = new THREE.Box3().setFromPoints(surfaceCorners)
+
+      if (bounds.isEmpty()) {
+        continue
+      }
+
+      bounds.expandByScalar(latheSurfaceProxyThicknessMeters)
+      proxies.push({
+        bounds,
+        partId,
+        visualId,
+      })
+    }
+  }
+
+  return proxies
+}
+
+function createLatheSurfacePoint(
+  [radius, height]: readonly [number, number],
+  angle: number,
+) {
+  return new THREE.Vector3(
+    Math.sin(angle) * radius,
+    height,
+    Math.cos(angle) * radius,
+  )
+}
+
+function getLatheAngularSegmentCount(
+  maxRadius: number,
+  phiLength: number,
+) {
+  const arcLength = Math.abs(maxRadius * phiLength)
+  const arcDrivenSegments = arcLength > 0
+    ? Math.ceil(arcLength / maxLatheAngularProxyLengthMeters)
+    : 1
+
+  return Math.min(
+    maxLatheAngularProxySegments,
+    Math.max(minLatheAngularProxySegments, arcDrivenSegments),
+  )
+}
+
+function isOpenOrCutawayLatheGeometry(
+  geometry: Extract<ManifestGeometry, { type: 'lathe' }>,
+) {
+  const firstPoint = geometry.points[0]
+  const lastPoint = geometry.points[geometry.points.length - 1]
+
+  if (!firstPoint || !lastPoint) {
+    return false
+  }
+
+  const phiLength = geometry.phiLength ?? fullLatheSweep
+  const hasFullSweep =
+    Math.abs(Math.abs(phiLength) - fullLatheSweep) <= latheSweepEpsilon
+  const profileTouchesAxisAtEnds =
+    Math.abs(firstPoint[0]) <= latheAxisEpsilon &&
+    Math.abs(lastPoint[0]) <= latheAxisEpsilon
+
+  return !hasFullSweep || !profileTouchesAxisAtEnds
 }
 
 function createSegmentedSolidRelationProxies({
@@ -406,6 +607,49 @@ function createProxyRelation(
     visualAId: proxyA.visualId,
     visualBId: proxyB.visualId,
   }
+}
+
+function refineRelationWithMesh(
+  relation: VisualPairRelation,
+  meshRelationIndex: ReturnType<typeof createMeshRelationIndex>,
+  options: MeshRelationOptions = {},
+): VisualPairRelation {
+  if (!shouldRefineRelationWithMesh(relation)) {
+    return relation
+  }
+
+  const meshRelation = meshRelationIndex.getRelation(
+    relation.visualAId,
+    relation.visualBId,
+    options,
+  )
+
+  if (!meshRelation) {
+    return relation
+  }
+
+  if (!meshRelation.intersects) {
+    return {
+      ...relation,
+      distance: meshRelation.distance,
+      maxOverlapDepth: 0,
+      overlapDepth: new THREE.Vector3(0, 0, 0),
+      overlapVolume: 0,
+      penetrationDepth: 0,
+    }
+  }
+
+  return {
+    ...relation,
+    distance: 0,
+  }
+}
+
+function shouldRefineRelationWithMesh(relation: VisualPairRelation) {
+  return (
+    relation.overlapVolume > 0 ||
+    relation.distance <= meshDistanceRefineDistanceMeters
+  )
 }
 
 function isMoreRelevantRelation(

@@ -8,9 +8,15 @@ import {
 } from '../geometry/measurements'
 import { normalizeManifestMaterialSide } from '../geometry/materialSide'
 import {
+  createVisualRelationProxies,
   findVisualRelations,
+  type VisualRelationProxy,
   type VisualPairRelation,
 } from '../geometry/relationMetrics'
+import {
+  createMeshRelationIndex,
+  type MeshRelationIndex,
+} from '../geometry/meshRelations'
 import type { ManifestAsset, ManifestCheck } from '../schema/manifestTypes'
 import type { ValidationSignal, ValidationStage } from '../schema/validationTypes'
 import { createValidationSignal } from './reportBuilder'
@@ -37,12 +43,16 @@ export type IndexedManifestCheck = {
 export type RunPromptChecksOptions = {
   checks?: readonly IndexedManifestCheck[]
   includeMissingChecksWarning?: boolean
+  meshRelationIndex?: MeshRelationIndex
   poseLabel?: string
   stage?: ValidationStage
+  visualRelationProxies?: readonly VisualRelationProxy[]
 }
 
 const defaultContactToleranceMeters = 0.005
 const defaultContactMaxPenetrationMeters = 0.006
+const defaultPathContactToleranceMeters = 0.012
+const defaultPathContactMaxPenetrationMeters = 0.006
 
 export function runPromptChecks(
   asset: ManifestAsset,
@@ -72,12 +82,29 @@ export function runPromptChecks(
     ]
   }
 
-  return indexedChecks.flatMap(({ check, index }) =>
-    runPromptCheck(asset, builtAsset, check, `/checks/${index}`, {
-      poseLabel: options.poseLabel,
-      stage: options.stage ?? 'checks',
-    }),
-  )
+  if (indexedChecks.length === 0) {
+    return []
+  }
+
+  const meshRelationIndex =
+    options.meshRelationIndex ?? createMeshRelationIndex(builtAsset)
+  const visualRelationProxies =
+    options.visualRelationProxies ?? createVisualRelationProxies(builtAsset)
+
+  try {
+    return indexedChecks.flatMap(({ check, index }) =>
+      runPromptCheck(asset, builtAsset, check, `/checks/${index}`, {
+        meshRelationIndex,
+        poseLabel: options.poseLabel,
+        stage: options.stage ?? 'checks',
+        visualRelationProxies,
+      }),
+    )
+  } finally {
+    if (!options.meshRelationIndex) {
+      meshRelationIndex.dispose()
+    }
+  }
 }
 
 function runPromptCheck(
@@ -86,8 +113,10 @@ function runPromptCheck(
   check: ManifestCheck,
   path: string,
   context: {
+    meshRelationIndex: MeshRelationIndex
     poseLabel?: string
     stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ): ValidationSignal[] {
   switch (check.type) {
@@ -111,6 +140,8 @@ function runPromptCheck(
       return runMaterialSideCheck(asset, check, path, context)
     case 'expect_contact':
       return runContactCheck(builtAsset, check, path, context)
+    case 'expect_path_contacts':
+      return runPathContactsCheck(builtAsset, check, path, context)
     case 'expect_gap':
       return runGapCheck(builtAsset, check, path, context)
     case 'expect_overlap':
@@ -127,8 +158,10 @@ function runMaterialSideCheck(
   check: Extract<ManifestCheck, { type: 'expect_material_side' }>,
   path: string,
   context: {
+    meshRelationIndex: MeshRelationIndex
     poseLabel?: string
     stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ) {
   const visualEntry = findVisualEntry(asset, check.visualId)
@@ -197,8 +230,10 @@ function runJointExistsCheck(
   check: Extract<ManifestCheck, { type: 'joint_exists' }>,
   path: string,
   context: {
+    meshRelationIndex: MeshRelationIndex
     poseLabel?: string
     stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ) {
   const joint = asset.joints.find((candidate) => candidate.id === check.jointId)
@@ -239,8 +274,10 @@ function runContactCheck(
   check: Extract<ManifestCheck, { type: 'expect_contact' }>,
   path: string,
   context: {
+    meshRelationIndex: MeshRelationIndex
     poseLabel?: string
     stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ) {
   const resolved = resolvePairBounds(
@@ -274,6 +311,9 @@ function runContactCheck(
       partBId: check.partBId,
       visualAId: check.visualAId,
       visualBId: check.visualBId,
+    }, {
+      meshRelationIndex: context.meshRelationIndex,
+      proxies: context.visualRelationProxies,
     }),
     {
       contactTolerance,
@@ -314,13 +354,204 @@ function runContactCheck(
   ]
 }
 
+function runPathContactsCheck(
+  builtAsset: BuiltManifestAsset,
+  check: Extract<ManifestCheck, { type: 'expect_path_contacts' }>,
+  path: string,
+  context: {
+    meshRelationIndex: MeshRelationIndex
+    poseLabel?: string
+    stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
+  },
+) {
+  const contactTolerance =
+    check.contactTolerance ?? defaultPathContactToleranceMeters
+  const maxPenetration =
+    check.maxPenetration ?? defaultPathContactMaxPenetrationMeters
+  const minContacts = check.minContacts ?? check.targets.length
+
+  if (minContacts > check.targets.length) {
+    return [
+      createCheckFailure(
+        'authored_check',
+        'expect_path_contacts_invalid_thresholds',
+        'expect_path_contacts minContacts must be less than or equal to the number of targets.',
+        path,
+        {
+          pathPartId: check.pathPartId,
+          targetPartIds: check.targets.map((target) => target.partId).join(', '),
+        },
+        `minContacts=${minContacts} targets=${check.targets.length}`,
+        context,
+      ),
+    ]
+  }
+
+  const missingRefSignals: ValidationSignal[] = []
+  const targetResults = check.targets.map((target, targetIndex) => {
+    const resolved = resolvePairBounds(
+      builtAsset,
+      check.pathPartId,
+      target.partId,
+      check.pathVisualId,
+      target.visualId,
+    )
+
+    if (isResolvedPairError(resolved)) {
+      missingRefSignals.push(
+        createCheckFailure(
+          'missing_exact_geometry',
+          'check_ref_missing',
+          resolved.error,
+          `${path}/targets/${targetIndex}`,
+          {
+            ...resolved.refs,
+            pathPartId: check.pathPartId,
+            targetPartId: target.partId,
+          },
+          undefined,
+          context,
+        ),
+      )
+
+      return {
+        contact: false,
+        relation: null,
+        target,
+      }
+    }
+
+    const relation = selectBestContactRelation(
+      findVisualRelations(builtAsset, {
+        partAId: check.pathPartId,
+        partBId: target.partId,
+        visualAId: check.pathVisualId,
+        visualBId: target.visualId,
+      }, {
+        meshRelationIndex: context.meshRelationIndex,
+        proxies: context.visualRelationProxies,
+      }),
+      {
+        contactTolerance,
+        maxPenetration,
+      },
+    )
+
+    return {
+      contact: Boolean(
+        relation &&
+          relation.distance <= contactTolerance &&
+          relation.penetrationDepth <= maxPenetration,
+      ),
+      relation,
+      target,
+    }
+  })
+
+  if (missingRefSignals.length > 0) {
+    return missingRefSignals
+  }
+
+  const contactCount = targetResults.filter((result) => result.contact).length
+
+  if (contactCount >= minContacts) {
+    return []
+  }
+
+  const failedResults = targetResults.filter((result) => !result.contact)
+  const closestFailure = failedResults.reduce<(typeof failedResults)[number] | null>(
+    (best, result) => {
+      if (!best) {
+        return result
+      }
+
+      if (!result.relation) {
+        return best
+      }
+
+      if (!best.relation) {
+        return result
+      }
+
+      return getContactViolationScore(result.relation, {
+        contactTolerance,
+        maxPenetration,
+      }) <
+        getContactViolationScore(best.relation, {
+          contactTolerance,
+          maxPenetration,
+        })
+        ? result
+        : best
+    },
+    null,
+  )
+  const closestRelation = closestFailure?.relation ?? null
+  const targetRefs = {
+    pathPartId: check.pathPartId,
+    ...(check.pathVisualId ? { pathVisualId: check.pathVisualId } : {}),
+    targetPartIds: check.targets.map((target) => target.partId).join(', '),
+    ...(closestFailure
+      ? {
+          partAId: check.pathPartId,
+          partBId: closestFailure.target.partId,
+          ...(check.pathVisualId ? { visualAId: check.pathVisualId } : {}),
+          ...(closestFailure.target.visualId
+            ? { visualBId: closestFailure.target.visualId }
+            : {}),
+          targetPartId: closestFailure.target.partId,
+          ...(closestFailure.target.visualId
+            ? { targetVisualId: closestFailure.target.visualId }
+            : {}),
+        }
+      : {}),
+  }
+  const targetSummaries = targetResults
+    .map(({ contact, relation, target }) => {
+      const targetId = target.visualId
+        ? `${target.partId}/${target.visualId}`
+        : target.partId
+
+      return relation
+        ? `${targetId}:${contact ? 'contact' : 'miss'} distance=${relation.distance.toFixed(4)} penetration=${relation.penetrationDepth.toFixed(4)} visualPair=${relation.visualAId}<->${relation.visualBId}`
+        : `${targetId}:unmeasured`
+    })
+    .join(' | ')
+
+  return [
+    createCheckFailure(
+      'path_contact_fit',
+      'expect_path_contacts_failed',
+      `Expected path part "${check.pathPartId}" to contact at least ${minContacts} target part${minContacts === 1 ? '' : 's'}, but only ${contactCount} matched.`,
+      path,
+      targetRefs,
+      [
+        `contacts=${contactCount}/${check.targets.length}`,
+        `minContacts=${minContacts}`,
+        `contactTolerance=${contactTolerance}`,
+        `maxPenetration=${maxPenetration}`,
+        closestRelation
+          ? `closestFailedVisualPair=${closestRelation.visualAId}<->${closestRelation.visualBId}`
+          : null,
+        targetSummaries,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      context,
+    ),
+  ]
+}
+
 function runGapCheck(
   builtAsset: BuiltManifestAsset,
   check: Extract<ManifestCheck, { type: 'expect_gap' }>,
   path: string,
   context: {
+    meshRelationIndex: MeshRelationIndex
     poseLabel?: string
     stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ) {
   const resolved = resolvePairBounds(
@@ -388,8 +619,10 @@ function runOverlapCheck(
   check: Extract<ManifestCheck, { type: 'expect_overlap' }>,
   path: string,
   context: {
+    meshRelationIndex: MeshRelationIndex
     poseLabel?: string
     stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ) {
   const resolved = resolvePairBounds(
@@ -447,8 +680,10 @@ function runWithinCheck(
   check: Extract<ManifestCheck, { type: 'expect_within' }>,
   path: string,
   context: {
+    meshRelationIndex: MeshRelationIndex
     poseLabel?: string
     stage: ValidationStage
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ) {
   const resolved = resolvePairBounds(

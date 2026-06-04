@@ -405,6 +405,18 @@ const poseSpecSchema = objectSchema(
   ['name', 'joints'],
 )
 
+const pathContactTargetSchema = objectSchema(
+  {
+    partId: stringSchema(
+      'Existing target part id that the path-like part should visibly touch.',
+    ),
+    visualId: stringSchema(
+      'Existing target visual id on that part when the exact support, wheel, pulley, sprocket, guide, fitting, or mount is known.',
+    ),
+  },
+  ['partId', 'visualId'],
+)
+
 const checkSchema = {
   anyOf: [
     ...checkSchemaVariants(
@@ -453,6 +465,37 @@ const checkSchema = {
         'partBId',
         'visualAId',
         'visualBId',
+        'contactTolerance',
+        'maxPenetration',
+      ],
+    ),
+    ...checkSchemaVariants(
+      {
+        type: literalSchema('expect_path_contacts'),
+        pathPartId: stringSchema(
+          'Existing path-like part id for a belt, chain, cable, hose, rope, strap, wire, track, or similar routed component.',
+        ),
+        pathVisualId: stringSchema(
+          'Existing visual id on the path-like part when a specific tube, torus, or loop visual is being tested.',
+        ),
+        targets: arraySchema(pathContactTargetSchema, { minItems: 1 }),
+        minContacts: integerSchema(
+          'Minimum number of target parts that must be in close contact with the path. Usually equal to targets.length for belts, chains, tracks, and wrapped cables.',
+          { minimum: 1 },
+        ),
+        contactTolerance: nonNegativeNumberSchema(
+          'Nonnegative contact tolerance in meters for each path-to-target contact.',
+        ),
+        maxPenetration: nonNegativeNumberSchema(
+          'Maximum hidden penetration in meters allowed at each path-to-target contact. Use 0 for surface riding contact.',
+        ),
+      },
+      [
+        'type',
+        'pathPartId',
+        'pathVisualId',
+        'targets',
+        'minContacts',
         'contactTolerance',
         'maxPenetration',
       ],
@@ -510,6 +553,9 @@ const checkSchema = {
         outerPartId: stringSchema('Existing outer part id.'),
         axes: enumSchema(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz']),
         margin: nonNegativeNumberSchema('Containment margin in meters.'),
+        maxPenetration: nonNegativeNumberSchema(
+          'Maximum allowed visual penetration in meters when exact containment is an intentional guided or captured fit.',
+        ),
         innerVisualId: stringSchema('Existing visual id on inner part.'),
         outerVisualId: stringSchema('Existing visual id on outer part.'),
       },
@@ -519,6 +565,7 @@ const checkSchema = {
         'outerPartId',
         'axes',
         'margin',
+        'maxPenetration',
         'innerVisualId',
         'outerVisualId',
       ],

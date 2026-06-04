@@ -339,7 +339,9 @@ function getGeneratedControlSampleValues(control: JointPreviewControl) {
   }
 
   const defaultValue = getDefaultJointControlValue(control)
-  const candidates = [control.range.min, control.range.max]
+  const candidates = control.bindings.length > 1
+    ? getLinkedControlSampleValues(control)
+    : [control.range.min, control.range.max]
 
   if (control.range.min < 0 && control.range.max > 0) {
     candidates.push((control.range.min + control.range.max) / 2)
@@ -348,6 +350,18 @@ function getGeneratedControlSampleValues(control: JointPreviewControl) {
   return uniqueFiniteValues(candidates)
     .map((value) => normalizeJointControlValue(control, value))
     .filter((value) => Math.abs(value - defaultValue) > 1e-8)
+}
+
+function getLinkedControlSampleValues(control: JointPreviewControl) {
+  const min = control.range.min
+  const max = control.range.max
+  const span = max - min
+
+  if (!Number.isFinite(span) || span <= 0) {
+    return [min, max]
+  }
+
+  return [0, 0.25, 0.5, 0.75, 1].map((phase) => min + span * phase)
 }
 
 function resolveJointPreviewControl(

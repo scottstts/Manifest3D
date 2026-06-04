@@ -13,9 +13,17 @@ import {
   findCurrentPoseVisualOverlaps,
   type GeometryOverlapFinding,
 } from '../geometry/overlapChecks'
+import {
+  createVisualRelationProxies,
+  type VisualRelationProxy,
+} from '../geometry/relationMetrics'
 import * as THREE from 'three/webgpu'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import type { ValidationSignal } from '../schema/validationTypes'
+import {
+  formatBoundedOverlapProofDetails,
+  getBoundedOverlapProofCheck,
+} from './overlapProofChecks'
 import { createValidationSignal } from './reportBuilder'
 import { isOverlapAllowed } from './runAllowances'
 import {
@@ -61,18 +69,20 @@ export function runSampledPoseValidation(
       const builtAsset = buildManifestAsset(asset, {
         jointPoses: sample.poses,
       })
+      const visualRelationProxies = createVisualRelationProxies(builtAsset)
+      const checksForPose = poseSpecificChecks.filter(
+        ({ check }) =>
+          check.pose && resolvedPoseKey(asset, check.pose) === poseValuesKey(sample.poses),
+      )
 
       try {
         signals.push(
           ...runSampledPoseOverlapQc(asset, sample, builtAsset, {
+            checksForPose,
             restBuiltAsset: activeRestBuiltAsset,
             restOverlapKeys,
+            visualRelationProxies,
           }),
-        )
-
-        const checksForPose = poseSpecificChecks.filter(
-          ({ check }) =>
-            check.pose && resolvedPoseKey(asset, check.pose) === poseValuesKey(sample.poses),
         )
 
         if (checksForPose.length > 0) {
@@ -80,6 +90,7 @@ export function runSampledPoseValidation(
             ...runPromptChecks(asset, builtAsset, {
               checks: checksForPose,
               includeMissingChecksWarning: false,
+              visualRelationProxies,
               poseLabel: formatSampleLabel(sample),
               stage: 'sampled_poses',
             }),
@@ -148,12 +159,27 @@ function runSampledPoseOverlapQc(
   sample: JointPoseSample,
   builtAsset: BuiltManifestAsset,
   restContext: {
+    checksForPose: readonly IndexedManifestCheck[]
     restBuiltAsset: BuiltManifestAsset
     restOverlapKeys: ReadonlySet<string>
+    visualRelationProxies: readonly VisualRelationProxy[]
   },
 ) {
   const signals: ValidationSignal[] = []
-  const findings = findCurrentPoseVisualOverlaps(builtAsset, overlapOptions)
+  const partPairChangeCache = new Map<string, boolean>()
+  const findings = findCurrentPoseVisualOverlaps(builtAsset, {
+    ...overlapOptions,
+    proxies: restContext.visualRelationProxies,
+    shouldConsiderPair: (pair) =>
+      !restContext.restOverlapKeys.has(getVisualPairCandidateKey(pair)) &&
+      haveChangedRelativePartTransform(
+        restContext.restBuiltAsset,
+        builtAsset,
+        pair.partAId,
+        pair.partBId,
+        partPairChangeCache,
+      ),
+  })
 
   for (const finding of findings) {
     if (isRigidSharedPoseArtifact(finding, builtAsset, restContext)) {
@@ -174,6 +200,39 @@ function runSampledPoseOverlapQc(
           `Sampled-pose overlap between "${finding.partAId}" and "${finding.partBId}" is covered by an authored allowance.`,
           {
             details,
+            group: 'qc',
+            refs: {
+              partAId: finding.partAId,
+              partBId: finding.partBId,
+              poseValues: formatPoseValues(sample.poses),
+              visualAId: finding.visualAId,
+              visualBId: finding.visualBId,
+            },
+            severity: 'note',
+            source: 'baseline_qc',
+            stage: 'sampled_poses',
+          },
+        ),
+      )
+      continue
+    }
+
+    const proof = getBoundedOverlapProofCheck(
+      finding,
+      restContext.checksForPose.map(({ check }) => check),
+    )
+
+    if (proof) {
+      signals.push(
+        createValidationSignal(
+          'sampled_pose_overlap',
+          'part_overlap_sampled_pose_proven_fit',
+          `Sampled-pose overlap between "${finding.partAId}" and "${finding.partBId}" is covered by a bounded authored fit check.`,
+          {
+            details: [
+              details,
+              formatBoundedOverlapProofDetails(proof),
+            ].join(' '),
             group: 'qc',
             refs: {
               partAId: finding.partAId,
@@ -214,6 +273,32 @@ function runSampledPoseOverlapQc(
   }
 
   return signals
+}
+
+function haveChangedRelativePartTransform(
+  restBuiltAsset: BuiltManifestAsset,
+  sampledBuiltAsset: BuiltManifestAsset,
+  partAId: string,
+  partBId: string,
+  cache: Map<string, boolean>,
+) {
+  const key = getPartPairKey(partAId, partBId)
+  const cached = cache.get(key)
+
+  if (cached !== undefined) {
+    return cached
+  }
+
+  const changed = !haveSameRelativePartTransform(
+    restBuiltAsset,
+    sampledBuiltAsset,
+    partAId,
+    partBId,
+  )
+
+  cache.set(key, changed)
+
+  return changed
 }
 
 function isRigidSharedPoseArtifact(
@@ -292,6 +377,22 @@ function getOverlapFindingKey(finding: GeometryOverlapFinding) {
     `${finding.partAId}:${finding.visualAId}`,
     `${finding.partBId}:${finding.visualBId}`,
   ].sort().join('|')
+}
+
+function getVisualPairCandidateKey(pair: {
+  partAId: string
+  partBId: string
+  visualAId: string
+  visualBId: string
+}) {
+  return [
+    `${pair.partAId}:${pair.visualAId}`,
+    `${pair.partBId}:${pair.visualBId}`,
+  ].sort().join('|')
+}
+
+function getPartPairKey(partAId: string, partBId: string) {
+  return [partAId, partBId].sort().join('|')
 }
 
 function dedupeSamples(samples: readonly JointPoseSample[]) {

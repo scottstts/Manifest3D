@@ -34,6 +34,7 @@ describe('compileManifestPrompt', () => {
     expect(compiled.system).toContain('roundedBox')
     expect(compiled.system).toContain('Multi-joint assets must not rely')
     expect(compiled.system).toContain('fan blades inside wire grilles')
+    expect(compiled.system).toContain('blade visibly rooted')
     expect(compiled.system).toContain('Pair each `allow_overlap`')
     expect(compiled.user).toContain('Create a complete Manifest3D asset')
     expect(compiled.user).toContain("Model the object's real construction logic")
@@ -157,6 +158,10 @@ describe('compileManifestPrompt', () => {
     expect(compiled.user).toContain('<validation_signals>')
     expect(compiled.user).toContain('<candidate_json>\n{"schemaVersion":2')
     expect(compiled.user).toContain('top-level `patch` array')
+    expect(compiled.user).toContain('Repair Patch Example')
+    expect(compiled.user).toContain('/checks/-')
+    expect(compiled.user).toContain('Never write authored check descriptors')
+    expect(compiled.user).not.toContain('Example Hinged Box')
   })
 
   it('keeps the compact example parseable as Contract V2 JSON', () => {
