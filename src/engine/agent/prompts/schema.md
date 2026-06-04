@@ -99,7 +99,7 @@ Authored checks should prove prompt-critical exact relationships:
 - Add pose-specific checks for primary mechanisms: open lids, extended drawers/slides, rotated handles, wheels, hinges, pistons, sleeves, retainers, and controls. For linked guided mechanisms, include the prismatic and rotary joint values in the same pose.
 - Entries in `check.pose.joints` are sampled values for existing joints, not full joint descriptors. Do not include `id`, `name`, `type`, `parentPartId`, `childPartId`, `origin`, `axis`, or `limits` in pose samples.
 - `check.pose` is not an asset, part, check, or transform container. It must not contain `schemaVersion`, `parts`, `materials`, `checks`, `allowances`, `metadata`, `position`, `rotation`, `scale`, or nested check fields such as `type`, `partAId`, `partBId`, `visualAId`, or `visualBId`.
-- Every part, visual, joint, and material reference in a check must name a real stable id from the asset. Do not use placeholder ids such as `x`, `y`, `a`, `b`, `__invalid__`, `invalid`, `part-a`, `part-b`, `visual-a`, or `visual-b`.
+- Every part, visual, joint, and material reference in a check must name a real stable id from the asset. Do not use placeholder ids such as `x`, `y`, `z`, `a`, `b`, `todo`, `dummy`, `example`, `fake`, `placeholder`, `replace-me`, `__invalid__`, `invalid`, `invalid-id`, `part-a`, `part-b`, `visual-a`, `visual-b`, `joint-a`, or `joint-b`.
 
 Allowances:
 

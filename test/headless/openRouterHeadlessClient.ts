@@ -36,7 +36,9 @@ export type CreateOpenRouterHeadlessManifestClientOptions = {
   apiKey?: string
   endpoint?: string
   fetcher?: FetchLike
+  maxRetries?: number
   model?: ModelConfig
+  retryDelayMs?: number
 }
 
 export type OpenRouterHeadlessSmokeRequestOptions = {
@@ -44,8 +46,10 @@ export type OpenRouterHeadlessSmokeRequestOptions = {
   endpoint?: string
   fetcher?: FetchLike
   label?: string
+  maxRetries?: number
   model?: ModelConfig
   prompt?: string
+  retryDelayMs?: number
 }
 
 export const openRouterHeadlessModelConfig: ModelConfig = {
@@ -57,6 +61,12 @@ export const openRouterHeadlessModelConfig: ModelConfig = {
 export const openRouterHeadlessResponsesEndpoint =
   'https://openrouter.ai/api/v1/responses'
 
+const defaultMaxRetries = 1
+const defaultRetryDelayMs = 1_000
+const transientHttpStatuses = new Set([
+  408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524,
+])
+
 export function createOpenRouterHeadlessManifestClient(
   options: CreateOpenRouterHeadlessManifestClientOptions = {},
 ): ManifestProviderClient {
@@ -64,6 +74,8 @@ export function createOpenRouterHeadlessManifestClient(
   const fetcher = options.fetcher ?? fetch
   const config = options.model ?? openRouterHeadlessModelConfig
   const apiKey = options.apiKey ?? ''
+  const maxRetries = options.maxRetries ?? defaultMaxRetries
+  const retryDelayMs = options.retryDelayMs ?? defaultRetryDelayMs
 
   return {
     async generateAsset(request) {
@@ -77,11 +89,13 @@ export function createOpenRouterHeadlessManifestClient(
       }
 
       const body = buildOpenRouterHeadlessResponsesRequestBody(request, config)
-      const result = await sendOpenRouterJsonRequest({
+      const result = await sendOpenRouterJsonRequestWithRetry({
         apiKey,
         body,
         endpoint,
         fetcher,
+        maxRetries,
+        retryDelayMs,
         signal: request.signal,
       })
 
@@ -123,6 +137,8 @@ export async function runOpenRouterHeadlessSmokeRequest(
   const fetcher = options.fetcher ?? fetch
   const config = options.model ?? openRouterHeadlessModelConfig
   const apiKey = options.apiKey ?? ''
+  const maxRetries = options.maxRetries ?? defaultMaxRetries
+  const retryDelayMs = options.retryDelayMs ?? defaultRetryDelayMs
 
   if (!apiKey) {
     return {
@@ -139,11 +155,13 @@ export async function runOpenRouterHeadlessSmokeRequest(
       options.prompt ??
       'Return JSON confirming this OpenRouter Responses client works.',
   })
-  const result = await sendOpenRouterJsonRequest({
+  const result = await sendOpenRouterJsonRequestWithRetry({
     apiKey,
     body,
     endpoint,
     fetcher,
+    maxRetries,
+    retryDelayMs,
   })
 
   if (result.status === 'network_error') {
@@ -257,6 +275,47 @@ function parseOpenRouterManifestResponse(response: unknown): AgentResponse {
   }
 }
 
+async function sendOpenRouterJsonRequestWithRetry({
+  apiKey,
+  body,
+  endpoint,
+  fetcher,
+  maxRetries,
+  retryDelayMs,
+  signal,
+}: {
+  apiKey: string
+  body: unknown
+  endpoint: string
+  fetcher: FetchLike
+  maxRetries: number
+  retryDelayMs: number
+  signal?: AbortSignal
+}): Promise<OpenRouterRequestResult> {
+  for (let attempt = 0; ; attempt += 1) {
+    const result = await sendOpenRouterJsonRequest({
+      apiKey,
+      body,
+      endpoint,
+      fetcher,
+      signal,
+    })
+
+    if (!shouldRetryOpenRouterRequest(result, attempt, maxRetries)) {
+      return result
+    }
+
+    try {
+      await sleep(retryDelayMs, signal)
+    } catch {
+      return {
+        message: 'The OpenRouter request was aborted.',
+        status: 'network_error',
+      }
+    }
+  }
+}
+
 async function sendOpenRouterJsonRequest({
   apiKey,
   body,
@@ -292,7 +351,19 @@ async function sendOpenRouterJsonRequest({
     }
   }
 
-  const rawText = await response.text()
+  let rawText: string
+
+  try {
+    rawText = await response.text()
+  } catch (error) {
+    return {
+      message:
+        error instanceof Error
+          ? error.message
+          : 'The OpenRouter response body could not be read.',
+      status: 'network_error',
+    }
+  }
 
   return {
     json: parseJsonOrNull(rawText),
@@ -300,6 +371,22 @@ async function sendOpenRouterJsonRequest({
     response,
     status: 'response',
   }
+}
+
+function shouldRetryOpenRouterRequest(
+  result: OpenRouterRequestResult,
+  attempt: number,
+  maxRetries: number,
+) {
+  if (attempt >= maxRetries) {
+    return false
+  }
+
+  if (result.status === 'network_error') {
+    return true
+  }
+
+  return transientHttpStatuses.has(result.response.status)
 }
 
 function createOpenRouterHttpErrorMessage(
@@ -401,6 +488,33 @@ function parseJsonOrNull(value: string) {
   } catch {
     return null
   }
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  if (signal?.aborted) {
+    return Promise.reject(new Error('The OpenRouter request was aborted.'))
+  }
+
+  if (ms <= 0) {
+    return Promise.resolve()
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      signal?.removeEventListener('abort', abortHandler)
+    }
+    const timeout = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, ms)
+    const abortHandler = () => {
+      clearTimeout(timeout)
+      cleanup()
+      reject(new Error('The OpenRouter request was aborted.'))
+    }
+
+    signal?.addEventListener('abort', abortHandler, { once: true })
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

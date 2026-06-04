@@ -5,7 +5,6 @@ import type {
 } from '../schema/validationTypes'
 import {
   manifestAssetSchema,
-  manifestCheckSchema,
   manifestJointControlBindingSchema,
 } from '../schema/manifestSchema'
 import type { SceneStore } from '../scene/sceneStore'
@@ -586,10 +585,8 @@ function applyRepairPatch(currentCandidate: unknown, patchCandidate: unknown) {
 }
 
 function normalizeRepairPatchCandidate(patchCandidate: unknown) {
-  return normalizeManifestContractObjectsMisplacedInVisualGeometry(
-    normalizeControlObjectMisplacedInControlBinding(
-      normalizeAppendReplaceOperations(patchCandidate),
-    ),
+  return normalizeControlObjectMisplacedInControlBinding(
+    normalizeAppendReplaceOperations(patchCandidate),
   )
 }
 
@@ -657,66 +654,6 @@ function normalizeControlObjectMisplacedInControlBinding(
       ...operation,
       value: binding,
     }
-  })
-
-  if (!changed) {
-    return patchCandidate
-  }
-
-  return {
-    ...patchCandidate,
-    patch,
-  }
-}
-
-function normalizeManifestContractObjectsMisplacedInVisualGeometry(
-  patchCandidate: unknown,
-) {
-  if (!isRecord(patchCandidate) || !Array.isArray(patchCandidate.patch)) {
-    return patchCandidate
-  }
-
-  let changed = false
-  const patch = patchCandidate.patch.map((operation) => {
-    if (!isRecord(operation)) {
-      return operation
-    }
-
-    const op = operation.op
-    const path = operation.path
-
-    if (
-      (op !== 'add' && op !== 'replace') ||
-      typeof path !== 'string' ||
-      !isVisualGeometryPatchPath(path)
-    ) {
-      return operation
-    }
-
-    if (
-      isAllowanceDescriptorLike(operation.value) &&
-      !hasPlaceholderReferenceId(operation.value)
-    ) {
-      changed = true
-
-      return {
-        op: 'add',
-        path: '/allowances/-',
-        value: operation.value,
-      }
-    }
-
-    if (isSalvageableMisplacedCheckDescriptor(operation.value)) {
-      changed = true
-
-      return {
-        op: 'add',
-        path: '/checks/-',
-        value: operation.value,
-      }
-    }
-
-    return operation
   })
 
   if (!changed) {
@@ -926,9 +863,7 @@ function createPatchApplicationPathHints(
   }
 
   if (
-    /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints(?:\/\d+|\/-|\b)/.test(
-      combined,
-    ) &&
+    hasControlJointBindingPath(combined) &&
     /\bUnrecognized keys: "id", "name", "joints", "limits"/.test(combined)
   ) {
     hints.push(
@@ -937,15 +872,24 @@ function createPatchApplicationPathHints(
   }
 
   if (
-    /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints(?:\/\d+|\/-|\b)/.test(
+    hasControlJointBindingPath(combined) &&
+    hasControlJointBindingSchemaDomainMistake(combined)
+  ) {
+    hints.push(
+      '- Control `joints` entries accept only control bindings `{ "jointId": "<existing-movable-joint>", "scale": number, "offset": number }`. Do not put `part_exists`, `joint_exists`, `expect_*`, `allow_*`, relation descriptors, or full joint definitions in `/controls/byId/<control-id>/joints/-`; add authored checks under `/checks/-`, allowances under `/allowances/-`, and patch joint definitions under `/joints/byId/<joint-id>/...`.',
+    )
+  }
+
+  if (
+    /(?:remove|replace) \/controls\/(?:\d+|byId\/[^/\s]+)\/joints\/-/.test(
       combined,
-    ) &&
-    /\b(?:type=joint_exists|jointType|effort|velocity|parentPartId|childPartId|axis|origin)\b/.test(
+    ) ||
+    /Path "\/controls\/(?:\d+|byId\/[^/\s]+)\/joints\/-" does not exist/.test(
       combined,
     )
   ) {
     hints.push(
-      '- Control `joints` entries are control bindings, not joint definitions or `joint_exists` checks. Use `{ "jointId": "<existing-movable-joint>", "scale": number, "offset": number }` in `/controls/byId/<control-id>/joints/-`; add `joint_exists` under `/checks/-`, and patch joint definitions under `/joints/byId/<joint-id>/...`.',
+      '- The `/-` suffix is append-only for `add` operations. Do not `remove` `/controls/byId/<control-id>/joints/-`; remove a concrete existing binding by index only when it should be deleted, or append a new binding with `add`.',
     )
   }
 
@@ -1208,6 +1152,32 @@ function isVisualGeometryPatchPath(path: string) {
   )
 }
 
+function hasControlJointBindingPath(value: string) {
+  return /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints(?:\/\d+|\/-|\b)/.test(
+    value,
+  )
+}
+
+function hasControlJointBindingSchemaDomainMistake(value: string) {
+  return (
+    /\btype=(?:part_exists|joint_exists|expect_[a-z_]+|allow_[a-z_]+)/.test(
+      value,
+    ) ||
+    /\b(?:partId|partAId|partBId|visualAId|visualBId|innerPartId|outerPartId|innerVisualId|outerVisualId|jointType|parentPartId|childPartId|axis|origin|contactTolerance|maxPenetration|minContacts|minOverlap|margin)\b/.test(
+      value,
+    ) ||
+    /Unrecognized keys: "[^"]*(?:partId|partAId|partBId|visualAId|visualBId|innerPartId|outerPartId|innerVisualId|outerVisualId|jointType|parentPartId|childPartId|axis|origin|type)[^"]*"/.test(
+      value,
+    )
+  )
+}
+
+function isControlJointBindingItemPath(path: string) {
+  return /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints\/(?:\d+|-)$/.test(
+    path,
+  )
+}
+
 function isControlJointBindingAppendPath(path: string) {
   return /\/controls\/(?:\d+|byId\/[^/\s]+)\/joints\/-$/.test(path)
 }
@@ -1227,10 +1197,63 @@ function isSuspiciousSchemaDomainOperation(operation: unknown) {
     return false
   }
 
+  if (
+    operation.path !== '' &&
+    'value' in operation &&
+    isWholeAssetDescriptorLike(operation.value)
+  ) {
+    return true
+  }
+
+  if (
+    isSuspiciousControlJointBindingOperation({
+      op: operation.op,
+      path: operation.path,
+      value: operation.value,
+    })
+  ) {
+    return true
+  }
+
   return (
     isVisualGeometryPatchPath(operation.path) &&
     'value' in operation &&
     !isPrimitiveGeometryDescriptor(operation.value)
+  )
+}
+
+function isSuspiciousControlJointBindingOperation(operation: {
+  op?: unknown
+  path: string
+  value?: unknown
+}) {
+  if (
+    operation.op === 'remove' &&
+    isControlJointBindingAppendPath(operation.path)
+  ) {
+    return true
+  }
+
+  return (
+    (operation.op === 'add' || operation.op === 'replace') &&
+    isControlJointBindingItemPath(operation.path) &&
+    'value' in operation &&
+    !manifestJointControlBindingSchema.safeParse(operation.value).success
+  )
+}
+
+function isWholeAssetDescriptorLike(value: unknown) {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return (
+    'schemaVersion' in value &&
+    'parts' in value &&
+    'joints' in value &&
+    'materials' in value &&
+    'checks' in value &&
+    'metadata' in value
   )
 }
 
@@ -1256,56 +1279,6 @@ const geometryPrimitiveTypeNames = new Set([
   'connectorTube',
 ])
 
-function isAllowanceDescriptorLike(value: unknown) {
-  if (!isRecord(value) || typeof value.type !== 'string') {
-    return false
-  }
-
-  return value.type === 'allow_overlap' || value.type === 'allow_isolated_part'
-}
-
-function isSalvageableMisplacedCheckDescriptor(value: unknown) {
-  if (!isRecord(value) || typeof value.type !== 'string') {
-    return false
-  }
-
-  if (!value.type.startsWith('expect_')) {
-    return false
-  }
-
-  if (hasPlaceholderReferenceId(value)) {
-    return false
-  }
-
-  return manifestCheckSchema.safeParse(value).success
-}
-
-function hasPlaceholderReferenceId(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some(hasPlaceholderReferenceId)
-  }
-
-  if (!isRecord(value)) {
-    return false
-  }
-
-  for (const [key, childValue] of Object.entries(value)) {
-    if (
-      isReferenceIdField(key) &&
-      typeof childValue === 'string' &&
-      isPlaceholderReferenceId(childValue)
-    ) {
-      return true
-    }
-
-    if (hasPlaceholderReferenceId(childValue)) {
-      return true
-    }
-  }
-
-  return false
-}
-
 function summarizeReferenceIds(value: Record<string, unknown>) {
   const refs = Object.entries(value)
     .filter(
@@ -1329,34 +1302,6 @@ function isReferenceIdField(key: string) {
       normalized.includes('joint') ||
       normalized.includes('material')
     )
-  )
-}
-
-function isPlaceholderReferenceId(value: string) {
-  const normalized = value.trim().toLowerCase()
-
-  return (
-    normalized === '' ||
-    normalized === 'x' ||
-    normalized === 'y' ||
-    normalized === 'z' ||
-    normalized === 'a' ||
-    normalized === 'b' ||
-    normalized === 'todo' ||
-    normalized === 'dummy' ||
-    normalized === 'example' ||
-    normalized === 'fake' ||
-    normalized === 'invalid' ||
-    normalized === 'invalid-id' ||
-    normalized === 'placeholder' ||
-    normalized === 'replace-me' ||
-    normalized === '__invalid__' ||
-    normalized === 'part-a' ||
-    normalized === 'part-b' ||
-    normalized === 'visual-a' ||
-    normalized === 'visual-b' ||
-    normalized === 'joint-a' ||
-    normalized === 'joint-b'
   )
 }
 

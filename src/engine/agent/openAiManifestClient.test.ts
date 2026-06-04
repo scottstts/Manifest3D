@@ -111,6 +111,25 @@ describe('buildOpenAIResponsesRequestBody', () => {
     ).toEqual([])
   })
 
+  it('keeps path-scoped objects out of generic repair patch values', () => {
+    const valueVariantsJson = JSON.stringify(getRepairPatchValueVariants())
+    const patchOperationJson = JSON.stringify(getRepairPatchOperationVariants())
+
+    expect(valueVariantsJson).not.toContain('part_exists')
+    expect(valueVariantsJson).not.toContain('joint_exists')
+    expect(valueVariantsJson).not.toContain('allow_overlap')
+    expect(valueVariantsJson).not.toContain('schemaVersion')
+    expect(valueVariantsJson).not.toContain('Stable visual id')
+
+    expect(patchOperationJson).toContain('/visuals')
+    expect(patchOperationJson).toContain('/geometry')
+    expect(patchOperationJson).toContain('Stable visual id')
+    expect(patchOperationJson).toContain('^/checks')
+    expect(patchOperationJson).toContain('part_exists')
+    expect(patchOperationJson).toContain('^/allowances')
+    expect(patchOperationJson).toContain('allow_overlap')
+  })
+
   it('constrains generated vectors, geometry arrays, and bounded numbers', () => {
     const assetSchema = manifestAssetResponseJsonSchema
     const partSchema = getArrayItem(getProperty(assetSchema, 'parts'))
@@ -442,24 +461,19 @@ function getAnyOfVariant(schema: unknown, type: string) {
 }
 
 function getRepairPatchValueVariants() {
-  const patchArray = getProperty(manifestRepairPatchResponseJsonSchema, 'patch')
-  const patchOperation = getArrayItem(patchArray)
-
-  if (!isRecord(patchOperation) || !Array.isArray(patchOperation.anyOf)) {
-    throw new Error('Patch operation schema has no anyOf variants.')
-  }
-
-  const replaceOperation = patchOperation.anyOf.find(
+  const replaceOperation = getRepairPatchOperationVariants().find(
     (entry) =>
       isRecord(entry) &&
       isRecord(entry.properties) &&
       isRecord(entry.properties.op) &&
       Array.isArray(entry.properties.op.enum) &&
-      entry.properties.op.enum.includes('replace'),
+      entry.properties.op.enum.includes('replace') &&
+      !JSON.stringify(entry).includes('^/checks') &&
+      !JSON.stringify(entry).includes('^/allowances'),
   )
 
   if (!replaceOperation || !isRecord(replaceOperation)) {
-    throw new Error('Missing replace patch operation schema.')
+    throw new Error('Missing generic replace patch operation schema.')
   }
 
   const valueSchema = getProperty(replaceOperation, 'value')
@@ -469,6 +483,17 @@ function getRepairPatchValueVariants() {
   }
 
   return valueSchema.anyOf
+}
+
+function getRepairPatchOperationVariants() {
+  const patchArray = getProperty(manifestRepairPatchResponseJsonSchema, 'patch')
+  const patchOperation = getArrayItem(patchArray)
+
+  if (!isRecord(patchOperation) || !Array.isArray(patchOperation.anyOf)) {
+    throw new Error('Patch operation schema has no anyOf variants.')
+  }
+
+  return patchOperation.anyOf
 }
 
 function findStrictRequiredMismatches(

@@ -9,6 +9,11 @@ import {
   runOpenRouterHeadlessSmokeRequest,
 } from './openRouterHeadlessClient'
 
+type FetchLike = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>
+
 describe('openRouterHeadlessClient', () => {
   it('builds an OpenRouter Responses request that mirrors the OpenAI manifest path', () => {
     const body = buildOpenRouterHeadlessResponsesRequestBody(
@@ -140,6 +145,111 @@ describe('openRouterHeadlessClient', () => {
         'Generation is unavailable because no OpenRouter API key is loaded.',
       reason: 'missing_api_key',
       status: 'unavailable',
+    })
+  })
+
+  it('retries transient network failures once by default', async () => {
+    const fetcher = vi
+      .fn<Parameters<FetchLike>, ReturnType<FetchLike>>()
+      .mockRejectedValueOnce(new Error('fetch failed'))
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          id: 'resp_retry',
+          output_text: '{"ok":true}',
+          status: 'completed',
+        }),
+      )
+    const client = createOpenRouterHeadlessManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+      retryDelayMs: 0,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('create'))
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(response).toEqual({
+      candidate: {
+        ok: true,
+      },
+      rawText: '{"ok":true}',
+      responseId: 'resp_retry',
+      status: 'ok',
+    })
+  })
+
+  it('retries transient HTTP failures once by default', async () => {
+    const fetcher = vi
+      .fn<Parameters<FetchLike>, ReturnType<FetchLike>>()
+      .mockResolvedValueOnce(
+        createJsonResponse(
+          {
+            error: {
+              message: 'temporary upstream failure',
+            },
+          },
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          id: 'resp_http_retry',
+          output_text: '{"ok":true}',
+          status: 'completed',
+        }),
+      )
+    const client = createOpenRouterHeadlessManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+      retryDelayMs: 0,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('create'))
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(response).toEqual({
+      candidate: {
+        ok: true,
+      },
+      rawText: '{"ok":true}',
+      responseId: 'resp_http_retry',
+      status: 'ok',
+    })
+  })
+
+  it('retries transient response body failures once by default', async () => {
+    const fetcher = vi
+      .fn<Parameters<FetchLike>, ReturnType<FetchLike>>()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => {
+          throw new TypeError('terminated')
+        },
+      } as Response)
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          id: 'resp_body_retry',
+          output_text: '{"ok":true}',
+          status: 'completed',
+        }),
+      )
+    const client = createOpenRouterHeadlessManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+      retryDelayMs: 0,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('create'))
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(response).toEqual({
+      candidate: {
+        ok: true,
+      },
+      rawText: '{"ok":true}',
+      responseId: 'resp_body_retry',
+      status: 'ok',
     })
   })
 

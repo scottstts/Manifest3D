@@ -57,5 +57,5 @@ JSON rules:
 - Pair each `allow_overlap` with at least one exact check proving the intended relationship, such as contact, path contact, bounded gap, projected overlap, or containment. Validation requires this proof check, and visual-scoped allowances need proof checks that reference the same visual pair.
 - Include exact checks for prompt-critical claims. For relation checks between multi-visual parts, reference the exact visual ids that should touch, overlap, fit, or remain separated.
 - Preserve referenced ids during repair unless you update every dependent check and allowance in the same candidate.
-- Never use placeholder reference ids such as `x`, `y`, `a`, `b`, `__invalid__`, `invalid`, `part-a`, `part-b`, `visual-a`, or `visual-b` in checks, allowances, joints, controls, or materials. Reference existing stable ids or add the real referenced object first.
+- Never use placeholder reference ids such as `x`, `y`, `z`, `a`, `b`, `todo`, `dummy`, `example`, `fake`, `placeholder`, `replace-me`, `__invalid__`, `invalid`, `invalid-id`, `part-a`, `part-b`, `visual-a`, `visual-b`, `joint-a`, or `joint-b` in checks, allowances, joints, controls, or materials. Reference existing stable ids or add the real referenced object first.
 - Treat examples as reusable patterns only. Do not copy an example structure wholesale when the prompt asks for a different object.

@@ -905,7 +905,7 @@ describe('runManifestAgentLoop', () => {
     expect(requests[2].prompt.user).toContain('/joints/byId/<joint-id>/')
   })
 
-  it('salvages authored relation checks placed in visual geometry', async () => {
+  it('rejects authored relation checks placed in visual geometry', async () => {
     const requests: AgentRequest[] = []
     const sceneStore = createSceneStore(emptyScene)
     const client = createQueuedClient(
@@ -951,7 +951,7 @@ describe('runManifestAgentLoop', () => {
     const result = await runManifestAgentLoop(
       {
         mode: 'create',
-        runId: 'run-geometry-overlap-check-patch-salvage',
+        runId: 'run-geometry-overlap-check-patch-rejection',
         scene: emptyScene,
         userPrompt: 'Create a hinged utility crate.',
       },
@@ -967,15 +967,15 @@ describe('runManifestAgentLoop', () => {
       'repair',
       'repair',
     ])
-    expect(requests[2].prompt.user).not.toContain('<patch_application_error>')
-    expect((result.history.attempts[1]?.candidate as ManifestAsset).checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          partAId: 'crate-base',
-          partBId: 'crate-lid',
-          type: 'expect_overlap',
-        }),
-      ]),
+    expect(result.history.attempts.map((attempt) => attempt.status)).toEqual([
+      'failure',
+      'success',
+    ])
+    expect(requests[2].prompt.user).toContain('<patch_application_error>')
+    expect(requests[2].prompt.user).toContain('authored check object')
+    expect(requests[2].prompt.user).toContain('/checks/-')
+    expect(requests[2].prompt.user).toContain(
+      'visual `geometry` field',
     )
   })
 
@@ -1129,7 +1129,7 @@ describe('runManifestAgentLoop', () => {
     )
   })
 
-  it('salvages allowances placed in visual geometry as allowance additions', async () => {
+  it('rejects allowances placed in visual geometry instead of silently rerouting them', async () => {
     const requests: AgentRequest[] = []
     const sceneStore = createSceneStore(emptyScene)
     const client = createQueuedClient(
@@ -1184,22 +1184,20 @@ describe('runManifestAgentLoop', () => {
       },
     )
 
-    const salvagedCandidate = result.history.attempts[1]?.candidate as ManifestAsset
-
     expect(result.status).toBe('ready')
-    expect(requests[2].prompt.user).not.toContain('<patch_application_error>')
-    expect(salvagedCandidate.allowances).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          partAId: 'crate-base',
-          partBId: 'crate-lid',
-          type: 'allow_overlap',
-        }),
-      ]),
+    expect(result.history.attempts.map((attempt) => attempt.status)).toEqual([
+      'failure',
+      'success',
+    ])
+    expect(requests[2].prompt.user).toContain('<patch_application_error>')
+    expect(requests[2].prompt.user).toContain('allowance object')
+    expect(requests[2].prompt.user).toContain('/allowances/-')
+    expect(requests[2].prompt.user).toContain(
+      'visual `geometry` field',
     )
   })
 
-  it('salvages expect checks placed in visual geometry as check additions', async () => {
+  it('rejects expect checks placed in visual geometry instead of silently rerouting them', async () => {
     const requests: AgentRequest[] = []
     const sceneStore = createSceneStore(emptyScene)
     const client = createQueuedClient(
@@ -1250,7 +1248,7 @@ describe('runManifestAgentLoop', () => {
     const result = await runManifestAgentLoop(
       {
         mode: 'create',
-        runId: 'run-geometry-expect-check-patch-salvage',
+        runId: 'run-geometry-expect-check-patch-rejection',
         scene: emptyScene,
         userPrompt: 'Create a hinged utility crate.',
       },
@@ -1260,24 +1258,16 @@ describe('runManifestAgentLoop', () => {
       },
     )
 
-    const salvagedCandidate = result.history.attempts[1]?.candidate as ManifestAsset
-
     expect(result.status).toBe('ready')
-    expect(requests[2].prompt.user).not.toContain('<patch_application_error>')
-    expect(
-      salvagedCandidate.parts
-        .find((part) => part.id === 'crate-base')
-        ?.visuals.find((visual) => visual.id === 'crate-base-shell')?.geometry
-        .type,
-    ).toBe('box')
-    expect(salvagedCandidate.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          partAId: 'crate-base',
-          partBId: 'crate-lid',
-          type: 'expect_contact',
-        }),
-      ]),
+    expect(result.history.attempts.map((attempt) => attempt.status)).toEqual([
+      'failure',
+      'success',
+    ])
+    expect(requests[2].prompt.user).toContain('<patch_application_error>')
+    expect(requests[2].prompt.user).toContain('authored check object')
+    expect(requests[2].prompt.user).toContain('/checks/-')
+    expect(requests[2].prompt.user).toContain(
+      'no operation from the rejected patch was partially applied',
     )
   })
 
@@ -1429,6 +1419,76 @@ describe('runManifestAgentLoop', () => {
     expect(requests[2].prompt.user).toContain('/parts/byId/')
   })
 
+  it('flags hidden whole-asset objects pasted into nested patch values', async () => {
+    const requests: AgentRequest[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const fillerOperation = {
+      op: 'replace',
+      path: '/parts/byId/crate-base/visuals/byId/crate-base-shell/transform/position',
+      value: [0, 0.17, 0],
+    }
+    const client = createQueuedClient(
+      [
+        {
+          candidate: createInvalidValidationFixtureAsset(),
+          rawText: '{}',
+          responseId: 'resp_invalid',
+          status: 'ok',
+        },
+        {
+          candidate: {
+            patch: [
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              {
+                op: 'add',
+                path: '/joints/byId/crate-lid-hinge/limits',
+                value: createValidValidationFixtureAsset(),
+              },
+            ],
+          },
+          rawText: '{}',
+          responseId: 'resp_hidden_whole_asset_nested_patch',
+          status: 'ok',
+        },
+        {
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
+          rawText: '{}',
+          responseId: 'resp_valid',
+          status: 'ok',
+        },
+      ],
+      requests,
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        runId: 'run-hidden-whole-asset-nested-patch-hint',
+        scene: emptyScene,
+        userPrompt: 'Create a hinged utility crate.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(requests[2].prompt.user).toContain('<path_hints>')
+    expect(requests[2].prompt.user).toContain('whole asset object')
+    expect(requests[2].prompt.user).toContain(
+      'Flagged hidden schema-domain operation(s):',
+    )
+    expect(requests[2].prompt.user).toContain(
+      '7. add /joints/byId/crate-lid-hinge/limits value=object(keys=schemaVersion, id, name, prompt, units, ...+7)',
+    )
+  })
+
   it('normalizes replace operations at append paths to add operations', async () => {
     const requests: AgentRequest[] = []
     const sceneStore = createSceneStore(emptyScene)
@@ -1553,6 +1613,92 @@ describe('runManifestAgentLoop', () => {
     expect(requests[2].prompt.user).toContain('Control `joints` entries')
     expect(requests[2].prompt.user).toContain('scale')
     expect(requests[2].prompt.user).toContain('offset')
+    expect(requests[2].prompt.user).toContain('/checks/-')
+  })
+
+  it('surfaces hidden check descriptors placed in control joint bindings', async () => {
+    const requests: AgentRequest[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const fillerOperation = {
+      op: 'replace',
+      path: '/parts/byId/crate-base/visuals/byId/crate-base-shell/transform/position',
+      value: [0, 0.17, 0],
+    }
+    const client = createQueuedClient(
+      [
+        {
+          candidate: createInvalidValidationFixtureAsset(),
+          rawText: '{}',
+          responseId: 'resp_invalid',
+          status: 'ok',
+        },
+        {
+          candidate: {
+            patch: [
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              fillerOperation,
+              {
+                op: 'add',
+                path: '/controls/byId/crate-lid-control/joints/-',
+                value: {
+                  partId: 'crate-lid',
+                  type: 'part_exists',
+                },
+              },
+              {
+                op: 'remove',
+                path: '/controls/byId/crate-lid-control/joints/-',
+              },
+            ],
+          },
+          rawText: '{}',
+          responseId: 'resp_hidden_bad_control_joint_binding',
+          status: 'ok',
+        },
+        {
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
+          rawText: '{}',
+          responseId: 'resp_valid',
+          status: 'ok',
+        },
+      ],
+      requests,
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        runId: 'run-hidden-control-joint-binding-hint',
+        scene: emptyScene,
+        userPrompt: 'Create a hinged utility crate.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(requests[2].prompt.user).toContain('<patch_application_error>')
+    expect(requests[2].prompt.user).toContain(
+      'Flagged hidden schema-domain operation(s):',
+    )
+    expect(requests[2].prompt.user).toContain(
+      '7. add /controls/byId/crate-lid-control/joints/- value=object(type=part_exists',
+    )
+    expect(requests[2].prompt.user).toContain(
+      '8. remove /controls/byId/crate-lid-control/joints/-',
+    )
+    expect(requests[2].prompt.user).toContain(
+      'Control `joints` entries accept only control bindings',
+    )
+    expect(requests[2].prompt.user).toContain(
+      'The `/-` suffix is append-only',
+    )
     expect(requests[2].prompt.user).toContain('/checks/-')
   })
 

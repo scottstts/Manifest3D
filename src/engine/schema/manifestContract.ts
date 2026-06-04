@@ -103,12 +103,8 @@ const materialSchema = objectSchema(
   ],
 )
 
-const visualSchema = objectSchema(
-  {
-    id: stringSchema('Stable visual id used by checks and allowances.'),
-    name: stringSchema('Human-readable visual name.'),
-    geometry: {
-      anyOf: [
+const geometrySchema = {
+  anyOf: [
         objectSchema(
           {
             type: literalSchema('box'),
@@ -266,8 +262,14 @@ const visualSchema = objectSchema(
             'radialSegments',
           ],
         ),
-      ],
-    },
+  ],
+}
+
+const visualSchema = objectSchema(
+  {
+    id: stringSchema('Stable visual id used by checks and allowances.'),
+    name: stringSchema('Human-readable visual name.'),
+    geometry: geometrySchema,
     transform: transformSchema,
     materialId: stringSchema('Existing material id.'),
   },
@@ -653,16 +655,29 @@ export const manifestAssetResponseJsonSchema = objectSchema(
 const patchPathSchema = stringSchema(
   'RFC 6901 JSON Pointer path into the current candidate asset.',
 )
-const patchValueSchema = {
+const patchCheckPathSchema = {
+  ...patchPathSchema,
+  pattern: '^/checks(?:$|/(?:-|[0-9]+)$)',
+}
+const patchAllowancePathSchema = {
+  ...patchPathSchema,
+  pattern: '^/allowances(?:$|/(?:-|[0-9]+)$)',
+}
+const patchVisualPathSchema = {
+  ...patchPathSchema,
+  pattern: '^/parts/(?:byId/[^/]+|[0-9]+)/visuals(?:$|/(?:-|[0-9]+|byId/[^/]+)$)',
+}
+const patchVisualGeometryPathSchema = {
+  ...patchPathSchema,
+  pattern:
+    '^/parts/(?:byId/[^/]+|[0-9]+)/visuals/(?:byId/[^/]+|[0-9]+)/geometry$',
+}
+const patchGenericValueSchema = {
   anyOf: [
-    manifestAssetResponseJsonSchema,
     partSchema,
-    visualSchema,
     jointSchema,
     jointControlSchema,
     materialSchema,
-    checkSchema,
-    allowanceSchema,
     transformSchema,
     vector2Schema('Replacement two-number vector value [x, y].'),
     vector3Schema('Replacement three-number vector value [x, y, z].'),
@@ -677,8 +692,6 @@ const patchValueSchema = {
     arraySchema(jointSchema, { minItems: 1 }),
     arraySchema(jointControlSchema, { minItems: 1 }),
     arraySchema(materialSchema, { minItems: 1 }),
-    arraySchema(checkSchema, { minItems: 1 }),
-    arraySchema(allowanceSchema, { minItems: 1 }),
     stringSchema('Replacement string value.'),
     numberSchema('Replacement number value.'),
     booleanSchema('Replacement boolean value.'),
@@ -687,11 +700,20 @@ const patchValueSchema = {
     },
   ],
 }
+const patchCheckValueSchema = {
+  anyOf: [checkSchema, arraySchema(checkSchema, { minItems: 1 })],
+}
+const patchAllowanceValueSchema = {
+  anyOf: [allowanceSchema, arraySchema(allowanceSchema, { minItems: 1 })],
+}
+const patchVisualValueSchema = {
+  anyOf: [visualSchema, arraySchema(visualSchema, { minItems: 1 })],
+}
 const patchAddSchema = objectSchema(
   {
     op: literalSchema('add'),
     path: patchPathSchema,
-    value: patchValueSchema,
+    value: patchGenericValueSchema,
   },
   ['op', 'path', 'value'],
 )
@@ -699,7 +721,71 @@ const patchReplaceSchema = objectSchema(
   {
     op: literalSchema('replace'),
     path: patchPathSchema,
-    value: patchValueSchema,
+    value: patchGenericValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchAddVisualSchema = objectSchema(
+  {
+    op: literalSchema('add'),
+    path: patchVisualPathSchema,
+    value: patchVisualValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchReplaceVisualSchema = objectSchema(
+  {
+    op: literalSchema('replace'),
+    path: patchVisualPathSchema,
+    value: patchVisualValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchReplaceVisualGeometrySchema = objectSchema(
+  {
+    op: literalSchema('replace'),
+    path: patchVisualGeometryPathSchema,
+    value: geometrySchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchAddVisualGeometrySchema = objectSchema(
+  {
+    op: literalSchema('add'),
+    path: patchVisualGeometryPathSchema,
+    value: geometrySchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchAddCheckSchema = objectSchema(
+  {
+    op: literalSchema('add'),
+    path: patchCheckPathSchema,
+    value: patchCheckValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchReplaceCheckSchema = objectSchema(
+  {
+    op: literalSchema('replace'),
+    path: patchCheckPathSchema,
+    value: patchCheckValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchAddAllowanceSchema = objectSchema(
+  {
+    op: literalSchema('add'),
+    path: patchAllowancePathSchema,
+    value: patchAllowanceValueSchema,
+  },
+  ['op', 'path', 'value'],
+)
+const patchReplaceAllowanceSchema = objectSchema(
+  {
+    op: literalSchema('replace'),
+    path: patchAllowancePathSchema,
+    value: patchAllowanceValueSchema,
   },
   ['op', 'path', 'value'],
 )
@@ -715,7 +801,19 @@ export const manifestRepairPatchResponseJsonSchema = objectSchema(
   {
     patch: arraySchema(
       {
-        anyOf: [patchAddSchema, patchReplaceSchema, patchRemoveSchema],
+        anyOf: [
+          patchAddSchema,
+          patchReplaceSchema,
+          patchAddVisualSchema,
+          patchReplaceVisualSchema,
+          patchAddVisualGeometrySchema,
+          patchReplaceVisualGeometrySchema,
+          patchAddCheckSchema,
+          patchReplaceCheckSchema,
+          patchAddAllowanceSchema,
+          patchReplaceAllowanceSchema,
+          patchRemoveSchema,
+        ],
       },
       { minItems: 1 },
     ),

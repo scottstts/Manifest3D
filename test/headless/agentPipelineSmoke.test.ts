@@ -45,11 +45,24 @@ import type {
 } from '../../src/engine/schema/validationTypes'
 import { safeParseManifestAsset } from '../../src/engine/schema/manifestSchema'
 import { validateManifestAssetCandidate } from '../../src/engine/validation/validateManifest'
+import {
+  resolveHeadlessRunConfig,
+  type HeadlessRunMode,
+} from './headlessRunModes'
+import {
+  createHeadlessPatchApplicationStopper,
+  type HeadlessPatchApplicationStopState,
+} from './headlessPatchApplicationStopper'
 import { createOpenRouterHeadlessManifestClient } from './openRouterHeadlessClient'
 
 type HeadlessAgentResult = Awaited<ReturnType<typeof runManifestAgentLoop>>
 type HeadlessAttempt = HeadlessAgentResult['history']['attempts'][number]
 type HeadlessModelProvider = ModelProvider | 'openrouter'
+
+type HeadlessRepairReplaySeed = {
+  candidate: unknown
+  path: string
+}
 
 type CapturedExchange = {
   artifacts: {
@@ -83,6 +96,8 @@ type CapturedExchange = {
     startedAt: string
     status: AgentResponse['status']
     statusCode?: number
+    synthetic?: boolean
+    syntheticSeedPath?: string
   }
 }
 
@@ -110,6 +125,9 @@ type HeadlessImageArtifact = {
 
 type HeadlessProgressLogger = {
   logEarlyStopArmed: (state: HeadlessRepeatedFailureStopState) => void
+  logPatchApplicationStopArmed: (
+    state: HeadlessPatchApplicationStopState,
+  ) => void
   logAgentEvent: (event: AgentLoopEvent) => void
   logFinalResult: (result: HeadlessAgentResult) => void
   logGlbExportComplete: (
@@ -130,8 +148,10 @@ type HeadlessProgressLogger = {
   logModelRequestStillWaiting: (index: number, startedAt: Date) => void
   logModelResponse: (exchange: CapturedExchange) => void
   logRunConfigured: (input: {
+    headlessMode: HeadlessRunMode
     imageAttachmentCount: number
     prompt: string
+    repairReplaySeedPath: string | null
   }) => void
   logValidationAttempt: (attemptIndex: number, report: ValidationReport) => void
   path: string
@@ -164,19 +184,29 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
   it(
     'runs the real create pipeline and captures every candidate attempt',
     async () => {
-      const prompt = readStringEnv('HEADLESS_AGENT_PROMPT', defaultPrompt)
+      const headlessRunConfig = resolveHeadlessRunConfig(
+        process.env,
+        defaultRepairTurnCap,
+      )
+      const repairReplaySeed = readHeadlessRepairReplaySeed(
+        headlessRunConfig.repairSeedPath,
+      )
+      const prompt = readStringEnv(
+        'HEADLESS_AGENT_PROMPT',
+        getRepairReplayPromptFallback(repairReplaySeed) ?? defaultPrompt,
+      )
       const runId = createHeadlessRunId()
       const artifactRoot = createArtifactRoot(runId)
       const runTimeoutMs = readNumberEnv(
         'HEADLESS_AGENT_RUN_TIMEOUT_MS',
         defaultRunTimeoutMs,
       )
-	      const maxRepairTurns = readNumberEnv(
-	        'HEADLESS_AGENT_MAX_REPAIR_TURNS',
-	        defaultRepairTurnCap,
-	      )
+      const maxRepairTurns = headlessRunConfig.maxRepairTurns
       const repeatedFailureStopper = createHeadlessRepeatedFailureStopper(
         readNonNegativeNumberEnv('HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK', 3),
+      )
+      const patchApplicationStopper = createHeadlessPatchApplicationStopper(
+        readNonNegativeNumberEnv('HEADLESS_AGENT_PATCH_ERROR_STOP_STREAK', 2),
       )
       const abortController = new AbortController()
       const runTimeout = setTimeout(() => {
@@ -189,6 +219,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         readHeadlessImageAttachments(artifactRoot)
       const progress = createHeadlessProgressLogger({
         artifactRoot,
+        headlessMode: headlessRunConfig.mode,
         maxRepairTurns,
         provider,
         runId,
@@ -198,19 +229,24 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const assetLibraryStore = createAssetLibraryStore(
         createMemoryAssetLibraryRepository(),
       )
-	      const { client, exchanges } = createCapturedClient({
-	        apiKey,
-	        artifactRoot,
-	        progress,
-	        provider,
-	        shouldStopBeforeRequest: () => repeatedFailureStopper.getStopReason(),
-	      })
+      const { client, exchanges } = createCapturedClient({
+        apiKey,
+        artifactRoot,
+        progress,
+        provider,
+        repairReplaySeed,
+        shouldStopBeforeRequest: () =>
+          repeatedFailureStopper.getStopReason() ??
+          patchApplicationStopper.getStopReason(),
+      })
       const runStartedAt = new Date()
       let validationAttemptCount = 0
 
       progress.logRunConfigured({
+        headlessMode: headlessRunConfig.mode,
         imageAttachmentCount: imageAttachments.length,
         prompt,
+        repairReplaySeedPath: repairReplaySeed?.path ?? null,
       })
 
       await assetLibraryStore.load()
@@ -233,26 +269,32 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
             onEvent: (event) => {
               events.push(event)
               progress.logAgentEvent(event)
+              const patchStopState =
+                patchApplicationStopper.recordAgentEvent(event)
+
+              if (patchStopState) {
+                progress.logPatchApplicationStopArmed(patchStopState)
+              }
             },
             sceneStore,
             validateCandidate: (candidate) => {
               const validationResult = validateManifestAssetCandidate(candidate)
 
-	              validationAttemptCount += 1
-	              progress.logValidationAttempt(
-	                validationAttemptCount,
-	                validationResult.report,
-	              )
-	              const earlyStopState =
-	                repeatedFailureStopper.recordValidationReport(
-	                  validationResult.report,
-	                )
+              validationAttemptCount += 1
+              progress.logValidationAttempt(
+                validationAttemptCount,
+                validationResult.report,
+              )
+              const earlyStopState =
+                repeatedFailureStopper.recordValidationReport(
+                  validationResult.report,
+                )
 
-	              if (earlyStopState) {
-	                progress.logEarlyStopArmed(earlyStopState)
-	              }
+              if (earlyStopState) {
+                progress.logEarlyStopArmed(earlyStopState)
+              }
 
-	              return validationResult
+              return validationResult
             },
           },
         )
@@ -262,7 +304,11 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
           error,
           events,
           exchanges,
+          expectReady: headlessRunConfig.expectReady,
+          headlessMode: headlessRunConfig.mode,
+          maxRepairTurns,
           prompt,
+          repairReplaySeed,
           runId,
           runStartedAt,
           runCompletedAt: new Date(),
@@ -302,7 +348,11 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         attemptGlbArtifacts,
         events,
         exchanges,
+        expectReady: headlessRunConfig.expectReady,
+        headlessMode: headlessRunConfig.mode,
+        maxRepairTurns,
         prompt,
+        repairReplaySeed,
         provider,
         result,
         runId,
@@ -320,7 +370,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       progress.logFinalResult(result)
       logHeadlessSummary(artifactRoot, result)
 
-      if (readBooleanEnv('HEADLESS_AGENT_EXPECT_READY', true)) {
+      if (headlessRunConfig.expectReady) {
         expect(result.status).toBe('ready')
       }
     },
@@ -337,12 +387,14 @@ function createCapturedClient({
   artifactRoot,
   progress,
   provider,
+  repairReplaySeed,
   shouldStopBeforeRequest,
 }: {
   apiKey: string
   artifactRoot: string
   progress?: HeadlessProgressLogger
   provider: HeadlessModelProvider
+  repairReplaySeed?: HeadlessRepairReplaySeed | null
   shouldStopBeforeRequest?: () => string | null
 }) {
   const realClient =
@@ -353,6 +405,7 @@ function createCapturedClient({
           provider,
         })
   const exchanges: CapturedExchange[] = []
+  let pendingRepairReplaySeed = repairReplaySeed ?? null
   const client: ManifestProviderClient = {
     async generateAsset(request) {
       const index = exchanges.length + 1
@@ -378,29 +431,39 @@ function createCapturedClient({
         `${exchangeDir}/user-prompt.txt`,
         request.prompt.user,
       )
-	      const earlyStopReason = shouldStopBeforeRequest?.() ?? null
-	      let response: AgentResponse
+      const earlyStopReason = shouldStopBeforeRequest?.() ?? null
+      let response: AgentResponse
+      let syntheticSeedPath: string | null = null
 
-	      if (earlyStopReason) {
-	        response = {
-	          message: earlyStopReason,
-	          responseId: null,
-	          status: 'error',
-	        }
-	      } else {
-	        const progressInterval = setInterval(() => {
-	          progress?.logModelRequestStillWaiting(index, startedAt)
-	        }, readNumberEnv('HEADLESS_AGENT_PROGRESS_INTERVAL_MS', 30_000))
+      if (pendingRepairReplaySeed && index === 1) {
+        syntheticSeedPath = pendingRepairReplaySeed.path
+        response = {
+          candidate: pendingRepairReplaySeed.candidate,
+          rawText: `${JSON.stringify(pendingRepairReplaySeed.candidate, null, 2)}\n`,
+          responseId: `headless-repair-seed:${basename(pendingRepairReplaySeed.path)}`,
+          status: 'ok',
+        }
+        pendingRepairReplaySeed = null
+      } else if (earlyStopReason) {
+        response = {
+          message: earlyStopReason,
+          responseId: null,
+          status: 'error',
+        }
+      } else {
+        const progressInterval = setInterval(() => {
+          progress?.logModelRequestStillWaiting(index, startedAt)
+        }, readNumberEnv('HEADLESS_AGENT_PROGRESS_INTERVAL_MS', 30_000))
 
-	        try {
-	          response = await realClient.generateAsset(request)
-	        } catch (error) {
-	          progress?.logModelRequestFailed(index, startedAt, error)
-	          throw error
-	        } finally {
-	          clearInterval(progressInterval)
-	        }
-	      }
+        try {
+          response = await realClient.generateAsset(request)
+        } catch (error) {
+          progress?.logModelRequestFailed(index, startedAt, error)
+          throw error
+        } finally {
+          clearInterval(progressInterval)
+        }
+      }
 
       const completedAt = new Date()
       const captured: CapturedExchange = {
@@ -419,6 +482,12 @@ function createCapturedClient({
           responseId: 'responseId' in response ? response.responseId : null,
           startedAt: startedAt.toISOString(),
           status: response.status,
+          ...(syntheticSeedPath
+            ? {
+                synthetic: true,
+                syntheticSeedPath,
+              }
+            : {}),
           ...('statusCode' in response && response.statusCode
             ? { statusCode: response.statusCode }
             : {}),
@@ -557,7 +626,11 @@ function writeHeadlessArtifacts({
   attemptGlbArtifacts,
   events,
   exchanges,
+  expectReady,
+  headlessMode,
+  maxRepairTurns,
   prompt,
+  repairReplaySeed,
   provider,
   result,
   runId,
@@ -575,7 +648,11 @@ function writeHeadlessArtifacts({
   attemptGlbArtifacts: readonly HeadlessAttemptGlbArtifacts[]
   events: readonly AgentLoopEvent[]
   exchanges: readonly CapturedExchange[]
+  expectReady: boolean
+  headlessMode: HeadlessRunMode
+  maxRepairTurns: number
   prompt: string
+  repairReplaySeed: HeadlessRepairReplaySeed | null
   provider: HeadlessModelProvider
   result: Awaited<ReturnType<typeof runManifestAgentLoop>>
   runId: string
@@ -615,24 +692,32 @@ function writeHeadlessArtifacts({
     createdAt: new Date().toISOString(),
     exchangeCount: exchanges.length,
     exchanges,
+    expectReady,
     prompt,
     provider,
+    repairReplay: repairReplaySeed
+      ? {
+          candidatePath: repairReplaySeed.path,
+        }
+      : null,
     runCompletedAt: runCompletedAt.toISOString(),
     runDurationMs: runCompletedAt.getTime() - runStartedAt.getTime(),
     resultStatus: result.status,
     runId,
     runStartedAt: runStartedAt.toISOString(),
     runTimeoutMs,
+    maxRepairTurns,
     progressArtifact,
     glbExports,
     glbViewerUrls: glbExports
       .map((glbExport) => glbExport.viewerUrl)
       .filter((viewerUrl): viewerUrl is string => viewerUrl !== null),
+    headlessMode,
     imageArtifacts,
     imageAttachmentCount: imageArtifacts.length,
     savedVersionId,
     sceneAssetIds: scene.assets.map((asset) => asset.id),
-	    attempts: result.history.attempts.map((attempt, index) => ({
+    attempts: result.history.attempts.map((attempt, index) => ({
       glbArtifacts:
         attemptGlbArtifacts.find((entry) => entry.attemptId === attempt.id) ??
         null,
@@ -657,7 +742,11 @@ function writeCrashArtifacts({
   error,
   events,
   exchanges,
+  expectReady,
+  headlessMode,
+  maxRepairTurns,
   prompt,
+  repairReplaySeed,
   runId,
   runStartedAt,
   runCompletedAt,
@@ -668,7 +757,11 @@ function writeCrashArtifacts({
   error: unknown
   events: readonly AgentLoopEvent[]
   exchanges: readonly CapturedExchange[]
+  expectReady: boolean
+  headlessMode: HeadlessRunMode
+  maxRepairTurns: number
   prompt: string
+  repairReplaySeed: HeadlessRepairReplaySeed | null
   runId: string
   runStartedAt: Date
   runCompletedAt: Date
@@ -682,7 +775,15 @@ function writeCrashArtifacts({
     error: error instanceof Error ? error.message : String(error),
     exchangeCount: exchanges.length,
     exchanges,
+    expectReady,
+    headlessMode,
+    maxRepairTurns,
     prompt,
+    repairReplay: repairReplaySeed
+      ? {
+          candidatePath: repairReplaySeed.path,
+        }
+      : null,
     resultStatus: 'crashed',
     runCompletedAt: runCompletedAt.toISOString(),
     runDurationMs: runCompletedAt.getTime() - runStartedAt.getTime(),
@@ -760,6 +861,35 @@ function readHeadlessImageAttachments(artifactRoot: string): {
     artifacts,
     attachments,
   }
+}
+
+function readHeadlessRepairReplaySeed(
+  candidatePath: string | null,
+): HeadlessRepairReplaySeed | null {
+  if (!candidatePath) {
+    return null
+  }
+
+  const resolvedPath = resolve(process.cwd(), candidatePath)
+
+  if (!existsSync(resolvedPath)) {
+    throw new Error(
+      `HEADLESS_AGENT_REPAIR_FROM_CANDIDATE_PATH does not exist: ${resolvedPath}`,
+    )
+  }
+
+  return {
+    candidate: JSON.parse(readFileSync(resolvedPath, 'utf8')) as unknown,
+    path: resolvedPath,
+  }
+}
+
+function getRepairReplayPromptFallback(seed: HeadlessRepairReplaySeed | null) {
+  if (!seed || !isRecord(seed.candidate)) {
+    return null
+  }
+
+  return typeof seed.candidate.prompt === 'string' ? seed.candidate.prompt : null
 }
 
 function readImageAttachmentPaths() {
@@ -897,12 +1027,14 @@ async function writeAttemptGlbArtifacts(
 
 function createHeadlessProgressLogger({
   artifactRoot,
+  headlessMode,
   maxRepairTurns,
   provider,
   runId,
   runTimeoutMs,
 }: {
   artifactRoot: string
+  headlessMode: HeadlessRunMode
   maxRepairTurns: number
   provider: HeadlessModelProvider
   runId: string
@@ -938,9 +1070,10 @@ function createHeadlessProgressLogger({
   }
 
   log(
-    `run started provider=${provider} maxAttempts=${maxAttempts} timeout=${formatDuration(runTimeoutMs)}`,
+    `run started mode=${headlessMode} provider=${provider} maxAttempts=${maxAttempts} timeout=${formatDuration(runTimeoutMs)}`,
     {
       artifactRoot,
+      headlessMode,
       maxAttempts,
       maxRepairTurns,
       provider,
@@ -949,17 +1082,25 @@ function createHeadlessProgressLogger({
     },
   )
 
-	  return {
-	    logEarlyStopArmed(state) {
-	      log(
-	        `headless repeated-failure stop armed signature=${state.signature} streak=${state.streak}/${state.threshold}`,
-	        {
-	          repeatedFailureStop: state,
-	        },
-	      )
-	    },
-	    logAgentEvent(event) {
-	      record('agent_event', { event })
+  return {
+    logEarlyStopArmed(state) {
+      log(
+        `headless repeated-failure stop armed signature=${state.signature} streak=${state.streak}/${state.threshold}`,
+        {
+          repeatedFailureStop: state,
+        },
+      )
+    },
+    logPatchApplicationStopArmed(state) {
+      log(
+        `headless patch-application stop armed streak=${state.streak}/${state.threshold}`,
+        {
+          patchApplicationStop: state,
+        },
+      )
+    },
+    logAgentEvent(event) {
+      record('agent_event', { event })
 
       if (event.status === 'failed' && event.state !== 'validating_candidate') {
         log(`agent event failed: ${event.label}${formatDetail(event.detail)}`, {
@@ -1034,12 +1175,21 @@ function createHeadlessProgressLogger({
         },
       )
     },
-    logRunConfigured({ imageAttachmentCount, prompt }) {
+    logRunConfigured({
+      headlessMode,
+      imageAttachmentCount,
+      prompt,
+      repairReplaySeedPath,
+    }) {
       log(
-        `prompt configured chars=${prompt.length} imageAttachments=${imageAttachmentCount}`,
+        `prompt configured mode=${headlessMode} chars=${prompt.length} imageAttachments=${imageAttachmentCount}${
+          repairReplaySeedPath ? ' repairReplay=seeded' : ''
+        }`,
         {
+          headlessMode,
           imageAttachmentCount,
           prompt,
+          repairReplaySeedPath,
         },
       )
     },
@@ -1337,6 +1487,10 @@ function safeTimestamp() {
 
 function createHeadlessRunId() {
   return `headless:${safeTimestamp()}:${process.pid}:${randomUUID().slice(0, 8)}`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 class HeadlessFileReader {

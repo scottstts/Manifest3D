@@ -112,7 +112,11 @@ function formatResponseContract(mode: PromptCompilerMode) {
       'Allowed operations are `add`, `replace`, and `remove`.',
       'Patch the supplied candidate JSON into the repaired complete asset; do not return a full asset.',
       'Do not replace the root path "" for ordinary repairs; use focused nested operations against the supplied candidate.',
+      'Do not paste a complete Manifest3D asset object as the `value` for a nested patch path; patch only the exact nested property that should change.',
       'Never write authored check descriptors such as `part_exists`, `joint_exists`, or `expect_*` into a visual `geometry` field; checks belong under `/checks`.',
+      'Never write allowance descriptors such as `allow_overlap`, `allow_isolated_part`, `allow_*`, `reason`, `partAId`, `partBId`, `visualAId`, or `visualBId` into a visual `geometry` field; allowances belong under `/allowances`.',
+      'When replacing a visual `geometry`, the value must be a valid primitive geometry descriptor with type `box`, `roundedBox`, `cylinder`, `sphere`, `cone`, `capsule`, `torus`, `lathe`, `extrude`, `tube`, or `connectorTube`.',
+      'Do not return template, example, todo, placeholder, or dummy patch values; every operation must use concrete current-candidate ids and valid values.',
       'Use concrete numeric arrays when replacing vectors, sizes, connector endpoint positions, or point arrays; never use [] as a placeholder.',
       'Do not include markdown fences, comments, prose, or multiple candidates.',
     ].join('\n')

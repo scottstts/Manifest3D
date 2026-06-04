@@ -78,6 +78,26 @@ const guidedMotionPromptTerms = [
   'stroke',
   'strokes',
 ]
+const guidedScopedMotionPromptTerms = [
+  ...guidedMotionPromptTerms,
+  'actuate',
+  'actuated',
+  'actuating',
+  'close',
+  'closes',
+  'closing',
+  'lift',
+  'lifting',
+  'open',
+  'opens',
+  'opening',
+]
+const conventionalGuidedMotionPartTerms = [
+  'carriage',
+  'piston',
+  'plunger',
+  'slider',
+]
 const rotaryMotionPromptTerms = [
   'belt driven',
   'chain driven',
@@ -366,6 +386,11 @@ export function validateMechanicalRelationCoverage(asset: ManifestAsset): Valida
       }
 
       if (isGuidedMover) {
+        const guidedMotionRequired = isGuidedMotionRequiredForPart(
+          part,
+          promptDescriptor,
+        )
+
         signals.push(
           ...validateGuidedTargetQuality({
             evidence,
@@ -379,7 +404,8 @@ export function validateMechanicalRelationCoverage(asset: ManifestAsset): Valida
             evidence,
             part,
             partIndex,
-            poseRelationEvidenceRequired,
+            poseRelationEvidenceRequired:
+              poseRelationEvidenceRequired && guidedMotionRequired,
             targetContext,
           }),
         )
@@ -388,7 +414,7 @@ export function validateMechanicalRelationCoverage(asset: ManifestAsset): Valida
             asset,
             part,
             partIndex,
-            promptDescriptor,
+            guidedMotionRequired,
             targetContext,
           }),
         )
@@ -972,18 +998,18 @@ function validateGuidedPoseTargetQuality({
 
 function validateGuidedMotionJointQuality({
   asset,
+  guidedMotionRequired,
   part,
   partIndex,
-  promptDescriptor,
   targetContext,
 }: {
   asset: ManifestAsset
+  guidedMotionRequired: boolean
   part: ManifestAsset['parts'][number]
   partIndex: number
-  promptDescriptor: string
   targetContext: RelationTargetContext
 }): ValidationSignal[] {
-  if (!isGuidedMotionRequiredForPrompt(promptDescriptor)) {
+  if (!guidedMotionRequired) {
     return []
   }
 
@@ -1214,6 +1240,47 @@ function isGuidedMotionRequiredForPrompt(promptDescriptor: string) {
   )
 }
 
+function isGuidedMotionRequiredForPart(
+  part: ManifestAsset['parts'][number],
+  promptDescriptor: string,
+) {
+  if (!isGuidedMotionRequiredForPrompt(promptDescriptor)) {
+    return false
+  }
+
+  const partDescriptor = getPartMotionDescriptor(part)
+  const requestedPartTerms = guidedMoverPartTerms.filter((term) =>
+    matchesTerm(partDescriptor, term),
+  )
+
+  if (requestedPartTerms.length === 0) {
+    return false
+  }
+
+  if (matchesAnyTerm(partDescriptor, guidedScopedMotionPromptTerms)) {
+    return true
+  }
+
+  if (
+    requestedPartTerms.some((term) =>
+      promptTermAppearsNearAnyTerm(
+        promptDescriptor,
+        term,
+        guidedScopedMotionPromptTerms,
+      ),
+    )
+  ) {
+    return true
+  }
+
+  return (
+    matchesAnyTerm(promptDescriptor, linkedMechanicalControlTerms) &&
+    requestedPartTerms.some((term) =>
+      conventionalGuidedMotionPartTerms.includes(term),
+    )
+  )
+}
+
 function isRotaryMotionRequiredForPrompt(promptDescriptor: string) {
   return matchesAnyTerm(promptDescriptor, rotaryMotionPromptTerms)
 }
@@ -1229,7 +1296,7 @@ function getPromptCriticalGuidedPrismaticJoints(
 
   return asset.parts
     .filter((part) =>
-      matchesAnyTerm(getPartIdentityDescriptor(part), guidedMoverPartTerms),
+      isGuidedMotionRequiredForPart(part, promptDescriptor),
     )
     .map((part) => findGuidedPrismaticJoint(asset, part.id, targetContext))
     .filter((joint): joint is ManifestAsset['joints'][number] =>
@@ -1628,6 +1695,10 @@ function getPartIdentityDescriptor(part: ManifestAsset['parts'][number]) {
   return [part.id, part.name, part.role].join(' ')
 }
 
+function getPartMotionDescriptor(part: ManifestAsset['parts'][number]) {
+  return [part.id, part.name, part.role, part.description].join(' ')
+}
+
 function isPathLikeMechanicalPart(part: ManifestAsset['parts'][number]) {
   const descriptor = getPartIdentityDescriptor(part)
 
@@ -1700,6 +1771,41 @@ function getRequestedComponentTerms(
         termCompact.includes(otherCompact)
     })
   })
+}
+
+function promptTermAppearsNearAnyTerm(
+  value: string,
+  anchorTerm: string,
+  nearbyTerms: readonly string[],
+  maxWords = 5,
+) {
+  const words = normalizeMatchText(value).split(' ').filter(Boolean)
+  const anchorWords = normalizeMatchText(anchorTerm).split(' ').filter(Boolean)
+
+  if (anchorWords.length === 0) {
+    return false
+  }
+
+  for (let index = 0; index <= words.length - anchorWords.length; index += 1) {
+    const hasAnchor = matchesTerm(
+      words.slice(index, index + anchorWords.length).join(' '),
+      anchorTerm,
+    )
+
+    if (!hasAnchor) {
+      continue
+    }
+
+    const start = Math.max(0, index - maxWords)
+    const end = Math.min(words.length, index + anchorWords.length + maxWords)
+    const window = words.slice(start, end).join(' ')
+
+    if (matchesAnyTerm(window, nearbyTerms)) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function normalizeMatchText(value: string) {

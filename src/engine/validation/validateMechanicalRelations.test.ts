@@ -256,6 +256,83 @@ describe('validateMechanicalRelationCoverage', () => {
     expect(codes).not.toContain('mechanical_coupler_motion_joint_missing')
   })
 
+  it('does not require passive valves to move when pistons are the requested reciprocating parts', () => {
+    const asset = createLinkedPumpFixture()
+
+    asset.prompt =
+      'A cutaway engine with pistons reciprocating in cylinders, a crankshaft, and valves and springs aligned above the bores.'
+    asset.parts.push(
+      createPart('valve-guide', 'Valve guide', 'housing', 'valve-guide-bore'),
+      createPart('valve-1', 'Valve 1', 'mechanism', 'valve-1-stem'),
+    )
+    asset.joints.push({
+      childPartId: 'valve-1',
+      id: 'valve-1-mount',
+      name: 'Valve 1 fixed in guide',
+      origin: {},
+      parentPartId: 'valve-guide',
+      type: 'fixed',
+    })
+    asset.checks.push(
+      createContactCheck(
+        'valve-1',
+        'valve-1-stem',
+        'valve-guide',
+        'valve-guide-bore',
+      ),
+    )
+
+    const valveSignals = validateMechanicalRelationCoverage(asset).filter(
+      (signal) => signal.refs?.partId === 'valve-1',
+    )
+
+    expect(valveSignals.map((signal) => signal.code)).not.toContain(
+      'mechanical_guided_motion_joint_missing',
+    )
+    expect(valveSignals.map((signal) => signal.code)).not.toContain(
+      'mechanical_guided_pose_target_missing',
+    )
+  })
+
+  it('requires valve guide motion when the prompt explicitly asks valves to open and close', () => {
+    const asset = createLinkedPumpFixture()
+
+    asset.prompt =
+      'A cutaway engine with pistons reciprocating in cylinders, a crankshaft, and valves opening and closing in their guides.'
+    asset.parts.push(
+      createPart('valve-guide', 'Valve guide', 'housing', 'valve-guide-bore'),
+      createPart('valve-1', 'Valve 1', 'mechanism', 'valve-1-stem'),
+    )
+    asset.joints.push({
+      childPartId: 'valve-1',
+      id: 'valve-1-mount',
+      name: 'Valve 1 fixed in guide',
+      origin: {},
+      parentPartId: 'valve-guide',
+      type: 'fixed',
+    })
+    asset.checks.push(
+      createContactCheck(
+        'valve-1',
+        'valve-1-stem',
+        'valve-guide',
+        'valve-guide-bore',
+      ),
+    )
+
+    const valveSignals = validateMechanicalRelationCoverage(asset).filter(
+      (signal) => signal.refs?.partId === 'valve-1',
+    )
+
+    expect(valveSignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'mechanical_guided_motion_joint_missing',
+        }),
+      ]),
+    )
+  })
+
   it('rejects connectorTube-only visuals for rigid mechanical couplers', () => {
     const asset = createLinkedPumpFixture()
     const rod = asset.parts.find((part) => part.id === 'connecting-rod')
