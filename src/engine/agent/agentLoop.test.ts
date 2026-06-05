@@ -2112,13 +2112,31 @@ function createQueuedClient(
 }
 
 function replaceRootPatch(value: unknown) {
+  if (isRecord(value)) {
+    return {
+      patch: Object.entries(value).map(([key, entry]) => ({
+        op: 'replace',
+        path: `/${escapeJsonPointer(key)}`,
+        value: entry,
+      })),
+    }
+  }
+
   return {
     patch: [
       {
         op: 'replace',
-        path: '',
+        path: '/metadata',
         value,
       },
     ],
   }
+}
+
+function escapeJsonPointer(value: string) {
+  return value.replace(/~/g, '~0').replace(/\//g, '~1')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }

@@ -1,5 +1,7 @@
 import { modelConfig, type ModelConfig } from '../config/modelConfig'
 import {
+  manifestAssetResponseFormatName,
+  manifestAssetResponseJsonSchema,
   manifestToolCallResponseFormatName,
   manifestToolCallResponseJsonSchema,
 } from '../schema/manifestContract'
@@ -134,6 +136,7 @@ export function buildOpenAIResponsesRequestBody(
   options: OpenAIResponsesRequestOptions = {},
 ) {
   const background = options.background ?? true
+  const responseFormat = getManifestResponseFormat(request.prompt.metadata.mode)
 
   return {
     background,
@@ -162,12 +165,26 @@ export function buildOpenAIResponsesRequestBody(
     temperature: config.temperature,
     text: {
       format: {
-        name: manifestToolCallResponseFormatName,
-        schema: manifestToolCallResponseJsonSchema,
+        name: responseFormat.name,
+        schema: responseFormat.schema,
         strict: true,
         type: 'json_schema',
       },
     },
+  }
+}
+
+function getManifestResponseFormat(mode: AgentRequest['prompt']['metadata']['mode']) {
+  if (mode === 'create') {
+    return {
+      name: manifestAssetResponseFormatName,
+      schema: manifestAssetResponseJsonSchema,
+    }
+  }
+
+  return {
+    name: manifestToolCallResponseFormatName,
+    schema: manifestToolCallResponseJsonSchema,
   }
 }
 

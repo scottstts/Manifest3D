@@ -2,7 +2,10 @@ import {
   geminiModelConfig,
   type GeminiModelConfig,
 } from '../config/modelConfig'
-import { manifestToolCallResponseJsonSchema } from '../schema/manifestContract'
+import {
+  manifestAssetResponseJsonSchema,
+  manifestToolCallResponseJsonSchema,
+} from '../schema/manifestContract'
 import type {
   AgentImageAttachment,
   AgentRequest,
@@ -162,7 +165,9 @@ export function buildGeminiInteractionsRequestBody(
     ...(request.previousResponseId
       ? { previous_interaction_id: request.previousResponseId }
       : {}),
-    response_format: buildGeminiResponseJsonSchema(),
+    response_format: buildGeminiResponseJsonSchema(
+      request.prompt.metadata.mode,
+    ),
     store: true,
     system_instruction: request.prompt.system,
   }
@@ -207,11 +212,13 @@ export function buildGeminiGenerateContentRequestBody(
 }
 
 export function buildGeminiResponseJsonSchema(
-  _mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
+  mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
 ) {
-  void _mode
-
-  return normalizeGeminiJsonSchema(manifestToolCallResponseJsonSchema)
+  return normalizeGeminiJsonSchema(
+    mode === 'create'
+      ? manifestAssetResponseJsonSchema
+      : manifestToolCallResponseJsonSchema,
+  )
 }
 
 function buildGeminiUserPrompt(request: AgentRequest) {

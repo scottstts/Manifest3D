@@ -10,5 +10,5 @@ Requirements:
 - Keep the original object's physical support paths, mechanism intent, and prompt-critical visible geometry unless the edit explicitly changes them.
 - Preserve or add pose-specific checks for any edited mechanism so sampled-pose validation covers the new open, extended, rotated, or retained state.
 - Do not make a shape less realistic just to avoid a validation finding; repair the underlying support, placement, joint, exact bounded fit proof, or scoped allowance instead.
-- Return an `apply_manifest_patch` tool call that patches the current canonical asset into the revised complete asset.
+- Return an `apply_manifest_patch` tool object with an `operations` array that patches the current canonical asset into the revised complete asset.
 - Patch paths address the selected asset JSON directly. Do not use root path `""`, `/asset`, `/assets`, `/manifest`, or `/candidate`, and do not replace the whole asset for edits.

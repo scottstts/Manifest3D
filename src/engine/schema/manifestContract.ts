@@ -657,15 +657,27 @@ export const manifestToolCallResponseJsonSchema = objectSchema(
   {
     tool: {
       type: 'string',
-      enum: ['submit_manifest_asset', 'apply_manifest_patch'],
+      enum: ['apply_manifest_patch'],
       description:
-        'Tool to invoke. Use submit_manifest_asset only for initial creation; use apply_manifest_patch for repair and edit turns.',
+        'Tool to invoke for repair and edit turns.',
     },
-    argumentsJson: stringSchema(
-      'JSON.stringify of the exact tool arguments. submit_manifest_asset expects {"asset": Manifest3D asset}. apply_manifest_patch expects {"operations": JSON Patch operations with add/replace values encoded as valueJson strings}.',
+    operations: arraySchema(
+      objectSchema(
+        {
+          op: enumSchema(['add', 'replace', 'remove']),
+          path: stringSchema(
+            'Focused nested RFC 6901 JSON Pointer path into the current canonical asset. Do not use root path "" or wrappers such as /asset, /assets, /manifest, or /candidate.',
+          ),
+          valueJson: stringSchema(
+            'JSON.stringify of the exact add/replace value. For remove operations, set this to "null"; the harness ignores it.',
+          ),
+        },
+        ['op', 'path', 'valueJson'],
+      ),
+      { minItems: 1 },
     ),
   },
-  ['tool', 'argumentsJson'],
+  ['tool', 'operations'],
 )
 
 const patchPathSchema = stringSchema(

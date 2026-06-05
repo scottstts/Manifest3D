@@ -43,6 +43,12 @@ describe('buildGeminiInteractionsRequestBody', () => {
       thinking_level: 'high',
     })
     expect(body.response_format).toMatchObject({
+      properties: {
+        schemaVersion: {
+          enum: [2],
+          type: 'integer',
+        },
+      },
       type: 'object',
     })
     expect(body.system_instruction).toBe(prompt.system)
@@ -67,20 +73,27 @@ describe('buildGeminiInteractionsRequestBody', () => {
 
     expect(repairSchema).toMatchObject({
       properties: {
-        argumentsJson: {
-          type: 'string',
+        operations: {
+          items: {
+            properties: {
+              valueJson: {
+                type: 'string',
+              },
+            },
+          },
+          type: 'array',
         },
         tool: {
-          enum: ['submit_manifest_asset', 'apply_manifest_patch'],
+          enum: ['apply_manifest_patch'],
           type: 'string',
         },
       },
-      required: ['tool', 'argumentsJson'],
+      required: ['tool', 'operations'],
       type: 'object',
     })
-    expect(schemaJson).not.toContain('anyOf')
+    expect(schemaJson).toContain('valueJson')
     expect(schemaJson).not.toContain('schemaVersion')
-    expect(schemaJson.length).toBeLessThan(1_500)
+    expect(schemaJson.length).toBeLessThan(2_000)
   })
 
   it('normalizes the response schema to Gemini documented JSON Schema keys', () => {
@@ -107,8 +120,8 @@ describe('buildGeminiInteractionsRequestBody', () => {
     })
     expect(body.generationConfig.responseJsonSchema).toMatchObject({
       properties: {
-        argumentsJson: {
-          type: 'string',
+        operations: {
+          type: 'array',
         },
       },
     })

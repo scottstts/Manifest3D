@@ -3,7 +3,8 @@ export type ManifestAgentToolName =
   | 'submit_manifest_asset'
 
 export type ManifestAgentToolEnvelope = {
-  argumentsJson: string
+  argumentsJson?: string
+  operations?: unknown[]
   tool: ManifestAgentToolName
 }
 
@@ -21,6 +22,17 @@ export type ParsedManifestAgentToolCall =
       kind: 'patch'
       status: 'ok'
       tool: 'apply_manifest_patch'
+    }
+  | {
+      message: string
+      rejectedToolSummary: string
+      status: 'error'
+    }
+
+type ParsedToolArguments =
+  | {
+      status: 'ok'
+      value: unknown
     }
   | {
       message: string
@@ -46,7 +58,6 @@ export function parseManifestAgentToolCall(
   }
 
   const tool = candidate.tool
-  const argumentsJson = candidate.argumentsJson
 
   if (tool !== 'submit_manifest_asset' && tool !== 'apply_manifest_patch') {
     return createToolParseError(
@@ -62,11 +73,93 @@ export function parseManifestAgentToolCall(
     )
   }
 
+  if (tool === 'submit_manifest_asset') {
+    return parseSubmitManifestAssetToolCall(candidate)
+  }
+
+  return parseApplyManifestPatchToolCall(candidate)
+}
+
+function parseSubmitManifestAssetToolCall(
+  candidate: Record<string, unknown>,
+): ParsedManifestAgentToolCall {
+  if ('asset' in candidate) {
+    return {
+      candidate: candidate.asset,
+      kind: 'asset',
+      status: 'ok',
+      tool: 'submit_manifest_asset',
+    }
+  }
+
+  const parsedArguments = parseArgumentsJson(candidate)
+
+  if (parsedArguments.status === 'error') {
+    return parsedArguments
+  }
+
+  if (!isRecord(parsedArguments.value) || !('asset' in parsedArguments.value)) {
+      return {
+        message:
+          'submit_manifest_asset argumentsJson must be a JSON object with an asset field.',
+        rejectedToolSummary: summarizeToolCandidate(candidate),
+        status: 'error',
+      }
+  }
+
+  return {
+    candidate: parsedArguments.value.asset,
+    kind: 'asset',
+    status: 'ok',
+    tool: 'submit_manifest_asset',
+  }
+}
+
+function parseApplyManifestPatchToolCall(
+  candidate: Record<string, unknown>,
+): ParsedManifestAgentToolCall {
+  const operations =
+    Array.isArray(candidate.operations)
+      ? candidate.operations
+      : parseArgumentsJsonOperations(candidate)
+
+  if (!Array.isArray(operations)) {
+    return operations
+  }
+
+  return normalizePatchOperations(operations, candidate)
+}
+
+function parseArgumentsJsonOperations(
+  candidate: Record<string, unknown>,
+): unknown[] | Extract<ParsedToolArguments, { status: 'error' }> {
+  const parsedArguments = parseArgumentsJson(candidate)
+
+  if (parsedArguments.status === 'error') {
+    return parsedArguments
+  }
+
+  if (!isRecord(parsedArguments.value) || !Array.isArray(parsedArguments.value.operations)) {
+    return {
+      message:
+        'apply_manifest_patch argumentsJson must be a JSON object with an operations array.',
+      rejectedToolSummary: summarizeToolCandidate(candidate),
+      status: 'error' as const,
+    }
+  }
+
+  return parsedArguments.value.operations
+}
+
+function parseArgumentsJson(candidate: Record<string, unknown>): ParsedToolArguments {
+  const argumentsJson = candidate.argumentsJson
+
   if (typeof argumentsJson !== 'string' || argumentsJson.trim().length === 0) {
-    return createToolParseError(
-      'The model tool call did not include non-empty argumentsJson.',
-      candidate,
-    )
+    return {
+      message: 'The model tool call did not include non-empty argumentsJson.',
+      rejectedToolSummary: summarizeToolCandidate(candidate),
+      status: 'error',
+    }
   }
 
   const parsedArguments = parseJson(argumentsJson)
@@ -75,32 +168,24 @@ export function parseManifestAgentToolCall(
     return {
       message: `Tool argumentsJson is not valid JSON: ${parsedArguments.message}`,
       rejectedToolSummary: summarizeToolCandidate(candidate),
-      status: 'error',
+      status: 'error' as const,
     }
   }
 
-  if (tool === 'submit_manifest_asset') {
-    if (!isRecord(parsedArguments.value) || !('asset' in parsedArguments.value)) {
-      return {
-        message:
-          'submit_manifest_asset argumentsJson must be a JSON object with an asset field.',
-        rejectedToolSummary: summarizeToolCandidate(candidate),
-        status: 'error',
-      }
-    }
-
-    return {
-      candidate: parsedArguments.value.asset,
-      kind: 'asset',
-      status: 'ok',
-      tool,
-    }
+  return {
+    status: 'ok',
+    value: parsedArguments.value,
   }
+}
 
-  if (!isRecord(parsedArguments.value) || !Array.isArray(parsedArguments.value.operations)) {
+function normalizePatchOperations(
+  operations: unknown[],
+  candidate: Record<string, unknown>,
+): ParsedManifestAgentToolCall {
+  if (operations.length === 0) {
     return {
       message:
-        'apply_manifest_patch argumentsJson must be a JSON object with an operations array.',
+        'apply_manifest_patch operations must contain at least one focused patch operation.',
       rejectedToolSummary: summarizeToolCandidate(candidate),
       status: 'error',
     }
@@ -108,9 +193,9 @@ export function parseManifestAgentToolCall(
 
   const normalizedOperations: unknown[] = []
 
-  for (let index = 0; index < parsedArguments.value.operations.length; index += 1) {
+  for (let index = 0; index < operations.length; index += 1) {
     const operation = normalizePatchToolOperation(
-      parsedArguments.value.operations[index],
+      operations[index],
       index,
     )
 
@@ -131,7 +216,7 @@ export function parseManifestAgentToolCall(
     },
     kind: 'patch',
     status: 'ok',
-    tool,
+    tool: 'apply_manifest_patch',
   }
 }
 
@@ -152,15 +237,17 @@ function parseLegacyCandidate(
     }
   }
 
-  if (expectedTool === 'apply_manifest_patch' && Array.isArray(candidate.patch)) {
+  if (expectedTool === 'submit_manifest_asset' && 'asset' in candidate) {
     return {
-      candidate: {
-        patch: candidate.patch,
-      },
-      kind: 'patch',
+      candidate: candidate.asset,
+      kind: 'asset',
       status: 'ok',
-      tool: 'apply_manifest_patch',
+      tool: 'submit_manifest_asset',
     }
+  }
+
+  if (expectedTool === 'apply_manifest_patch' && Array.isArray(candidate.patch)) {
+    return normalizePatchOperations(candidate.patch, candidate)
   }
 
   return null
@@ -198,12 +285,30 @@ function normalizePatchToolOperation(operation: unknown, index: number) {
     }
   }
 
+  if (isForbiddenRootWrapperPath(path)) {
+    return {
+      message: `Patch operation ${index + 1} targets wrapper path "${path}". Patch paths address the current candidate asset directly; do not use /asset, /assets, /manifest, or /candidate.`,
+      status: 'error' as const,
+    }
+  }
+
   if (op === 'remove') {
     return {
       status: 'ok' as const,
       value: {
         op,
         path,
+      },
+    }
+  }
+
+  if ('value' in operation) {
+    return {
+      status: 'ok' as const,
+      value: {
+        op,
+        path,
+        value: operation.value,
       },
     }
   }
@@ -232,6 +337,12 @@ function normalizePatchToolOperation(operation: unknown, index: number) {
       value: parsedValue.value,
     },
   }
+}
+
+function isForbiddenRootWrapperPath(path: string) {
+  return ['/asset', '/assets', '/manifest', '/candidate'].some(
+    (rootPath) => path === rootPath || path.startsWith(`${rootPath}/`),
+  )
 }
 
 function parseJson(value: string) {
@@ -265,15 +376,27 @@ export function summarizeToolCandidate(candidate: unknown) {
   }
 
   const tool = typeof candidate.tool === 'string' ? candidate.tool : '<missing>'
-  const argumentsJson =
+  const payload =
     typeof candidate.argumentsJson === 'string'
       ? candidate.argumentsJson
+      : Array.isArray(candidate.operations)
+      ? stringifySummary({ operations: candidate.operations })
+      : Array.isArray(candidate.patch)
+      ? stringifySummary({ patch: candidate.patch })
       : '<missing>'
 
   return [
     `tool=${tool}`,
-    `argumentsJson=${summarizeText(argumentsJson, 1_200)}`,
+    `payload=${summarizeText(payload, 1_200)}`,
   ].join('\n')
+}
+
+function stringifySummary(value: unknown) {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
 }
 
 function summarizeValue(value: unknown) {

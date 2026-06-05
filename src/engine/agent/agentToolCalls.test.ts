@@ -2,6 +2,25 @@ import { describe, expect, it } from 'vitest'
 import { parseManifestAgentToolCall } from './agentToolCalls'
 
 describe('parseManifestAgentToolCall', () => {
+  it('parses direct create asset responses', () => {
+    const result = parseManifestAgentToolCall(
+      {
+        id: 'asset-1',
+        schemaVersion: 2,
+      },
+      'submit_manifest_asset',
+    )
+
+    expect(result).toMatchObject({
+      candidate: {
+        id: 'asset-1',
+        schemaVersion: 2,
+      },
+      kind: 'asset',
+      status: 'ok',
+    })
+  })
+
   it('parses submit_manifest_asset tool arguments', () => {
     const result = parseManifestAgentToolCall(
       {
@@ -26,7 +45,47 @@ describe('parseManifestAgentToolCall', () => {
     })
   })
 
-  it('parses apply_manifest_patch valueJson operations into canonical patch values', () => {
+  it('parses direct apply_manifest_patch operations into canonical patch values', () => {
+    const result = parseManifestAgentToolCall(
+      {
+        operations: [
+          {
+            op: 'replace',
+            path: '/parts/byId/body/transform/position',
+            valueJson: JSON.stringify([0, 1, 0]),
+          },
+          {
+            op: 'remove',
+            path: '/allowances/0',
+            valueJson: 'null',
+          },
+        ],
+        tool: 'apply_manifest_patch',
+      },
+      'apply_manifest_patch',
+    )
+
+    expect(result).toEqual({
+      candidate: {
+        patch: [
+          {
+            op: 'replace',
+            path: '/parts/byId/body/transform/position',
+            value: [0, 1, 0],
+          },
+          {
+            op: 'remove',
+            path: '/allowances/0',
+          },
+        ],
+      },
+      kind: 'patch',
+      status: 'ok',
+      tool: 'apply_manifest_patch',
+    })
+  })
+
+  it('keeps legacy argumentsJson patch envelopes usable', () => {
     const result = parseManifestAgentToolCall(
       {
         argumentsJson: JSON.stringify({
@@ -119,6 +178,27 @@ describe('parseManifestAgentToolCall', () => {
 
     expect(result).toMatchObject({
       message: expect.stringContaining('Do not replace the whole asset'),
+      status: 'error',
+    })
+  })
+
+  it('rejects wrapper-root patch paths', () => {
+    const result = parseManifestAgentToolCall(
+      {
+        operations: [
+          {
+            op: 'replace',
+            path: '/assets/0/name',
+            valueJson: JSON.stringify('Updated'),
+          },
+        ],
+        tool: 'apply_manifest_patch',
+      },
+      'apply_manifest_patch',
+    )
+
+    expect(result).toMatchObject({
+      message: expect.stringContaining('do not use /asset'),
       status: 'error',
     })
   })

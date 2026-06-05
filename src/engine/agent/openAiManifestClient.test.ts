@@ -47,10 +47,11 @@ describe('buildOpenAIResponsesRequestBody', () => {
     expect(body.background).toBe(true)
     expect(body.store).toBe(true)
     expect(body.text.format).toMatchObject({
-      name: 'manifest3d_tool_call',
+      name: 'manifest3d_asset',
       strict: true,
       type: 'json_schema',
     })
+    expect(body.text.format.schema).toBe(manifestAssetResponseJsonSchema)
     expect(body.input[0].content).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -71,7 +72,7 @@ describe('buildOpenAIResponsesRequestBody', () => {
     expect(findStrictRequiredMismatches(manifestToolCallResponseJsonSchema)).toEqual([])
   })
 
-  it('uses the compact tool-call schema for repair prompts', () => {
+  it('uses the compact patch tool schema for repair prompts', () => {
     const prompt = compileManifestPrompt({
       candidateJson: createValidValidationFixtureAsset(),
       mode: 'repair',
@@ -91,13 +92,15 @@ describe('buildOpenAIResponsesRequestBody', () => {
   it('keeps repair response schema compact and domain-agnostic', () => {
     const schemaJson = JSON.stringify(manifestToolCallResponseJsonSchema)
 
-    expect(schemaJson).toContain('submit_manifest_asset')
     expect(schemaJson).toContain('apply_manifest_patch')
-    expect(schemaJson).toContain('argumentsJson')
+    expect(schemaJson).toContain('operations')
+    expect(schemaJson).toContain('valueJson')
+    expect(schemaJson).not.toContain('submit_manifest_asset')
+    expect(schemaJson).not.toContain('argumentsJson')
     expect(schemaJson).not.toContain('schemaVersion')
     expect(schemaJson).not.toContain('part_exists')
     expect(schemaJson).not.toContain('allow_overlap')
-    expect(schemaJson.length).toBeLessThan(1_500)
+    expect(schemaJson.length).toBeLessThan(2_000)
   })
 
   it('constrains generated vectors, geometry arrays, and bounded numbers', () => {

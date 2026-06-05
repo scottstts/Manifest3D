@@ -31,7 +31,7 @@ describe('openRouterManifestClient', () => {
       temperature: 1,
       text: {
         format: {
-          name: 'manifest3d_tool_call',
+          name: 'manifest3d_asset',
           strict: true,
           type: 'json_schema',
         },

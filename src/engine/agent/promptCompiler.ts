@@ -109,19 +109,19 @@ export function compileManifestPrompt(
 function formatResponseContract(mode: PromptCompilerMode) {
   if (mode === 'create') {
     return [
-      'Return exactly one JSON object with `tool` and `argumentsJson`.',
-      '`tool` must be `submit_manifest_asset`.',
-      '`argumentsJson` must be JSON.stringify of `{ "asset": <complete Manifest3D asset JSON> }`.',
+      'Return exactly one complete Manifest3D asset JSON object.',
+      'The response root must be the asset itself with `schemaVersion`, `id`, `name`, `prompt`, `units`, `parts`, `joints`, `controls`, `materials`, `checks`, `allowances`, and `metadata`.',
+      'Do not wrap the asset in `tool`, `argumentsJson`, `asset`, `assets`, `manifest`, or `candidate`.',
       'Do not include markdown fences, comments, prose, or multiple candidates.',
     ].join('\n')
   }
 
   return [
-    'Return exactly one JSON object with `tool` and `argumentsJson`.',
+    'Return exactly one JSON object with `tool` and `operations`.',
     '`tool` must be `apply_manifest_patch`.',
-    '`argumentsJson` must be JSON.stringify of `{ "operations": [...] }`.',
-    'Each operation must use `op`, `path`, and, for add/replace, `valueJson`.',
-    '`valueJson` must be JSON.stringify of the exact replacement value. Omit `valueJson` for remove.',
+    '`operations` must be an array of focused JSON Patch operations.',
+    'Each operation must use `op`, `path`, and `valueJson`.',
+    '`valueJson` must be JSON.stringify of the exact add/replace value. For remove, set `valueJson` to "null".',
     'Allowed operations are `add`, `replace`, and `remove`.',
     'Patch the current canonical asset into the revised complete asset; do not return a full asset.',
     'Use focused nested operations whose `path` starts with `/` and points inside the current candidate JSON.',
@@ -141,21 +141,65 @@ function formatExamples(mode: PromptCompilerMode) {
     return [
       examplesPrompt.trim(),
       '',
-      '# Create Tool Wrapper',
+      '# Create Response Shape',
       '',
-      'The examples above show the Manifest3D asset shape. Return the final asset inside `submit_manifest_asset.argumentsJson`, not as a bare asset object.',
+      'The examples above show the Manifest3D asset shape. Return the final asset as the response root.',
       '',
       '```json',
       JSON.stringify(
         {
-          argumentsJson: JSON.stringify({
-            asset: {
-              id: 'example-asset',
-              name: 'Example Asset',
-              schemaVersion: 2,
+          allowances: [],
+          checks: [],
+          controls: [],
+          id: 'example-asset',
+          joints: [],
+          materials: [
+            {
+              color: '#88909a',
+              emission: null,
+              emissionAnimation: null,
+              id: 'example-metal',
+              metalness: 0.4,
+              name: 'brushed metal',
+              opacity: 1,
+              roughness: 0.35,
+              side: 'front',
             },
-          }),
-          tool: 'submit_manifest_asset',
+          ],
+          metadata: {
+            createdAt: '2026-01-01T00:00:00.000Z',
+            generationStatus: 'ready',
+            sourceImageIds: [],
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+          name: 'Example Asset',
+          parts: [
+            {
+              description: 'A simple supported body.',
+              id: 'example-body',
+              name: 'body',
+              role: 'base',
+              visuals: [
+                {
+                  geometry: {
+                    size: [1, 0.4, 0.6],
+                    type: 'box',
+                  },
+                  id: 'example-body-box',
+                  materialId: 'example-metal',
+                  name: 'body box',
+                  transform: {
+                    position: [0, 0, 0],
+                    rotation: [0, 0, 0],
+                    scale: [1, 1, 1],
+                  },
+                },
+              ],
+            },
+          ],
+          prompt: 'example asset',
+          schemaVersion: 2,
+          units: 'meters',
         },
         null,
         2,
@@ -167,29 +211,27 @@ function formatExamples(mode: PromptCompilerMode) {
   return [
     '# Patch Tool Example',
     '',
-    'Return only a compact tool-call envelope. Do not return a complete Manifest3D asset or a root-level replacement.',
+    'Return only a compact patch tool object. Do not return a complete Manifest3D asset or a root-level replacement.',
     '',
     '```json',
     JSON.stringify(
       {
-        argumentsJson: JSON.stringify({
-          operations: [
-            {
-              op: 'replace',
-              path: '/parts/byId/rotor/visuals/byId/rotor-blade-01/transform/position',
-              valueJson: JSON.stringify([0, 0.18, 0]),
-            },
-            {
-              op: 'add',
-              path: '/checks/-',
-              valueJson: JSON.stringify({
-                side: 'double',
-                type: 'expect_material_side',
-                visualId: 'cutaway-shell',
-              }),
-            },
-          ],
-        }),
+        operations: [
+          {
+            op: 'replace',
+            path: '/parts/byId/rotor/visuals/byId/rotor-blade-01/transform/position',
+            valueJson: JSON.stringify([0, 0.18, 0]),
+          },
+          {
+            op: 'add',
+            path: '/checks/-',
+            valueJson: JSON.stringify({
+              side: 'double',
+              type: 'expect_material_side',
+              visualId: 'cutaway-shell',
+            }),
+          },
+        ],
         tool: 'apply_manifest_patch',
       },
       null,

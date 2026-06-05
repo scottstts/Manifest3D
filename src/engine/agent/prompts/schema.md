@@ -1,6 +1,9 @@
 # Manifest3D Contract V2
 
-Return one object with this shape:
+Canonical assets use this shape. In create mode, return this asset object as
+the response root. In repair and edit modes, use this shape only as the
+canonical document you are patching; return the patch tool object requested by
+the response contract, not a complete asset rewrite.
 
 ```json
 {

@@ -418,12 +418,31 @@ function extractToolCall(candidate: unknown) {
     }
   }
 
+  if (candidate.schemaVersion === 2) {
+    return {
+      argumentsJson: null,
+      tool: 'submit_manifest_asset',
+    }
+  }
+
   return {
     argumentsJson:
       typeof candidate.argumentsJson === 'string'
         ? candidate.argumentsJson
+        : Array.isArray(candidate.operations)
+        ? stringifySummary({ operations: candidate.operations })
+        : Array.isArray(candidate.patch)
+        ? stringifySummary({ patch: candidate.patch })
         : null,
     tool: typeof candidate.tool === 'string' ? candidate.tool : null,
+  }
+}
+
+function stringifySummary(value: unknown) {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
   }
 }
 

@@ -24,13 +24,13 @@ The prompt contract emphasizes:
 - stable semantic ids that avoid state words such as `open`, `closed`, or `extended`
 - validation output treated as sensor data, not permission to simplify the requested object
 
-Manifest3D agents return strict JSON assets for create/edit turns and JSON Patch repair envelopes for repair turns. They do not emit code.
+Manifest3D agents return strict JSON assets for create turns and compact patch tool objects for edit/repair turns. They do not emit code.
 
 ## Prompt Compiler Contract
 
-`compileManifestPrompt` returns separate `system` and `user` strings plus compact metadata. It composes the system identity, Contract V2 schema guidance, mode-specific create/edit/repair instructions, current scene summary, selected asset JSON for edit mode, compact candidate JSON for repair mode, image attachment metadata, prior validation feedback, and mode-appropriate examples. Create/edit prompts use full asset examples; repair prompts use compact JSON Patch examples only.
+`compileManifestPrompt` returns separate `system` and `user` strings plus compact metadata. It composes the system identity, Contract V2 schema guidance, mode-specific create/edit/repair instructions, current scene summary, selected asset JSON for edit mode, compact candidate JSON for repair mode, image attachment metadata, prior validation feedback, and mode-appropriate examples. Create prompts use full asset examples; edit and repair prompts use compact patch tool examples only.
 
-Create and edit mode expect a complete Manifest3D asset. Edit mode requires a selected asset and returns the full revised asset JSON. Repair mode includes the failed candidate and `<validation_signals>` feedback, but expects a JSON Patch envelope. The failed candidate remains complete and is minified in repair prompts to reduce context cost.
+Create mode expects the response root to be the complete Manifest3D asset, without `tool`, `asset`, `argumentsJson`, or other wrappers. Edit mode requires a selected asset and returns an `apply_manifest_patch` tool object with direct `operations`. Repair mode includes the failed candidate and `<validation_signals>` feedback, and also expects that same patch tool object. The failed candidate remains complete and is minified in repair prompts to reduce context cost when client-side candidate replay is needed.
 
 Image attachments flow through the same prompt compiler metadata and provider request path as ordinary app runs. The headless harness can load local reference image files for stress tests, but that filesystem convenience stays in `test/headless/agentPipelineSmoke.test.ts`.
 
@@ -44,7 +44,7 @@ Localhost and loopback runs load provider keys only through the dev-server `.env
 
 OpenAI uses Responses API background mode in `openAiManifestClient.ts`: requests set `background: true` and `store: true`, then poll the response id until terminal status. This avoids one long idle HTTP response for high-reasoning strict-schema generations. The tradeoff is that background polling is not ZDR-compatible, so changing it requires a replacement long-running transport strategy.
 
-Gemini repair mode uses a provider-only transport schema. The shared loop still receives canonical JSON Patch operations, but `geminiManifestClient.ts` asks Gemini for `op`, `path`, and JSON-stringified `valueJson`, then parses the values into canonical `{ value: unknown }` operations before returning. This keeps the central repair schema authoritative while avoiding Gemini structured-output schema complexity failures.
+Repair/edit mode uses a shared compact patch tool schema across providers: `{ "tool": "apply_manifest_patch", "operations": [{ "op", "path", "valueJson" }] }`. The harness parses each add/replace `valueJson` into canonical `{ value: unknown }` JSON Patch operations before applying the patch. This avoids the old double-encoded outer `argumentsJson` envelope while still keeping arbitrary patch values out of the provider response schema.
 
 ## Candidate History And Freshness
 
@@ -64,7 +64,7 @@ Each app run owns its own `CandidateHistory`. `runManifestAgentLoop` emits progr
 
 ## Repair Patches
 
-Repair turns return `{ "patch": [...] }`. The harness applies the patch to a cloned candidate, validates the fully patched asset against the Manifest3D schema, and only then accepts it as the next candidate. Patch application errors are fed into the next repair prompt without mutating the candidate. Ordinary repair prompts steer away from root replacement and full-asset output so repair turns stay patch-sized.
+Repair/edit turns return `{ "tool": "apply_manifest_patch", "operations": [...] }`. The harness normalizes those operations to canonical `{ "patch": [...] }`, applies the patch to a cloned candidate, validates the fully patched asset against the Manifest3D schema, and only then accepts it as the next candidate. Patch application errors are fed into the next repair prompt without mutating the candidate. Ordinary repair prompts steer away from root replacement and full-asset output so repair turns stay patch-sized.
 
 Repair patches may address existing array entries by stable id through virtual JSON Pointer segments such as `/parts/byId/deck-truss/visuals/byId/deck-panel/transform/position`. The harness resolves those ids against the current candidate before applying ordinary JSON Patch semantics, which reduces stale array-index failures.
 
