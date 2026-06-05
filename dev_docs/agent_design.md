@@ -44,6 +44,8 @@ Localhost and loopback runs load provider keys only through the dev-server `.env
 
 OpenAI uses Responses API background mode in `openAiManifestClient.ts`: requests set `background: true` and `store: true`, then poll the response id until terminal status. This avoids one long idle HTTP response for high-reasoning strict-schema generations. The tradeoff is that background polling is not ZDR-compatible, so changing it requires a replacement long-running transport strategy.
 
+OpenRouter uses Chat Completions as its live transport. It keeps a narrow legacy parser path for old Responses-shaped diagnostics, but OpenRouter-owned request failures and parser failures must stay branded as OpenRouter in app timelines. Do not let the OpenAI Responses parser leak OpenAI-specific wording when it is reused from the OpenRouter client.
+
 Repair/edit mode uses a shared compact patch tool schema across providers: `{ "tool": "apply_manifest_patch", "operations": [{ "op", "path", "valueJson" }] }`. The harness parses each add/replace `valueJson` into canonical `{ value: unknown }` JSON Patch operations before applying the patch. This avoids the old double-encoded outer `argumentsJson` envelope while still keeping arbitrary patch values out of the provider response schema.
 
 ## Candidate History And Freshness

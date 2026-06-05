@@ -34,6 +34,10 @@ export type OpenAIResponsesRequestBody = ReturnType<
   typeof buildOpenAIResponsesRequestBody
 >
 
+type OpenAIManifestResponseParserOptions = {
+  providerLabel?: string
+}
+
 const defaultEndpoint = 'https://api.openai.com/v1/responses'
 const defaultMaxCreateRetries = 1
 const defaultMaxPollRetries = 12
@@ -188,9 +192,13 @@ function getManifestResponseFormat(mode: AgentRequest['prompt']['metadata']['mod
   }
 }
 
-export function parseOpenAIManifestResponse(response: unknown): AgentResponse {
+export function parseOpenAIManifestResponse(
+  response: unknown,
+  options: OpenAIManifestResponseParserOptions = {},
+): AgentResponse {
+  const providerLabel = normalizeProviderLabel(options.providerLabel)
   const responseId = extractResponseId(response)
-  const errorMessage = extractErrorMessage(response)
+  const errorMessage = extractErrorMessage(response, providerLabel)
 
   if (errorMessage) {
     return {
@@ -204,7 +212,7 @@ export function parseOpenAIManifestResponse(response: unknown): AgentResponse {
 
   if (status && status !== 'completed') {
     return {
-      message: `The OpenAI response ended with status "${status}".`,
+      message: `The ${providerLabel} response ended with status "${status}".`,
       responseId,
       status: 'error',
     }
@@ -224,7 +232,7 @@ export function parseOpenAIManifestResponse(response: unknown): AgentResponse {
 
   if (!rawText) {
     return {
-      message: 'The OpenAI response did not contain output_text content.',
+      message: `The ${providerLabel} response did not contain output_text content.`,
       responseId,
       status: 'error',
     }
@@ -241,8 +249,8 @@ export function parseOpenAIManifestResponse(response: unknown): AgentResponse {
     return {
       message:
         error instanceof Error
-          ? `The OpenAI response was not valid JSON: ${error.message}`
-          : 'The OpenAI response was not valid JSON.',
+          ? `The ${providerLabel} response was not valid JSON: ${error.message}`
+          : `The ${providerLabel} response was not valid JSON.`,
       responseId,
       status: 'error',
     }
@@ -585,7 +593,16 @@ function extractResponseId(value: unknown): string | null {
   return typeof value.id === 'string' ? value.id : null
 }
 
-function extractErrorMessage(value: unknown): string | null {
+function normalizeProviderLabel(value: string | null | undefined) {
+  const normalized = value?.trim()
+
+  return normalized || 'OpenAI'
+}
+
+function extractErrorMessage(
+  value: unknown,
+  providerLabel = 'OpenAI',
+): string | null {
   if (!isRecord(value)) {
     return null
   }
@@ -601,12 +618,12 @@ function extractErrorMessage(value: unknown): string | null {
     const reason = value.incomplete_details.reason
 
     if (typeof reason === 'string') {
-      return `The OpenAI response failed: ${reason}.`
+      return `The ${providerLabel} response failed: ${reason}.`
     }
   }
 
   if (value.status === 'cancelled') {
-    return 'The OpenAI response was cancelled.'
+    return `The ${providerLabel} response was cancelled.`
   }
 
   return null

@@ -221,7 +221,17 @@ function parseOpenRouterManifestResponse(
     }
   }
 
-  return parseOpenAIManifestResponse(response)
+  if (isOpenAIResponsesLikeResponse(response)) {
+    return parseOpenAIManifestResponse(response, {
+      providerLabel: 'OpenRouter',
+    })
+  }
+
+  return {
+    message: createOpenRouterUnexpectedResponseMessage(response),
+    responseId,
+    status: 'error',
+  }
 }
 
 async function sendOpenRouterJsonRequestWithRetry({
@@ -683,6 +693,35 @@ function extractResponseId(value: unknown): string | null {
 
 function isOpenRouterChatCompletionResponse(value: unknown) {
   return isRecord(value) && Array.isArray(value.choices)
+}
+
+function isOpenAIResponsesLikeResponse(value: unknown) {
+  return (
+    isRecord(value) &&
+    (typeof value.output_text === 'string' ||
+      Array.isArray(value.output) ||
+      typeof value.status === 'string')
+  )
+}
+
+function createOpenRouterUnexpectedResponseMessage(value: unknown) {
+  const details: string[] = []
+
+  if (isRecord(value)) {
+    if (typeof value.object === 'string') {
+      details.push(`object=${value.object}`)
+    }
+
+    if (typeof value.type === 'string') {
+      details.push(`type=${value.type}`)
+    }
+  }
+
+  return details.length > 0
+    ? `The OpenRouter response did not match the expected chat completion shape (${details.join(
+        ', ',
+      )}).`
+    : 'The OpenRouter response did not match the expected chat completion shape.'
 }
 
 function isRecoverableOpenRouterInvalidJsonResponse(value: unknown) {

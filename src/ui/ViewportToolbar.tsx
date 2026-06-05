@@ -3,7 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  KeyRound,
+  Store,
   Redo2,
   Undo2,
 } from 'lucide-react'
@@ -221,8 +221,8 @@ export function ViewportToolbar({
           type="button"
           onClick={onApiKeyRequested}
         >
-          <KeyRound aria-hidden="true" />
-          <span>API Key</span>
+          <Store aria-hidden="true" />
+          <span>Provider</span>
           <span
             aria-hidden="true"
             className={

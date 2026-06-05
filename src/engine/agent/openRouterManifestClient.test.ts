@@ -528,6 +528,58 @@ describe('openRouterManifestClient', () => {
     })
   })
 
+  it('brands malformed legacy Responses-shaped fallback errors as OpenRouter', async () => {
+    const fetcher = vi.fn(async () =>
+      createJsonResponse({
+        id: 'resp_legacy_empty',
+        output: [],
+        status: 'completed',
+      }),
+    )
+    const client = createOpenRouterManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('repair'))
+
+    expect(response).toEqual({
+      message: 'The OpenRouter response did not contain output_text content.',
+      responseId: 'resp_legacy_empty',
+      status: 'error',
+    })
+    if (response.status !== 'error') {
+      throw new Error('Expected OpenRouter fallback response to fail.')
+    }
+    expect(response.message).not.toContain('OpenAI')
+  })
+
+  it('reports unexpected successful OpenRouter payloads without OpenAI wording', async () => {
+    const fetcher = vi.fn(async () =>
+      createJsonResponse({
+        id: 'or_unexpected_shape',
+        object: 'not_chat_completion',
+      }),
+    )
+    const client = createOpenRouterManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('repair'))
+
+    expect(response).toEqual({
+      message:
+        'The OpenRouter response did not match the expected chat completion shape (object=not_chat_completion).',
+      responseId: 'or_unexpected_shape',
+      status: 'error',
+    })
+    if (response.status !== 'error') {
+      throw new Error('Expected OpenRouter unexpected response to fail.')
+    }
+    expect(response.message).not.toContain('OpenAI')
+  })
+
   it('reports missing OpenRouter keys without sending a request', async () => {
     const fetcher = vi.fn()
     const client = createOpenRouterManifestClient({ fetcher })
