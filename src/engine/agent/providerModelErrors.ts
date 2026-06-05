@@ -26,10 +26,21 @@ function isLikelyModelHttpError(
 
   const normalizedMessage = message?.toLowerCase() ?? ''
 
+  if (statusCode === 404) {
+    return (
+      normalizedMessage.includes('model') ||
+      normalizedMessage.includes('not found') ||
+      normalizedMessage.includes('not supported')
+    )
+  }
+
   return (
-    normalizedMessage.includes('model') ||
-    normalizedMessage.includes('not found') ||
-    normalizedMessage.includes('not supported')
+    normalizedMessage.includes('model') &&
+    (normalizedMessage.includes('not found') ||
+      normalizedMessage.includes('does not exist') ||
+      normalizedMessage.includes('invalid') ||
+      normalizedMessage.includes('not supported') ||
+      normalizedMessage.includes('unsupported'))
   )
 }
 

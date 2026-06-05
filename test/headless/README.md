@@ -55,13 +55,15 @@ Providing `HEADLESS_AGENT_REPAIR_FROM_CANDIDATE_PATH` without a run mode also
 infers `repair`; explicit `full` or `initial` modes reject seed paths.
 `HEADLESS_AGENT_PROVIDER` selects the provider for the run and defaults to
 OpenAI. OpenAI, Gemini, and OpenRouter use the same provider factory used by
-the app. `openrouter` uses the OpenRouter Responses API with default model
-`openai/gpt-5.5`, reasoning effort `high`, and `OPENROUTER_API_KEY` from the
-environment or `.env`. OpenRouter response ids are captured for traceability,
-but the harness keeps repair/edit context client-side because OpenRouter
-Responses beta is stateless for multi-turn context; requests include the active
-agent `session_id` for provider routing/cache grouping. Gemini uses the
-Interactions API and reads
+the app. `openrouter` uses OpenRouter's normalized Chat Completions API with
+default model `openai/gpt-5.5`, reasoning effort `high`, model-compatible JSON
+response formatting, throughput-sorted provider routing, app attribution
+headers, sticky `session_id` routing, and `OPENROUTER_API_KEY` from the
+environment or `.env`.
+OpenRouter response ids are captured for traceability, but the harness keeps
+repair/edit context client-side because OpenRouter does not provide the same
+server-side continuation path as OpenAI Responses or Gemini Interactions.
+Gemini uses the Interactions API and reads
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or legacy Vite-prefixed variants from the
 environment or `.env`.
 `HEADLESS_AGENT_IMAGE_PATH` or comma-separated `HEADLESS_AGENT_IMAGE_PATHS`

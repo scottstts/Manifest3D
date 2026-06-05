@@ -140,7 +140,7 @@ Asset list ordering is by original creation time descending. Opening an asset de
 
 `test/headless/agentPipelineSmoke.test.ts` exercises the same embedded engine and agent loop without the GUI. It records candidate JSON, validation reports, request/response exchanges, progress timelines, probe reports, and GLB artifacts for inspection.
 
-The harness wraps imported app provider clients for artifact capture, but it does not recreate provider switching or transport plumbing. `HEADLESS_AGENT_PROVIDER` selects the provider for a run and defaults to OpenAI. A headless-only OpenRouter adapter is available for provider-path comparison with `HEADLESS_AGENT_PROVIDER=openrouter`; it uses OpenRouter's Responses API endpoint with `openai/gpt-5.5`, keeps the app-facing provider list unchanged, and reads only `OPENROUTER_API_KEY`.
+The harness wraps imported app provider clients for artifact capture, but it does not recreate provider switching or transport plumbing. `HEADLESS_AGENT_PROVIDER` selects the provider for a run and defaults to OpenAI. OpenRouter is a first-class app provider and headless routes through `createManifestProviderClient`; it uses OpenRouter's normalized Chat Completions API, default model `openai/gpt-5.5`, model-compatible JSON response formatting, throughput-sorted routing, sticky `session_id` routing for cache locality, and `OPENROUTER_API_KEY`.
 
 Headless-only conveniences stay in the test harness: Node file shims, local reference-image loading, artifact directory writing, per-attempt GLB materialization, repeated-failure diagnostic stop, and viewer URL generation. App source should change only for engine, validation, export, prompt, or provider behavior that matters to interactive runs too.
 

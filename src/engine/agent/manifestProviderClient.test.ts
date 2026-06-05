@@ -197,11 +197,24 @@ describe('createManifestProviderClient', () => {
       }),
     })
 
-    expect(String(fetchInputs[0])).toBe('https://openrouter.ai/api/v1/responses')
+    expect(String(fetchInputs[0])).toBe(
+      'https://openrouter.ai/api/v1/chat/completions',
+    )
     expect(bodies[0]).toMatchObject({
       model: 'openai/gpt-custom',
+      provider: {
+        require_parameters: true,
+      },
       reasoning: {
+        exclude: true,
         effort: 'custom-high',
+      },
+      response_format: {
+        json_schema: {
+          name: 'manifest3d_asset',
+          strict: true,
+        },
+        type: 'json_schema',
       },
     })
   })
