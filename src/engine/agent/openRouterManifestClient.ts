@@ -47,6 +47,7 @@ type OpenRouterModelProfile =
   | 'anthropic'
   | 'general'
   | 'minimax'
+  | 'moonshot'
   | 'openai'
   | 'qwen'
 
@@ -119,7 +120,10 @@ export function createOpenRouterManifestClient(
         }
       }
 
-      return parseOpenRouterManifestResponse(result.json)
+      return parseOpenRouterManifestResponse(
+        result.json,
+        request.prompt.metadata.mode,
+      )
     },
   }
 }
@@ -161,7 +165,10 @@ export function buildOpenRouterChatCompletionsRequestBody(
   }
 }
 
-function parseOpenRouterManifestResponse(response: unknown): AgentResponse {
+function parseOpenRouterManifestResponse(
+  response: unknown,
+  mode: AgentRequest['prompt']['metadata']['mode'],
+): AgentResponse {
   const openRouterErrorMessage = extractOpenRouterErrorMessage(response)
 
   if (openRouterErrorMessage) {
@@ -176,19 +183,30 @@ function parseOpenRouterManifestResponse(response: unknown): AgentResponse {
   const rawText = extractChatCompletionText(response)
 
   if (rawText) {
+    const normalizedJsonText = normalizeOpenRouterJsonCandidateText(rawText)
+
     try {
       return {
-        candidate: JSON.parse(rawText) as unknown,
+        candidate: JSON.parse(normalizedJsonText) as unknown,
         rawText,
         responseId,
         status: 'ok',
       }
     } catch (error) {
+      if (isRecoverableOpenRouterInvalidJsonResponse(response)) {
+        return {
+          candidate: createRecoverableOpenRouterInvalidJsonToolEnvelope(
+            rawText,
+            mode,
+          ),
+          rawText,
+          responseId,
+          status: 'ok',
+        }
+      }
+
       return {
-        message:
-          error instanceof Error
-            ? `The OpenRouter response was not valid JSON: ${error.message}`
-            : 'The OpenRouter response was not valid JSON.',
+        message: createOpenRouterInvalidJsonMessage(error, response, rawText),
         responseId,
         status: 'error',
       }
@@ -458,6 +476,10 @@ function getOpenRouterModelProfile(modelId: string): OpenRouterModelProfile {
     return 'minimax'
   }
 
+  if (normalizedModelId.startsWith('moonshotai/')) {
+    return 'moonshot'
+  }
+
   return 'general'
 }
 
@@ -663,6 +685,37 @@ function isOpenRouterChatCompletionResponse(value: unknown) {
   return isRecord(value) && Array.isArray(value.choices)
 }
 
+function isRecoverableOpenRouterInvalidJsonResponse(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.choices)) {
+    return false
+  }
+
+  const choice = value.choices[0]
+
+  if (!isRecord(choice)) {
+    return false
+  }
+
+  return (
+    choice.finish_reason === 'length' ||
+    choice.finish_reason === 'stop' ||
+    choice.finish_reason === 'tool_calls' ||
+    choice.native_finish_reason === 'length' ||
+    choice.native_finish_reason === 'stop' ||
+    choice.native_finish_reason === 'tool_calls'
+  )
+}
+
+function createRecoverableOpenRouterInvalidJsonToolEnvelope(
+  rawText: string,
+  mode: AgentRequest['prompt']['metadata']['mode'],
+) {
+  return {
+    argumentsJson: rawText,
+    tool: mode === 'create' ? 'submit_manifest_asset' : 'apply_manifest_patch',
+  }
+}
+
 function createOpenRouterMissingContentMessage(value: unknown) {
   const details: string[] = []
 
@@ -691,6 +744,46 @@ function createOpenRouterMissingContentMessage(value: unknown) {
         ', ',
       )}).`
     : 'The OpenRouter response did not contain assistant message content.'
+}
+
+function createOpenRouterInvalidJsonMessage(
+  error: unknown,
+  response: unknown,
+  rawText: string,
+) {
+  const parseDetails =
+    error instanceof Error ? error.message : 'The response could not be parsed.'
+  const responseDetails = collectOpenRouterChoiceDetails(response)
+
+  return `The OpenRouter response was not valid JSON: ${parseDetails}${
+    responseDetails.length > 0
+      ? ` (${[...responseDetails, `outputChars=${rawText.length}`].join(', ')})`
+      : ` (outputChars=${rawText.length})`
+  }`
+}
+
+function collectOpenRouterChoiceDetails(value: unknown) {
+  const details: string[] = []
+
+  if (!isRecord(value) || !Array.isArray(value.choices)) {
+    return details
+  }
+
+  const choice = value.choices[0]
+
+  if (!isRecord(choice)) {
+    return details
+  }
+
+  if (typeof choice.finish_reason === 'string') {
+    details.push(`finish_reason=${choice.finish_reason}`)
+  }
+
+  if (typeof choice.native_finish_reason === 'string') {
+    details.push(`native_finish_reason=${choice.native_finish_reason}`)
+  }
+
+  return details
 }
 
 function extractChatCompletionText(value: unknown): string | null {
@@ -728,6 +821,91 @@ function parseJsonOrNull(value: string) {
   } catch {
     return null
   }
+}
+
+function normalizeOpenRouterJsonCandidateText(value: string) {
+  const trimmed = value.trim()
+  const fencedJson = extractFencedJsonBlock(trimmed)
+
+  if (fencedJson) {
+    return fencedJson
+  }
+
+  return extractBalancedJsonText(trimmed) ?? trimmed
+}
+
+function extractFencedJsonBlock(value: string) {
+  const fullFenceMatch = value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+
+  if (fullFenceMatch?.[1]) {
+    return fullFenceMatch[1].trim()
+  }
+
+  const embeddedFenceMatch = value.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+
+  return embeddedFenceMatch?.[1]?.trim() || null
+}
+
+function extractBalancedJsonText(value: string) {
+  const startIndex = findJsonStartIndex(value)
+
+  if (startIndex < 0) {
+    return null
+  }
+
+  const opening = value[startIndex]
+  const closing = opening === '{' ? '}' : ']'
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let index = startIndex; index < value.length; index += 1) {
+    const char = value[index]
+
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+
+      continue
+    }
+
+    if (char === '"') {
+      inString = true
+      continue
+    }
+
+    if (char === opening) {
+      depth += 1
+    } else if (char === closing) {
+      depth -= 1
+
+      if (depth === 0) {
+        return value.slice(startIndex, index + 1).trim()
+      }
+    }
+  }
+
+  return null
+}
+
+function findJsonStartIndex(value: string) {
+  const objectStart = value.indexOf('{')
+  const arrayStart = value.indexOf('[')
+
+  if (objectStart < 0) {
+    return arrayStart
+  }
+
+  if (arrayStart < 0) {
+    return objectStart
+  }
+
+  return Math.min(objectStart, arrayStart)
 }
 
 function sanitizeOpenRouterSessionId(value: string | null | undefined) {

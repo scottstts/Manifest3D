@@ -164,7 +164,7 @@ describe('openRouterManifestClient', () => {
       {
         agentRunTimeoutMs: 60_000,
         maxOutputTokens: 1_024,
-        model: 'moonshotai/kimi-k2.6',
+        model: 'deepseek/deepseek-v4',
         reasoningEffort: 'high',
         temperature: 1,
       },
@@ -174,7 +174,7 @@ describe('openRouterManifestClient', () => {
       {
         agentRunTimeoutMs: 60_000,
         maxOutputTokens: 1_024,
-        model: 'moonshotai/kimi-k2.6',
+        model: 'deepseek/deepseek-v4',
         reasoningEffort: 'high',
         temperature: 1,
       },
@@ -189,6 +189,31 @@ describe('openRouterManifestClient', () => {
     })
     expect(repairBody.response_format).toEqual({
       type: 'json_object',
+    })
+  })
+
+  it('uses strict schema mode for Moonshot Kimi models', () => {
+    const createBody = buildOpenRouterChatCompletionsRequestBody(
+      createAgentRequest('create'),
+      {
+        agentRunTimeoutMs: 60_000,
+        maxOutputTokens: 1_024,
+        model: 'moonshotai/kimi-k2.6',
+        reasoningEffort: 'high',
+        temperature: 1,
+      },
+    )
+
+    expect(createBody.response_format).toMatchObject({
+      json_schema: {
+        name: 'manifest3d_asset',
+        strict: true,
+      },
+      type: 'json_schema',
+    })
+    expect(createBody.reasoning).toEqual({
+      exclude: true,
+      max_tokens: 256,
     })
   })
 
@@ -367,6 +392,103 @@ describe('openRouterManifestClient', () => {
         'The OpenRouter response did not contain assistant message content (finish_reason=length, native_finish_reason=max_tokens, message.content=null).',
       responseId: 'chatcmpl_empty',
       status: 'error',
+    })
+  })
+
+  it('passes recoverable invalid chat JSON to the harness as raw candidate text', async () => {
+    const fetcher = vi.fn(async () =>
+      createJsonResponse({
+        choices: [
+          {
+            finish_reason: 'length',
+            message: {
+              content: '{"schemaVersion":2,"id":"truncated',
+            },
+            native_finish_reason: 'length',
+          },
+        ],
+        id: 'chatcmpl_invalid',
+      }),
+    )
+    const client = createOpenRouterManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('create'))
+
+    expect(response).toEqual({
+      candidate: {
+        argumentsJson: '{"schemaVersion":2,"id":"truncated',
+        tool: 'submit_manifest_asset',
+      },
+      rawText: '{"schemaVersion":2,"id":"truncated',
+      responseId: 'chatcmpl_invalid',
+      status: 'ok',
+    })
+  })
+
+  it('parses JSON candidates wrapped in Markdown fences', async () => {
+    const fetcher = vi.fn(async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content: '```json\n{"schemaVersion":2,"id":"fenced"}\n```',
+            },
+          },
+        ],
+        id: 'chatcmpl_fenced',
+      }),
+    )
+    const client = createOpenRouterManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('create'))
+
+    expect(response).toEqual({
+      candidate: {
+        id: 'fenced',
+        schemaVersion: 2,
+      },
+      rawText: '```json\n{"schemaVersion":2,"id":"fenced"}\n```',
+      responseId: 'chatcmpl_fenced',
+      status: 'ok',
+    })
+  })
+
+  it('parses the first balanced JSON object in prose-wrapped responses', async () => {
+    const fetcher = vi.fn(async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              content:
+                'Here is the asset:\n{"schemaVersion":2,"id":"wrapped"}\nDone.',
+            },
+          },
+        ],
+        id: 'chatcmpl_wrapped',
+      }),
+    )
+    const client = createOpenRouterManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('create'))
+
+    expect(response).toEqual({
+      candidate: {
+        id: 'wrapped',
+        schemaVersion: 2,
+      },
+      rawText:
+        'Here is the asset:\n{"schemaVersion":2,"id":"wrapped"}\nDone.',
+      responseId: 'chatcmpl_wrapped',
+      status: 'ok',
     })
   })
 

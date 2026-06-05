@@ -33,6 +33,8 @@ HEADLESS_AGENT_PROMPT='a hinged toolbox with opening lid' npm run test:headless
 HEADLESS_AGENT_PROMPT='a compact espresso machine based on the reference' HEADLESS_AGENT_IMAGE_PATHS=tmp/reference.png npm run test:headless
 HEADLESS_AGENT_PROVIDER=gemini npm run test:headless
 HEADLESS_AGENT_PROVIDER=openrouter npm run test:headless
+HEADLESS_AGENT_PROVIDER=openrouter HEADLESS_OPENROUTER_MODEL_ID=minimax/minimax-m3 npm run test:headless
+HEADLESS_AGENT_PROVIDER=openrouter HEADLESS_OPENROUTER_MODEL_ID=moonshotai/kimi-k2.6 npm run test:headless
 HEADLESS_AGENT_RUN_MODE=initial HEADLESS_AGENT_PROVIDER=openrouter npm run test:headless
 HEADLESS_AGENT_RUN_MODE=repair HEADLESS_AGENT_PROVIDER=openrouter HEADLESS_AGENT_REPAIR_FROM_CANDIDATE_PATH=test/headless/artifacts/headless-agent/<run-id>/attempts/01/candidate.json npm run test:headless
 HEADLESS_AGENT_EXPECT_READY=0 npm run test:headless
@@ -63,6 +65,9 @@ environment or `.env`.
 OpenRouter response ids are captured for traceability, but the harness keeps
 repair/edit context client-side because OpenRouter does not provide the same
 server-side continuation path as OpenAI Responses or Gemini Interactions.
+Set `HEADLESS_AGENT_MODEL_ID` / `HEADLESS_AGENT_REASONING_EFFORT` for a
+provider-agnostic model override, or provider-specific variants such as
+`HEADLESS_OPENROUTER_MODEL_ID` and `HEADLESS_OPENROUTER_REASONING_EFFORT`.
 Gemini uses the Interactions API and reads
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or legacy Vite-prefixed variants from the
 environment or `.env`.

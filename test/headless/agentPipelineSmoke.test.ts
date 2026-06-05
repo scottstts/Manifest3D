@@ -20,6 +20,7 @@ import {
 } from '../../src/engine/agent/failureClusters'
 import { createManifestProviderClient } from '../../src/engine/agent/manifestProviderClient'
 import { parseModelProvider } from '../../src/engine/agent/providerPreference'
+import type { ProviderModelSettings } from '../../src/engine/agent/providerModelSettings'
 import type {
   AgentImageAttachment,
   AgentRequest,
@@ -217,6 +218,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
         abortController.abort()
       }, runTimeoutMs)
       const provider = readHeadlessModelProvider()
+      const modelSettings = readHeadlessProviderModelSettings(provider)
       const apiKey = readRequiredProviderApiKey(provider)
       const events: AgentLoopEvent[] = []
       const { artifacts: imageArtifacts, attachments: imageAttachments } =
@@ -236,6 +238,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
       const { client, exchanges } = createCapturedClient({
         apiKey,
         artifactRoot,
+        modelSettings,
         progress,
         provider,
         repairReplaySeed,
@@ -263,7 +266,10 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
             maxRepairTurns,
             imageAttachments,
             mode: 'create',
-            providerContext: createHeadlessProviderContext(provider),
+            providerContext: createHeadlessProviderContext(
+              provider,
+              modelSettings,
+            ),
             runId,
             scene: emptyScene,
             signal: abortController.signal,
@@ -391,6 +397,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 function createCapturedClient({
   apiKey,
   artifactRoot,
+  modelSettings,
   progress,
   provider,
   repairReplaySeed,
@@ -398,6 +405,7 @@ function createCapturedClient({
 }: {
   apiKey: string
   artifactRoot: string
+  modelSettings: ProviderModelSettings
   progress?: HeadlessProgressLogger
   provider: HeadlessModelProvider
   repairReplaySeed?: HeadlessRepairReplaySeed | null
@@ -405,6 +413,7 @@ function createCapturedClient({
 }) {
   const realClient = createManifestProviderClient({
     apiKey,
+    modelSettings,
     provider,
   })
   const exchanges: CapturedExchange[] = []
@@ -1383,11 +1392,32 @@ function readHeadlessModelProvider(): HeadlessModelProvider {
   return parseModelProvider(provider)
 }
 
-function createHeadlessProviderContext(provider: HeadlessModelProvider) {
+function readHeadlessProviderModelSettings(
+  provider: HeadlessModelProvider,
+): ProviderModelSettings {
+  const defaults = createDefaultHeadlessProviderModelSettings(provider)
+  const providerEnvPrefix = provider.toUpperCase()
+  const modelId =
+    readStringEnv(`HEADLESS_${providerEnvPrefix}_MODEL_ID`, '') ||
+    readStringEnv('HEADLESS_AGENT_MODEL_ID', '') ||
+    defaults.modelId
+  const reasoningEffort =
+    readStringEnv(`HEADLESS_${providerEnvPrefix}_REASONING_EFFORT`, '') ||
+    readStringEnv('HEADLESS_AGENT_REASONING_EFFORT', '') ||
+    defaults.reasoningEffort
+
+  return {
+    modelId,
+    reasoningEffort,
+  }
+}
+
+function createDefaultHeadlessProviderModelSettings(
+  provider: HeadlessModelProvider,
+): ProviderModelSettings {
   if (provider === 'gemini') {
     return {
       modelId: geminiModelConfig.model,
-      provider,
       reasoningEffort: geminiModelConfig.thinkingLevel,
     }
   }
@@ -1395,15 +1425,24 @@ function createHeadlessProviderContext(provider: HeadlessModelProvider) {
   if (provider === 'openrouter') {
     return {
       modelId: openRouterModelConfig.model,
-      provider,
       reasoningEffort: openRouterModelConfig.reasoningEffort,
     }
   }
 
   return {
     modelId: modelConfig.model,
-    provider,
     reasoningEffort: modelConfig.reasoningEffort,
+  }
+}
+
+function createHeadlessProviderContext(
+  provider: HeadlessModelProvider,
+  settings: ProviderModelSettings,
+) {
+  return {
+    modelId: settings.modelId,
+    provider,
+    reasoningEffort: settings.reasoningEffort,
   }
 }
 
