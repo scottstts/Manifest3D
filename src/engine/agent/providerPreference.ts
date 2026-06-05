@@ -39,5 +39,9 @@ export function parseModelProvider(value: unknown): ModelProvider {
 }
 
 export function getProviderLabel(provider: ModelProvider) {
-  return provider === 'gemini' ? 'Gemini' : 'OpenAI'
+  return provider === 'gemini'
+    ? 'Gemini'
+    : provider === 'openrouter'
+    ? 'OpenRouter'
+    : 'OpenAI'
 }

@@ -5,6 +5,7 @@ import type { ManifestScene } from '../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
 import {
   buildGeminiGenerateContentRequestBody,
+  buildGeminiInteractionsRequestBody,
   buildGeminiResponseJsonSchema,
   createGeminiManifestClient,
   parseGeminiManifestResponse,
@@ -16,15 +17,15 @@ const emptyScene: ManifestScene = {
   units: 'meters',
 }
 
-describe('buildGeminiGenerateContentRequestBody', () => {
-  it('builds Gemini structured-output requests with image payloads', () => {
+describe('buildGeminiInteractionsRequestBody', () => {
+  it('builds Gemini Interactions structured-output requests with image payloads', () => {
     const prompt = compileManifestPrompt({
       mode: 'create',
       scene: emptyScene,
       userPrompt: 'Create a reference-based desk lamp.',
     })
 
-    const body = buildGeminiGenerateContentRequestBody({
+    const body = buildGeminiInteractionsRequestBody({
       imageAttachments: [
         {
           id: 'ref-lamp',
@@ -36,75 +37,60 @@ describe('buildGeminiGenerateContentRequestBody', () => {
       prompt,
     })
 
-    expect(body.generationConfig).toMatchObject({
-      maxOutputTokens: 64_000,
-      responseMimeType: 'application/json',
+    expect(body.generation_config).toMatchObject({
+      max_output_tokens: 64_000,
       temperature: 1,
-      thinkingConfig: {
-        thinkingLevel: 'high',
-      },
+      thinking_level: 'high',
     })
-    expect(body.generationConfig.responseJsonSchema).toMatchObject({
+    expect(body.response_format).toMatchObject({
       type: 'object',
     })
-    expect(body.systemInstruction.parts[0].text).toBe(prompt.system)
-    expect(body.contents[0].parts).toEqual(
+    expect(body.system_instruction).toBe(prompt.system)
+    expect(body.input).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           text: expect.stringContaining('Create a reference-based desk lamp.'),
+          type: 'text',
         }),
         expect.objectContaining({
-          inline_data: {
-            data: 'abc123',
-            mime_type: 'image/png',
-          },
+          data: 'abc123',
+          mime_type: 'image/png',
+          type: 'image',
         }),
       ]),
     )
   })
 
-  it('uses a compact transport schema for Gemini repair requests', () => {
+  it('uses a compact shared tool-call schema for Gemini requests', () => {
     const repairSchema = buildGeminiResponseJsonSchema('repair')
     const schemaJson = JSON.stringify(repairSchema)
 
     expect(repairSchema).toMatchObject({
       properties: {
-        patch: {
-          items: {
-            properties: {
-              op: {
-                enum: ['add', 'replace', 'remove'],
-                type: 'string',
-              },
-              path: {
-                type: 'string',
-              },
-              valueJson: {
-                type: 'string',
-              },
-            },
-            required: ['op', 'path'],
-            type: 'object',
-          },
-          minItems: 1,
-          type: 'array',
+        argumentsJson: {
+          type: 'string',
+        },
+        tool: {
+          enum: ['submit_manifest_asset', 'apply_manifest_patch'],
+          type: 'string',
         },
       },
-      required: ['patch'],
+      required: ['tool', 'argumentsJson'],
       type: 'object',
     })
     expect(schemaJson).not.toContain('anyOf')
     expect(schemaJson).not.toContain('schemaVersion')
     expect(schemaJson.length).toBeLessThan(1_500)
   })
+
   it('normalizes the response schema to Gemini documented JSON Schema keys', () => {
     const schemaJson = JSON.stringify(buildGeminiResponseJsonSchema())
 
     expect(schemaJson).not.toContain('exclusiveMinimum')
-    expect(schemaJson).toContain('"minimum":0')
+    expect(schemaJson).toContain('additionalProperties')
   })
 
-  it('adds Gemini-only repair transport instructions without changing the shared prompt contract', () => {
+  it('keeps the legacy generateContent helper on the shared tool schema', () => {
     const prompt = compileManifestPrompt({
       candidateJson: createValidValidationFixtureAsset(),
       mode: 'repair',
@@ -117,21 +103,12 @@ describe('buildGeminiGenerateContentRequestBody', () => {
     const textPart = body.contents[0].parts[0]
 
     expect(textPart).toMatchObject({
-      text: expect.stringContaining('<gemini_repair_transport>'),
-    })
-    expect(textPart).toMatchObject({
-      text: expect.stringContaining('valueJson'),
+      text: expect.not.stringContaining('<gemini_repair_transport>'),
     })
     expect(body.generationConfig.responseJsonSchema).toMatchObject({
       properties: {
-        patch: {
-          items: {
-            properties: {
-              valueJson: {
-                type: 'string',
-              },
-            },
-          },
+        argumentsJson: {
+          type: 'string',
         },
       },
     })
@@ -227,106 +204,35 @@ describe('parseGeminiManifestResponse', () => {
     }
   })
 
-  it('converts Gemini repair valueJson transport back into canonical JSON Patch', () => {
-    const result = parseGeminiManifestResponse(
-      {
-        candidates: [
-          {
-            content: {
-              parts: [
+  it('parses JSON candidates from Gemini Interactions outputs', () => {
+    const result = parseGeminiManifestResponse({
+      id: 'interaction-123',
+      outputs: [
+        {
+          text: JSON.stringify({
+            argumentsJson: JSON.stringify({
+              operations: [
                 {
-                  text: JSON.stringify({
-                    patch: [
-                      {
-                        op: 'replace',
-                        path: '/transform/position',
-                        valueJson: '[0,1,0]',
-                      },
-                      {
-                        op: 'add',
-                        path: '/tags/0',
-                        valueJson: '"hero"',
-                      },
-                      {
-                        op: 'remove',
-                        path: '/checks/0',
-                      },
-                    ],
-                  }),
+                  op: 'replace',
+                  path: '/transform/position',
+                  valueJson: '[0,1,0]',
                 },
               ],
-            },
-            finishReason: 'STOP',
-          },
-        ],
-        responseId: 'gemini-repair-123',
-      },
-      'repair',
-    )
+            }),
+            tool: 'apply_manifest_patch',
+          }),
+          type: 'text',
+        },
+      ],
+      status: 'completed',
+    })
 
     expect(result.status).toBe('ok')
 
     if (result.status === 'ok') {
-      expect(result.candidate).toEqual({
-        patch: [
-          {
-            op: 'replace',
-            path: '/transform/position',
-            value: [0, 1, 0],
-          },
-          {
-            op: 'add',
-            path: '/tags/0',
-            value: 'hero',
-          },
-          {
-            op: 'remove',
-            path: '/checks/0',
-          },
-        ],
-      })
-    }
-  })
-
-  it('accepts legacy canonical patch values from Gemini repair responses', () => {
-    const result = parseGeminiManifestResponse(
-      {
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  text: JSON.stringify({
-                    patch: [
-                      {
-                        op: 'replace',
-                        path: '/transform/position',
-                        value: [0, 1, 0],
-                      },
-                    ],
-                  }),
-                },
-              ],
-            },
-            finishReason: 'STOP',
-          },
-        ],
-        responseId: 'gemini-repair-legacy',
-      },
-      'repair',
-    )
-
-    expect(result.status).toBe('ok')
-
-    if (result.status === 'ok') {
-      expect(result.candidate).toEqual({
-        patch: [
-          {
-            op: 'replace',
-            path: '/transform/position',
-            value: [0, 1, 0],
-          },
-        ],
+      expect(result.responseId).toBe('interaction-123')
+      expect(result.candidate).toMatchObject({
+        tool: 'apply_manifest_patch',
       })
     }
   })

@@ -1,14 +1,17 @@
 import {
   buildOpenAIResponsesRequestBody,
   parseOpenAIManifestResponse,
-} from '../../src/engine/agent/openAiManifestClient'
+} from './openAiManifestClient'
 import type {
   AgentRequest,
   AgentResponse,
   ManifestProviderClient,
-} from '../../src/engine/agent/providerClient'
-import { createProviderModelHttpErrorMessage } from '../../src/engine/agent/providerModelErrors'
-import { modelConfig, type ModelConfig } from '../../src/engine/config/modelConfig'
+} from './providerClient'
+import { createProviderModelHttpErrorMessage } from './providerModelErrors'
+import {
+  openRouterModelConfig,
+  type ModelConfig,
+} from '../config/modelConfig'
 
 type FetchLike = (
   input: RequestInfo | URL,
@@ -32,7 +35,7 @@ type OpenRouterResponseResult = Extract<
   { status: 'response' }
 >
 
-export type CreateOpenRouterHeadlessManifestClientOptions = {
+export type CreateOpenRouterManifestClientOptions = {
   apiKey?: string
   endpoint?: string
   fetcher?: FetchLike
@@ -41,24 +44,7 @@ export type CreateOpenRouterHeadlessManifestClientOptions = {
   retryDelayMs?: number
 }
 
-export type OpenRouterHeadlessSmokeRequestOptions = {
-  apiKey?: string
-  endpoint?: string
-  fetcher?: FetchLike
-  label?: string
-  maxRetries?: number
-  model?: ModelConfig
-  prompt?: string
-  retryDelayMs?: number
-}
-
-export const openRouterHeadlessModelConfig: ModelConfig = {
-  ...modelConfig,
-  model: 'openai/gpt-5.5',
-  reasoningEffort: 'high',
-}
-
-export const openRouterHeadlessResponsesEndpoint =
+export const openRouterResponsesEndpoint =
   'https://openrouter.ai/api/v1/responses'
 
 const defaultMaxRetries = 1
@@ -67,12 +53,12 @@ const transientHttpStatuses = new Set([
   408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524,
 ])
 
-export function createOpenRouterHeadlessManifestClient(
-  options: CreateOpenRouterHeadlessManifestClientOptions = {},
+export function createOpenRouterManifestClient(
+  options: CreateOpenRouterManifestClientOptions = {},
 ): ManifestProviderClient {
-  const endpoint = options.endpoint ?? openRouterHeadlessResponsesEndpoint
+  const endpoint = options.endpoint ?? openRouterResponsesEndpoint
   const fetcher = options.fetcher ?? fetch
-  const config = options.model ?? openRouterHeadlessModelConfig
+  const config = options.model ?? openRouterModelConfig
   const apiKey = options.apiKey ?? ''
   const maxRetries = options.maxRetries ?? defaultMaxRetries
   const retryDelayMs = options.retryDelayMs ?? defaultRetryDelayMs
@@ -88,7 +74,7 @@ export function createOpenRouterHeadlessManifestClient(
         }
       }
 
-      const body = buildOpenRouterHeadlessResponsesRequestBody(request, config)
+      const body = buildOpenRouterResponsesRequestBody(request, config)
       const result = await sendOpenRouterJsonRequestWithRetry({
         apiKey,
         body,
@@ -121,121 +107,25 @@ export function createOpenRouterHeadlessManifestClient(
   }
 }
 
-export function buildOpenRouterHeadlessResponsesRequestBody(
+export function buildOpenRouterResponsesRequestBody(
   request: AgentRequest,
-  config: ModelConfig = openRouterHeadlessModelConfig,
+  config: ModelConfig = openRouterModelConfig,
 ) {
-  return buildOpenAIResponsesRequestBody(request, config, {
-    background: false,
-  })
-}
-
-export async function runOpenRouterHeadlessSmokeRequest(
-  options: OpenRouterHeadlessSmokeRequestOptions = {},
-): Promise<AgentResponse> {
-  const endpoint = options.endpoint ?? openRouterHeadlessResponsesEndpoint
-  const fetcher = options.fetcher ?? fetch
-  const config = options.model ?? openRouterHeadlessModelConfig
-  const apiKey = options.apiKey ?? ''
-  const maxRetries = options.maxRetries ?? defaultMaxRetries
-  const retryDelayMs = options.retryDelayMs ?? defaultRetryDelayMs
-
-  if (!apiKey) {
-    return {
-      message: 'OpenRouter smoke request requires OPENROUTER_API_KEY.',
-      reason: 'missing_api_key',
-      status: 'unavailable',
-    }
-  }
-
-  const body = buildOpenRouterHeadlessSmokeRequestBody({
+  const body = buildOpenAIResponsesRequestBody(
+    {
+      ...request,
+      previousResponseId: null,
+    },
     config,
-    label: options.label ?? 'openrouter-headless-smoke',
-    prompt:
-      options.prompt ??
-      'Return JSON confirming this OpenRouter Responses client works.',
-  })
-  const result = await sendOpenRouterJsonRequestWithRetry({
-    apiKey,
-    body,
-    endpoint,
-    fetcher,
-    maxRetries,
-    retryDelayMs,
-  })
+    {
+      background: false,
+    },
+  )
+  const sessionId = sanitizeOpenRouterSessionId(request.sessionId)
 
-  if (result.status === 'network_error') {
-    return {
-      message: result.message,
-      responseId: null,
-      status: 'error',
-    }
-  }
-
-  if (!result.response.ok) {
-    return {
-      message: createOpenRouterHttpErrorMessage(result, config.model),
-      responseId: extractResponseId(result.json),
-      status: 'error',
-      statusCode: result.response.status,
-    }
-  }
-
-  return parseOpenRouterManifestResponse(result.json)
-}
-
-export function buildOpenRouterHeadlessSmokeRequestBody({
-  config = openRouterHeadlessModelConfig,
-  label = 'openrouter-headless-smoke',
-  prompt = 'Return JSON confirming this OpenRouter Responses client works.',
-}: {
-  config?: ModelConfig
-  label?: string
-  prompt?: string
-} = {}) {
   return {
-    background: false,
-    input: [
-      {
-        content: [
-          {
-            text: prompt,
-            type: 'input_text',
-          },
-        ],
-        role: 'user',
-      },
-    ],
-    instructions:
-      'Return only JSON matching the provided schema. Do not include prose.',
-    max_output_tokens: 200,
-    model: config.model,
-    reasoning: {
-      effort: config.reasoningEffort,
-    },
-    store: false,
-    temperature: config.temperature,
-    text: {
-      format: {
-        name: 'openrouter_headless_client_smoke',
-        schema: {
-          additionalProperties: false,
-          properties: {
-            label: {
-              type: 'string',
-            },
-            ok: {
-              type: 'boolean',
-            },
-          },
-          required: ['ok', 'label'],
-          type: 'object',
-        },
-        strict: true,
-        type: 'json_schema',
-      },
-    },
-    user: label,
+    ...body,
+    ...(sessionId ? { session_id: sessionId } : {}),
   }
 }
 
@@ -461,28 +351,18 @@ function extractChatCompletionText(value: unknown): string | null {
     return null
   }
 
-  const textSegments: string[] = []
+  const choice = value.choices[0]
 
-  for (const choice of value.choices) {
-    if (!isRecord(choice) || !isRecord(choice.message)) {
-      continue
-    }
-
-    const content = choice.message.content
-
-    if (typeof content === 'string') {
-      textSegments.push(content)
-    }
-  }
-
-  return textSegments.length > 0 ? textSegments.join('') : null
-}
-
-function parseJsonOrNull(value: string) {
-  if (!value) {
+  if (!isRecord(choice) || !isRecord(choice.message)) {
     return null
   }
 
+  return typeof choice.message.content === 'string'
+    ? choice.message.content
+    : null
+}
+
+function parseJsonOrNull(value: string) {
   try {
     return JSON.parse(value) as unknown
   } catch {
@@ -490,30 +370,33 @@ function parseJsonOrNull(value: string) {
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal) {
-  if (signal?.aborted) {
-    return Promise.reject(new Error('The OpenRouter request was aborted.'))
+function sanitizeOpenRouterSessionId(value: string | null | undefined) {
+  if (!value) {
+    return null
   }
 
-  if (ms <= 0) {
-    return Promise.resolve()
-  }
+  return value.slice(0, 256)
+}
 
+function sleep(durationMs: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
-    const cleanup = () => {
-      signal?.removeEventListener('abort', abortHandler)
-    }
-    const timeout = setTimeout(() => {
-      cleanup()
-      resolve()
-    }, ms)
-    const abortHandler = () => {
-      clearTimeout(timeout)
-      cleanup()
-      reject(new Error('The OpenRouter request was aborted.'))
+    if (signal?.aborted) {
+      reject(new Error('Aborted.'))
+      return
     }
 
-    signal?.addEventListener('abort', abortHandler, { once: true })
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }, durationMs)
+
+    function abort() {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+      reject(new Error('Aborted.'))
+    }
+
+    signal?.addEventListener('abort', abort, { once: true })
   })
 }
 

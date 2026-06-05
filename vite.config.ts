@@ -12,6 +12,7 @@ export default defineConfig({
 function localProviderApiKeysPlugin(): Plugin {
   let openaiApiKey = ''
   let geminiApiKey = ''
+  let openrouterApiKey = ''
 
   return {
     name: 'manifest3d-local-provider-api-keys',
@@ -29,6 +30,11 @@ function localProviderApiKeysPlugin(): Plugin {
         env.GOOGLE_API_KEY ??
         env.VITE_GEMINI_API_KEY ??
         env.VITE_GOOGLE_API_KEY ??
+        ''
+      ).trim()
+      openrouterApiKey = (
+        env.OPENROUTER_API_KEY ??
+        env.VITE_OPENROUTER_API_KEY ??
         ''
       ).trim()
     },
@@ -60,6 +66,7 @@ function localProviderApiKeysPlugin(): Plugin {
             apiKeys: {
               gemini: geminiApiKey,
               openai: openaiApiKey,
+              openrouter: openrouterApiKey,
             },
           }),
         )

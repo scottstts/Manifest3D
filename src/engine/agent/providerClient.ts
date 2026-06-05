@@ -8,6 +8,8 @@ export type AgentImageAttachment = PromptImageAttachment & {
 export type AgentRequest = {
   imageAttachments?: readonly AgentImageAttachment[]
   prompt: CompiledManifestPrompt
+  previousResponseId?: string | null
+  sessionId?: string | null
   signal?: AbortSignal
 }
 

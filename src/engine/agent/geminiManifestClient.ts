@@ -2,7 +2,7 @@ import {
   geminiModelConfig,
   type GeminiModelConfig,
 } from '../config/modelConfig'
-import { manifestAssetResponseJsonSchema } from '../schema/manifestContract'
+import { manifestToolCallResponseJsonSchema } from '../schema/manifestContract'
 import type {
   AgentImageAttachment,
   AgentRequest,
@@ -16,25 +16,35 @@ type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>
 
-type GeminiTextPart = {
+type GeminiGenerateContentTextPart = {
   text: string
 }
 
-type GeminiInlineDataPart = {
+type GeminiGenerateContentInlineDataPart = {
   inline_data: {
     data: string
     mime_type: string
   }
 }
 
-type GeminiRequestPart = GeminiTextPart | GeminiInlineDataPart
+type GeminiGenerateContentRequestPart =
+  | GeminiGenerateContentTextPart
+  | GeminiGenerateContentInlineDataPart
 
-type GeminiRepairPatchTransportOperation = {
-  op?: unknown
-  path?: unknown
-  value?: unknown
-  valueJson?: unknown
+type GeminiInteractionTextContent = {
+  text: string
+  type: 'text'
 }
+
+type GeminiInteractionImageContent = {
+  data: string
+  mime_type: string
+  type: 'image'
+}
+
+type GeminiInteractionContent =
+  | GeminiInteractionImageContent
+  | GeminiInteractionTextContent
 
 export type CreateGeminiManifestClientOptions = {
   apiKey?: string
@@ -47,8 +57,8 @@ export type GeminiGenerateContentRequestBody = ReturnType<
   typeof buildGeminiGenerateContentRequestBody
 >
 
-const defaultEndpointBase =
-  'https://generativelanguage.googleapis.com/v1beta/models'
+const defaultInteractionsEndpoint =
+  'https://generativelanguage.googleapis.com/v1beta/interactions'
 const geminiJsonSchemaKeys = new Set([
   'additionalProperties',
   'anyOf',
@@ -67,53 +77,11 @@ const geminiJsonSchemaKeys = new Set([
   'type',
 ])
 
-export const geminiRepairPatchTransportJsonSchema = {
-  properties: {
-    patch: {
-      items: {
-        properties: {
-          op: {
-            enum: ['add', 'replace', 'remove'],
-            type: 'string',
-          },
-          path: {
-            description:
-              'RFC 6901 JSON Pointer path into the current candidate JSON.',
-            type: 'string',
-          },
-          valueJson: {
-            description:
-              'For add/replace only: JSON.stringify of the exact replacement JSON value. Omit for remove.',
-            type: 'string',
-          },
-        },
-        required: ['op', 'path'],
-        type: 'object',
-      },
-      minItems: 1,
-      type: 'array',
-    },
-  },
-  required: ['patch'],
-  type: 'object',
-} as const
-
-const geminiRepairTransportInstruction = [
-  '<gemini_repair_transport>',
-  'For this Gemini repair request only, return patch operations using `valueJson` instead of raw `value` for every add/replace operation.',
-  '`valueJson` must be a JSON-encoded string containing the exact replacement JSON value, e.g. `[0,1,0]`, `{"type":"box"}`, `true`, `3.5`, or `null`.',
-  'For remove operations, omit `valueJson`.',
-  'Do not include a raw `value` field. The app will parse `valueJson` back into canonical JSON Patch and validate the fully patched asset against the central Manifest3D contract.',
-  '</gemini_repair_transport>',
-].join('\n')
-
 export function createGeminiManifestClient(
   options: CreateGeminiManifestClientOptions = {},
 ): ManifestProviderClient {
   const config = options.model ?? geminiModelConfig
-  const endpoint =
-    options.endpoint ??
-    `${defaultEndpointBase}/${encodeURIComponent(config.model)}:generateContent`
+  const endpoint = options.endpoint ?? defaultInteractionsEndpoint
   const fetcher = options.fetcher ?? fetch
   const apiKey = options.apiKey ?? ''
 
@@ -127,7 +95,7 @@ export function createGeminiManifestClient(
         }
       }
 
-      const body = buildGeminiGenerateContentRequestBody(request, config)
+      const body = buildGeminiInteractionsRequestBody(request, config)
       let response: Response
 
       try {
@@ -173,6 +141,33 @@ export function createGeminiManifestClient(
   }
 }
 
+export function buildGeminiInteractionsRequestBody(
+  request: AgentRequest,
+  config: GeminiModelConfig = geminiModelConfig,
+) {
+  return {
+    generation_config: {
+      max_output_tokens: config.maxOutputTokens,
+      temperature: config.temperature,
+      thinking_level: config.thinkingLevel,
+    },
+    input: [
+      {
+        text: request.prompt.user,
+        type: 'text',
+      },
+      ...formatInteractionImageContents(request.imageAttachments ?? []),
+    ],
+    model: config.model,
+    ...(request.previousResponseId
+      ? { previous_interaction_id: request.previousResponseId }
+      : {}),
+    response_format: buildGeminiResponseJsonSchema(),
+    store: true,
+    system_instruction: request.prompt.system,
+  }
+}
+
 export function buildGeminiGenerateContentRequestBody(
   request: AgentRequest,
   config: GeminiModelConfig = geminiModelConfig,
@@ -212,27 +207,23 @@ export function buildGeminiGenerateContentRequestBody(
 }
 
 export function buildGeminiResponseJsonSchema(
-  mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
+  _mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
 ) {
-  return normalizeGeminiJsonSchema(
-    mode === 'repair'
-      ? geminiRepairPatchTransportJsonSchema
-      : manifestAssetResponseJsonSchema,
-  )
+  void _mode
+
+  return normalizeGeminiJsonSchema(manifestToolCallResponseJsonSchema)
 }
 
 function buildGeminiUserPrompt(request: AgentRequest) {
-  if (request.prompt.metadata.mode !== 'repair') {
-    return request.prompt.user
-  }
-
-  return `${request.prompt.user}\n\n${geminiRepairTransportInstruction}`
+  return request.prompt.user
 }
 
 export function parseGeminiManifestResponse(
   response: unknown,
-  mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
+  _mode: AgentRequest['prompt']['metadata']['mode'] = 'create',
 ): AgentResponse {
+  void _mode
+
   const responseId = extractGeminiResponseId(response)
   const errorMessage = extractGeminiErrorMessage(response)
 
@@ -265,14 +256,8 @@ export function parseGeminiManifestResponse(
   }
 
   try {
-    const parsedCandidate = JSON.parse(rawText) as unknown
-    const candidate =
-      mode === 'repair'
-        ? normalizeGeminiRepairPatchCandidate(parsedCandidate)
-        : parsedCandidate
-
     return {
-      candidate,
+      candidate: JSON.parse(rawText) as unknown,
       rawText,
       responseId,
       status: 'ok',
@@ -289,71 +274,17 @@ export function parseGeminiManifestResponse(
   }
 }
 
-function normalizeGeminiRepairPatchCandidate(candidate: unknown) {
-  if (!isRecord(candidate) || !Array.isArray(candidate.patch)) {
-    return candidate
-  }
-
-  return {
-    patch: candidate.patch.map((operation) =>
-      normalizeGeminiRepairPatchOperation(operation),
-    ),
-  }
-}
-
-function normalizeGeminiRepairPatchOperation(operation: unknown) {
-  if (!isRecord(operation)) {
-    return operation
-  }
-
-  const transportOperation = operation as GeminiRepairPatchTransportOperation
-  const op = transportOperation.op
-  const path = transportOperation.path
-
-  if (op === 'remove') {
-    return { op, path }
-  }
-
-  if (op !== 'add' && op !== 'replace') {
-    return operation
-  }
-
-  if (typeof transportOperation.valueJson === 'string') {
-    try {
-      return {
-        op,
-        path,
-        value: JSON.parse(transportOperation.valueJson) as unknown,
-      }
-    } catch {
-      if (!('value' in operation)) {
-        return operation
-      }
-    }
-  }
-
-  if ('value' in operation) {
-    return {
-      op,
-      path,
-      value: transportOperation.value,
-    }
-  }
-
-  return operation
-}
-
 function formatImageParts(
   attachments: readonly AgentImageAttachment[],
-): GeminiRequestPart[] {
+): GeminiGenerateContentRequestPart[] {
   return attachments
     .map((attachment) => createInlineDataPart(attachment))
-    .filter((part): part is GeminiInlineDataPart => part !== null)
+    .filter((part): part is GeminiGenerateContentInlineDataPart => part !== null)
 }
 
 function createInlineDataPart(
   attachment: AgentImageAttachment,
-): GeminiInlineDataPart | null {
+): GeminiGenerateContentInlineDataPart | null {
   const parsedDataUrl = parseDataUrl(attachment.imageUrl)
 
   if (!parsedDataUrl) {
@@ -365,6 +296,30 @@ function createInlineDataPart(
       data: parsedDataUrl.data,
       mime_type: parsedDataUrl.mimeType || attachment.mediaType,
     },
+  }
+}
+
+function formatInteractionImageContents(
+  attachments: readonly AgentImageAttachment[],
+): GeminiInteractionContent[] {
+  return attachments
+    .map((attachment) => createInteractionImageContent(attachment))
+    .filter((content): content is GeminiInteractionImageContent => content !== null)
+}
+
+function createInteractionImageContent(
+  attachment: AgentImageAttachment,
+): GeminiInteractionImageContent | null {
+  const parsedDataUrl = parseDataUrl(attachment.imageUrl)
+
+  if (!parsedDataUrl) {
+    return null
+  }
+
+  return {
+    data: parsedDataUrl.data,
+    mime_type: parsedDataUrl.mimeType || attachment.mediaType,
+    type: 'image',
   }
 }
 
@@ -439,7 +394,11 @@ function extractGeminiResponseId(value: unknown): string | null {
     return null
   }
 
-  return typeof value.responseId === 'string' ? value.responseId : null
+  return typeof value.id === 'string'
+    ? value.id
+    : typeof value.responseId === 'string'
+    ? value.responseId
+    : null
 }
 
 function extractGeminiErrorMessage(value: unknown): string | null {
@@ -490,6 +449,15 @@ function extractGeminiRefusal(value: unknown): string | null {
     return `The Gemini request was blocked: ${value.promptFeedback.blockReason}.`
   }
 
+  if (
+    typeof value.status === 'string' &&
+    value.status !== 'completed' &&
+    value.status !== 'in_progress' &&
+    value.status !== 'requires_action'
+  ) {
+    return `The Gemini interaction ended with status "${value.status}".`
+  }
+
   const candidate = getFirstGeminiCandidate(value)
 
   if (
@@ -513,6 +481,22 @@ function extractGeminiOutputText(value: unknown): string | null {
     return value.text
   }
 
+  if (typeof value.output_text === 'string') {
+    return value.output_text
+  }
+
+  const outputsText = extractGeminiTextContents(value.outputs)
+
+  if (outputsText) {
+    return outputsText
+  }
+
+  const stepsText = extractGeminiTextContents(value.steps)
+
+  if (stepsText) {
+    return stepsText
+  }
+
   const candidate = getFirstGeminiCandidate(value)
 
   if (!candidate || !isRecord(candidate.content) || !Array.isArray(candidate.content.parts)) {
@@ -532,6 +516,51 @@ function extractGeminiOutputText(value: unknown): string | null {
   }
 
   return textSegments.length > 0 ? textSegments.join('') : null
+}
+
+function extractGeminiTextContents(value: unknown): string | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const textSegments: string[] = []
+
+  for (const item of value) {
+    collectGeminiTextContent(item, textSegments)
+  }
+
+  return textSegments.length > 0 ? textSegments.join('') : null
+}
+
+function collectGeminiTextContent(value: unknown, textSegments: string[]) {
+  if (!isRecord(value)) {
+    return
+  }
+
+  if (value.thought === true) {
+    return
+  }
+
+  if (
+    typeof value.text === 'string' &&
+    (value.type === 'text' ||
+      value.type === 'model_output' ||
+      value.type === undefined)
+  ) {
+    textSegments.push(value.text)
+  }
+
+  if (Array.isArray(value.content)) {
+    for (const entry of value.content) {
+      collectGeminiTextContent(entry, textSegments)
+    }
+  }
+
+  if (Array.isArray(value.outputs)) {
+    for (const entry of value.outputs) {
+      collectGeminiTextContent(entry, textSegments)
+    }
+  }
 }
 
 function getFirstGeminiCandidate(value: Record<string, unknown>) {

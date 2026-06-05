@@ -3,15 +3,15 @@ import {
   getProviderReasoningEffortOptions,
   modelConfig,
   modelProviderOptions,
+  openRouterModelConfig,
   type GeminiModelConfig,
   type ModelConfig,
   type ModelProvider,
-  type ReasoningEffort,
 } from '../config/modelConfig'
 
 export type ProviderModelSettings = {
   modelId: string
-  reasoningEffort: ReasoningEffort
+  reasoningEffort: string
 }
 
 export type ProviderModelSettingsMap = Record<
@@ -30,12 +30,17 @@ export const defaultProviderModelSettings = {
     modelId: modelConfig.model,
     reasoningEffort: modelConfig.reasoningEffort,
   },
+  openrouter: {
+    modelId: openRouterModelConfig.model,
+    reasoningEffort: openRouterModelConfig.reasoningEffort,
+  },
 } satisfies ProviderModelSettingsMap
 
 export function createDefaultProviderModelSettings(): ProviderModelSettingsMap {
   return {
     gemini: { ...defaultProviderModelSettings.gemini },
     openai: { ...defaultProviderModelSettings.openai },
+    openrouter: { ...defaultProviderModelSettings.openrouter },
   }
 }
 
@@ -127,7 +132,7 @@ export function updateProviderModelId(
 export function updateProviderReasoningEffort(
   settings: ProviderModelSettingsMap,
   provider: ModelProvider,
-  reasoningEffort: ReasoningEffort,
+  reasoningEffort: string,
 ): ProviderModelSettingsMap {
   return updateProviderModelSettings(settings, provider, { reasoningEffort })
 }
@@ -153,30 +158,48 @@ export function resetProviderReasoningEffort(
 export function createOpenAIModelConfig(
   settings: ProviderModelSettings,
 ): ModelConfig {
+  const reasoningEffort = resolvePresetProviderReasoningEffort(
+    'openai',
+    settings.reasoningEffort,
+  )
+
   return {
     ...modelConfig,
     model: settings.modelId.trim(),
-    reasoningEffort: resolveProviderReasoningEffort(
-      'openai',
-      settings.reasoningEffort,
-    ) as ModelConfig['reasoningEffort'],
+    reasoningEffort,
   }
 }
 
 export function createGeminiModelConfig(
   settings: ProviderModelSettings,
 ): GeminiModelConfig {
+  const thinkingLevel = resolvePresetProviderReasoningEffort(
+    'gemini',
+    settings.reasoningEffort,
+  ) as GeminiModelConfig['thinkingLevel']
+
   return {
     ...geminiModelConfig,
     model: settings.modelId.trim(),
-    thinkingLevel: resolveProviderReasoningEffort(
-      'gemini',
-      settings.reasoningEffort,
-    ) as GeminiModelConfig['thinkingLevel'],
+    thinkingLevel,
   }
 }
 
-export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+export function createOpenRouterModelConfig(
+  settings: ProviderModelSettings,
+): ModelConfig {
+  const model = settings.modelId.trim()
+  const reasoningEffort = settings.reasoningEffort.trim()
+
+  return {
+    ...openRouterModelConfig,
+    model: model || openRouterModelConfig.model,
+    reasoningEffort:
+      reasoningEffort || openRouterModelConfig.reasoningEffort,
+  }
+}
+
+export function isReasoningEffort(value: unknown): value is string {
   return modelProviderOptions.some((provider) =>
     isProviderReasoningEffort(provider, value),
   )
@@ -199,9 +222,15 @@ function updateProviderModelSettings(
 function parseReasoningEffort(
   provider: ModelProvider,
   value: unknown,
-): ReasoningEffort | null {
+): string | null {
+  if (provider === 'openrouter') {
+    return typeof value === 'string' && value.trim().length > 0
+      ? value
+      : null
+  }
+
   return isProviderReasoningEffort(provider, value)
-    ? (value as ReasoningEffort)
+    ? (value as string)
     : null
 }
 
@@ -210,16 +239,16 @@ function isProviderReasoningEffort(
   value: unknown,
 ) {
   return getProviderReasoningEffortOptions(provider).includes(
-    value as ReasoningEffort,
+    value as string,
   )
 }
 
-function resolveProviderReasoningEffort(
+function resolvePresetProviderReasoningEffort(
   provider: ModelProvider,
   value: unknown,
 ) {
   return isProviderReasoningEffort(provider, value)
-    ? value
+    ? (value as string)
     : defaultProviderModelSettings[provider].reasoningEffort
 }
 

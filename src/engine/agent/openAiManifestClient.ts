@@ -1,9 +1,7 @@
 import { modelConfig, type ModelConfig } from '../config/modelConfig'
 import {
-  manifestAssetResponseFormatName,
-  manifestAssetResponseJsonSchema,
-  manifestRepairPatchResponseFormatName,
-  manifestRepairPatchResponseJsonSchema,
+  manifestToolCallResponseFormatName,
+  manifestToolCallResponseJsonSchema,
 } from '../schema/manifestContract'
 import type {
   AgentImageAttachment,
@@ -154,6 +152,9 @@ export function buildOpenAIResponsesRequestBody(
     instructions: request.prompt.system,
     max_output_tokens: config.maxOutputTokens,
     model: config.model,
+    ...(request.previousResponseId
+      ? { previous_response_id: request.previousResponseId }
+      : {}),
     reasoning: {
       effort: config.reasoningEffort,
     },
@@ -161,14 +162,8 @@ export function buildOpenAIResponsesRequestBody(
     temperature: config.temperature,
     text: {
       format: {
-        name:
-          request.prompt.metadata.mode === 'repair'
-            ? manifestRepairPatchResponseFormatName
-            : manifestAssetResponseFormatName,
-        schema:
-          request.prompt.metadata.mode === 'repair'
-            ? manifestRepairPatchResponseJsonSchema
-            : manifestAssetResponseJsonSchema,
+        name: manifestToolCallResponseFormatName,
+        schema: manifestToolCallResponseJsonSchema,
         strict: true,
         type: 'json_schema',
       },

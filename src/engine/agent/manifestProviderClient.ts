@@ -1,10 +1,12 @@
 import type { ModelProvider } from '../config/modelConfig'
 import { createGeminiManifestClient } from './geminiManifestClient'
 import { createOpenAIManifestClient } from './openAiManifestClient'
+import { createOpenRouterManifestClient } from './openRouterManifestClient'
 import type { ManifestProviderClient } from './providerClient'
 import {
   createGeminiModelConfig,
   createOpenAIModelConfig,
+  createOpenRouterModelConfig,
   type ProviderModelSettings,
 } from './providerModelSettings'
 
@@ -32,6 +34,16 @@ export function createManifestProviderClient({
       fetcher,
       model: modelSettings
         ? createGeminiModelConfig(modelSettings)
+        : undefined,
+    })
+  }
+
+  if (provider === 'openrouter') {
+    return createOpenRouterManifestClient({
+      apiKey,
+      fetcher,
+      model: modelSettings
+        ? createOpenRouterModelConfig(modelSettings)
         : undefined,
     })
   }

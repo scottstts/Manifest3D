@@ -26,6 +26,8 @@ export type PromptCompilerInput = {
   candidateJson?: unknown
   imageAttachments?: readonly PromptImageAttachment[]
   mode: PromptCompilerMode
+  omitCandidateJson?: boolean
+  omitSelectedAssetJson?: boolean
   scene: ManifestScene
   selectedAsset?: ManifestAsset | null
   selectedAssetAttemptContext?: string | null
@@ -65,7 +67,7 @@ export function compileManifestPrompt(
     tag('task_instructions', modePrompts[input.mode].trim()),
     tag('user_prompt', normalizeUserPrompt(input.userPrompt)),
     tag('current_scene', summarizeScene(input.scene)),
-    input.selectedAsset
+    input.selectedAsset && !input.omitSelectedAssetJson
       ? tag('selected_asset_json', stringifyJson(input.selectedAsset))
       : '',
     input.selectedAssetAttemptContext
@@ -74,7 +76,7 @@ export function compileManifestPrompt(
           input.selectedAssetAttemptContext.trim(),
         )
       : '',
-    input.candidateJson
+    input.candidateJson && !input.omitCandidateJson
       ? tag(
           'candidate_json',
           stringifyJson(input.candidateJson, {
@@ -105,65 +107,97 @@ export function compileManifestPrompt(
 }
 
 function formatResponseContract(mode: PromptCompilerMode) {
-  if (mode === 'repair') {
+  if (mode === 'create') {
     return [
-      'Return exactly one JSON object with a top-level `patch` array.',
-      'The patch array must use RFC 6902-style operations with `op`, `path`, and, for add/replace, `value`.',
-      'Allowed operations are `add`, `replace`, and `remove`.',
-      'Patch the supplied candidate JSON into the repaired complete asset; do not return a full asset.',
-      'Do not replace the root path "" for ordinary repairs; use focused nested operations against the supplied candidate.',
-      'Do not paste a complete Manifest3D asset object as the `value` for a nested patch path; patch only the exact nested property that should change.',
-      'Never write authored check descriptors such as `part_exists`, `joint_exists`, or `expect_*` into a visual `geometry` field; checks belong under `/checks`.',
-      'Never write allowance descriptors such as `allow_overlap`, `allow_isolated_part`, `allow_*`, `reason`, `partAId`, `partBId`, `visualAId`, or `visualBId` into a visual `geometry` field; allowances belong under `/allowances`.',
-      'When replacing a visual `geometry`, the value must be a valid primitive geometry descriptor with type `box`, `roundedBox`, `cylinder`, `sphere`, `cone`, `capsule`, `torus`, `lathe`, `extrude`, `tube`, or `connectorTube`.',
-      'Do not return template, example, todo, placeholder, or dummy patch values; every operation must use concrete current-candidate ids and valid values.',
-      'Use concrete numeric arrays when replacing vectors, sizes, connector endpoint positions, or point arrays; never use [] as a placeholder.',
+      'Return exactly one JSON object with `tool` and `argumentsJson`.',
+      '`tool` must be `submit_manifest_asset`.',
+      '`argumentsJson` must be JSON.stringify of `{ "asset": <complete Manifest3D asset JSON> }`.',
       'Do not include markdown fences, comments, prose, or multiple candidates.',
     ].join('\n')
   }
 
   return [
-    'Return exactly one Manifest3D asset JSON object.',
+    'Return exactly one JSON object with `tool` and `argumentsJson`.',
+    '`tool` must be `apply_manifest_patch`.',
+    '`argumentsJson` must be JSON.stringify of `{ "operations": [...] }`.',
+    'Each operation must use `op`, `path`, and, for add/replace, `valueJson`.',
+    '`valueJson` must be JSON.stringify of the exact replacement value. Omit `valueJson` for remove.',
+    'Allowed operations are `add`, `replace`, and `remove`.',
+    'Patch the current canonical asset into the revised complete asset; do not return a full asset.',
+    'Use focused nested operations whose `path` starts with `/` and points inside the current candidate JSON.',
+    'Never use root path "", `/asset`, `/assets`, `/manifest`, or `/candidate`; the current candidate JSON is already the document root.',
+    'Do not replace the whole asset to fix schema or validation errors; patch only the invalid fields, arrays, checks, allowances, transforms, or visuals.',
+    'Do not paste a complete Manifest3D asset object as a nested replacement value.',
+    'Never write authored check descriptors such as `part_exists`, `joint_exists`, or `expect_*` into a visual `geometry` field; checks belong under `/checks`.',
+    'Never write allowance descriptors such as `allow_overlap`, `allow_isolated_part`, `allow_*`, `reason`, `partAId`, `partBId`, `visualAId`, or `visualBId` into a visual `geometry` field; allowances belong under `/allowances`.',
+    'When replacing a visual `geometry`, encode a valid primitive geometry descriptor in `valueJson`.',
+    'Do not return template, example, todo, placeholder, or dummy patch values; every operation must use concrete current-candidate ids and valid values.',
     'Do not include markdown fences, comments, prose, or multiple candidates.',
   ].join('\n')
 }
 
 function formatExamples(mode: PromptCompilerMode) {
-  if (mode !== 'repair') {
-    return examplesPrompt.trim()
+  if (mode === 'create') {
+    return [
+      examplesPrompt.trim(),
+      '',
+      '# Create Tool Wrapper',
+      '',
+      'The examples above show the Manifest3D asset shape. Return the final asset inside `submit_manifest_asset.argumentsJson`, not as a bare asset object.',
+      '',
+      '```json',
+      JSON.stringify(
+        {
+          argumentsJson: JSON.stringify({
+            asset: {
+              id: 'example-asset',
+              name: 'Example Asset',
+              schemaVersion: 2,
+            },
+          }),
+          tool: 'submit_manifest_asset',
+        },
+        null,
+        2,
+      ),
+      '```',
+    ].join('\n')
   }
 
   return [
-    '# Repair Patch Example',
+    '# Patch Tool Example',
     '',
-    'Return only a compact patch envelope. Do not return a complete Manifest3D asset.',
+    'Return only a compact tool-call envelope. Do not return a complete Manifest3D asset or a root-level replacement.',
     '',
     '```json',
     JSON.stringify(
       {
-        patch: [
-          {
-            op: 'replace',
-            path: '/parts/byId/rotor/visuals/byId/rotor-blade-01/transform/position',
-            value: [0, 0.18, 0],
-          },
-          {
-            op: 'add',
-            path: '/checks/-',
-            value: {
-              side: 'double',
-              type: 'expect_material_side',
-              visualId: 'cutaway-shell',
+        argumentsJson: JSON.stringify({
+          operations: [
+            {
+              op: 'replace',
+              path: '/parts/byId/rotor/visuals/byId/rotor-blade-01/transform/position',
+              valueJson: JSON.stringify([0, 0.18, 0]),
             },
-          },
-        ],
+            {
+              op: 'add',
+              path: '/checks/-',
+              valueJson: JSON.stringify({
+                side: 'double',
+                type: 'expect_material_side',
+                visualId: 'cutaway-shell',
+              }),
+            },
+          ],
+        }),
+        tool: 'apply_manifest_patch',
       },
       null,
       2,
     ),
     '```',
     '',
-    'If a visual geometry path is wrong, replace it with a primitive geometry descriptor. If an authored check is missing, add it under `/checks/-`.',
+    'If a visual geometry path is wrong, replace it with a primitive geometry descriptor. If an authored check is missing, add it under `/checks/-`. Never wrap paths under `/asset` or `/assets`.',
   ].join('\n')
 }
 

@@ -116,10 +116,7 @@ import {
   type MaterialAnimationValues,
 } from '../engine/geometry/materialAnimations'
 import { modelConfig } from '../engine/config/modelConfig'
-import type {
-  ModelProvider,
-  ReasoningEffort,
-} from '../engine/config/modelConfig'
+import type { ModelProvider } from '../engine/config/modelConfig'
 import {
   resolveAssetPanelActiveState,
   resolveCreatePromptMode,
@@ -939,6 +936,12 @@ export function AppShell() {
         {
           imageAttachments,
           mode,
+          parentAgentSessions: runSelectedVersion?.agentSessions ?? [],
+          providerContext: {
+            modelId: selectedProviderModelSettings.modelId,
+            provider: selectedProvider,
+            reasoningEffort: selectedProviderModelSettings.reasoningEffort,
+          },
           runId,
           scene: runScene,
           selectedAsset: runSelectedAsset,
@@ -990,6 +993,7 @@ export function AppShell() {
 
           const savedVersion = await assetLibraryStore.saveValidatedVersion({
             agentEvents: runEvents,
+            agentSessions: result.agentSessions,
             asset: result.asset,
             history: result.history,
             parentVersionId:
@@ -1069,6 +1073,8 @@ export function AppShell() {
       isApiKeyLoaded,
       librarySnapshot.library,
       providerClient,
+      selectedProvider,
+      selectedProviderModelSettings,
       removeAgentRunView,
       sceneSnapshot.activeWorkspace,
       sceneStore,
@@ -1180,7 +1186,7 @@ export function AppShell() {
   )
 
   const handleProviderReasoningEffortChange = useCallback(
-    (provider: ModelProvider, reasoningEffort: ReasoningEffort) => {
+    (provider: ModelProvider, reasoningEffort: string) => {
       commitProviderModelSettings((currentSettings) =>
         updateProviderReasoningEffort(
           currentSettings,

@@ -603,6 +603,7 @@ const allowanceSchema = {
 
 export const manifestAssetResponseFormatName = 'manifest3d_asset'
 export const manifestRepairPatchResponseFormatName = 'manifest3d_repair_patch'
+export const manifestToolCallResponseFormatName = 'manifest3d_tool_call'
 
 export const manifestAssetResponseJsonSchema = objectSchema(
   {
@@ -650,6 +651,21 @@ export const manifestAssetResponseJsonSchema = objectSchema(
     'allowances',
     'metadata',
   ],
+)
+
+export const manifestToolCallResponseJsonSchema = objectSchema(
+  {
+    tool: {
+      type: 'string',
+      enum: ['submit_manifest_asset', 'apply_manifest_patch'],
+      description:
+        'Tool to invoke. Use submit_manifest_asset only for initial creation; use apply_manifest_patch for repair and edit turns.',
+    },
+    argumentsJson: stringSchema(
+      'JSON.stringify of the exact tool arguments. submit_manifest_asset expects {"asset": Manifest3D asset}. apply_manifest_patch expects {"operations": JSON Patch operations with add/replace values encoded as valueJson strings}.',
+    ),
+  },
+  ['tool', 'argumentsJson'],
 )
 
 const patchPathSchema = stringSchema(

@@ -41,7 +41,8 @@ Requirements:
 - If validation reports `allowance_overlap_missing_proof_check`, add or correct a matching exact proof check for the same part pair and same visual pair; do not delete intentional-fit evidence unless the geometry no longer overlaps.
 - If a failure repeats, reconsider the representation or support path instead of making another small tolerance or placement tweak.
 - Do not remove, cap, fuse, or simplify prompt-critical visible geometry just to make validation pass.
-- Return a focused JSON Patch object that repairs the supplied candidate while preserving unrelated stable ids and geometry.
+- Return a focused `apply_manifest_patch` tool call that repairs the current canonical asset while preserving unrelated stable ids and geometry.
+- Patch paths address the current candidate JSON directly. Do not use root path `""`, `/asset`, `/assets`, `/manifest`, or `/candidate`, and do not replace the whole asset during repair.
 - Prefer stable id-addressed patch paths for existing array items, such as `/parts/byId/deck-truss/visuals/byId/deck-panel/transform/position`, instead of brittle numeric array indices.
 - Do not paste a complete Manifest3D asset object into a nested patch value such as joint `limits`, control `joints`, `check.pose`, visual `geometry`, or material fields. Patch only the exact nested property that should change.
 - Keep patch values in the same schema domain as their path: visual `geometry` paths only accept primitive geometry descriptors, while `part_exists`, `joint_exists`, `expect_*`, and other authored checks belong under `/checks`, and `allow_*` descriptors belong under `/allowances`.

@@ -85,14 +85,14 @@ describe('createManifestProviderClient', () => {
 
       return new Response(
         JSON.stringify({
-          candidates: [
+          id: 'interaction-test',
+          outputs: [
             {
-              content: {
-                parts: [{ text: '{"schemaVersion":2}' }],
-              },
-              finishReason: 'STOP',
+              text: '{"schemaVersion":2}',
+              type: 'text',
             },
           ],
+          status: 'completed',
         }),
         { status: 200 },
       )
@@ -112,11 +112,11 @@ describe('createManifestProviderClient', () => {
     })
 
     expect(String(fetchInputs[0])).toContain(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+      'https://generativelanguage.googleapis.com/v1beta/interactions',
     )
   })
 
-  it('passes custom Gemini model settings into the endpoint and request body', async () => {
+  it('passes custom Gemini model settings into the interaction request body', async () => {
     const fetchInputs: Array<RequestInfo | URL> = []
     const bodies: unknown[] = []
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -125,14 +125,14 @@ describe('createManifestProviderClient', () => {
 
       return new Response(
         JSON.stringify({
-          candidates: [
+          id: 'interaction-test',
+          outputs: [
             {
-              content: {
-                parts: [{ text: '{"schemaVersion":2}' }],
-              },
-              finishReason: 'STOP',
+              text: '{"schemaVersion":2}',
+              type: 'text',
             },
           ],
+          status: 'completed',
         }),
         { status: 200 },
       )
@@ -155,12 +155,53 @@ describe('createManifestProviderClient', () => {
       }),
     })
 
-    expect(String(fetchInputs[0])).toContain('/models/gemini-custom:generateContent')
+    expect(String(fetchInputs[0])).toContain('/v1beta/interactions')
     expect(bodies[0]).toMatchObject({
-      generationConfig: {
-        thinkingConfig: {
-          thinkingLevel: 'medium',
-        },
+      generation_config: {
+        thinking_level: 'medium',
+      },
+      model: 'gemini-custom',
+    })
+  })
+
+  it('routes OpenRouter provider requests to the OpenRouter endpoint', async () => {
+    const fetchInputs: Array<RequestInfo | URL> = []
+    const bodies: unknown[] = []
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchInputs.push(input)
+      bodies.push(JSON.parse(String(init?.body)) as unknown)
+
+      return new Response(
+        JSON.stringify({
+          output_text: '{"schemaVersion":2}',
+          status: 'completed',
+        }),
+        { status: 200 },
+      )
+    })
+    const client = createManifestProviderClient({
+      apiKey: 'sk-or-test',
+      fetcher,
+      modelSettings: {
+        modelId: 'openai/gpt-custom',
+        reasoningEffort: 'custom-high',
+      },
+      provider: 'openrouter',
+    })
+
+    await client.generateAsset({
+      prompt: compileManifestPrompt({
+        mode: 'create',
+        scene: emptyScene,
+        userPrompt: 'Create a box.',
+      }),
+    })
+
+    expect(String(fetchInputs[0])).toBe('https://openrouter.ai/api/v1/responses')
+    expect(bodies[0]).toMatchObject({
+      model: 'openai/gpt-custom',
+      reasoning: {
+        effort: 'custom-high',
       },
     })
   })

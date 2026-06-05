@@ -30,8 +30,13 @@ export function saveValidatedAssetVersion(
     }),
   )
   const agentEvents = input.agentEvents?.map((event) => ({ ...event }))
+  const agentSessions = input.agentSessions?.map((session) => ({
+    ...session,
+    exchanges: [...session.exchanges],
+  }))
   const version: AssetLibraryVersion = {
     ...(agentEvents ? { agentEvents } : {}),
+    ...(agentSessions ? { agentSessions } : {}),
     asset: input.asset,
     assetId,
     attempts,

@@ -2,9 +2,9 @@ import type { FormEvent, MouseEvent } from 'react'
 import { useCallback, useEffect, useId, useState } from 'react'
 import {
   getProviderReasoningEffortOptions,
+  isProviderReasoningEffortFreeform,
   modelProviderOptions,
   type ModelProvider,
-  type ReasoningEffort,
 } from '../engine/config/modelConfig'
 import { getProviderLabel } from '../engine/agent/providerPreference'
 import type { ProviderModelSettings } from '../engine/agent/providerModelSettings'
@@ -19,7 +19,7 @@ type ApiKeyModalProps = {
   onProviderChange: (provider: ModelProvider) => void
   onReasoningEffortChange: (
     provider: ModelProvider,
-    reasoningEffort: ReasoningEffort,
+    reasoningEffort: string,
   ) => void
   onResetModelId: (provider: ModelProvider) => void
   onResetReasoningEffort: (provider: ModelProvider) => void
@@ -90,7 +90,7 @@ export function ApiKeyModal({
     onProviderChange(provider)
   }
 
-  function handleReasoningEffortSelectChange(reasoningEffort: ReasoningEffort) {
+  function handleReasoningEffortSelectChange(reasoningEffort: string) {
     onReasoningEffortChange(provider, reasoningEffort)
   }
 
@@ -142,21 +142,32 @@ export function ApiKeyModal({
             </button>
           </div>
           <div className="api-key-modal__setting-row">
-            <select
-              aria-label="Reasoning Effort"
-              value={modelSettings.reasoningEffort}
-              onChange={(event) =>
-                handleReasoningEffortSelectChange(
-                  event.currentTarget.value as ReasoningEffort,
-                )
-              }
-            >
-              {reasoningEffortOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+            {isProviderReasoningEffortFreeform(provider) ? (
+              <input
+                aria-label="Reasoning Effort"
+                autoComplete="off"
+                spellCheck={false}
+                type="text"
+                value={modelSettings.reasoningEffort}
+                onChange={(event) =>
+                  handleReasoningEffortSelectChange(event.currentTarget.value)
+                }
+              />
+            ) : (
+              <select
+                aria-label="Reasoning Effort"
+                value={modelSettings.reasoningEffort}
+                onChange={(event) =>
+                  handleReasoningEffortSelectChange(event.currentTarget.value)
+                }
+              >
+                {reasoningEffortOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               className="api-key-modal__default-button"
               type="button"

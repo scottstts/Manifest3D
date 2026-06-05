@@ -6,16 +6,16 @@ Run the real create pipeline without the browser UI:
 npm run test:headless
 ```
 
-The smoke route uses the OpenAI key from `OPENAI_API_KEY`, `VITE_OPENAI_API_KEY`,
-or the project `.env` file. It runs the real prompt compiler, OpenAI manifest
-client, agent repair loop, validation harness, scene commit, and in-memory asset
-library save.
+The smoke route uses the selected provider key from the environment or the
+project `.env` file. It runs the real prompt compiler, shared app provider
+factory, agent session/repair loop, validation harness, scene commit, and
+in-memory asset library save.
 
 Artifacts are written to `test/headless/artifacts/headless-agent/<run-id>/` by
 default and are ignored by git. Each run captures:
 
 - compiled system and user prompts
-- model response text and parsed create/edit asset JSON or repair patch JSON
+- model response text and parsed create/edit/repair tool-call JSON
 - validation reports and signals for every attempt
 - semantic failure clusters and deterministic probe reports for buildable attempts
 - agent events, final scene, saved in-memory library, and summary JSON
@@ -54,11 +54,16 @@ that previous candidate, and sends exactly one live provider repair request.
 Providing `HEADLESS_AGENT_REPAIR_FROM_CANDIDATE_PATH` without a run mode also
 infers `repair`; explicit `full` or `initial` modes reject seed paths.
 `HEADLESS_AGENT_PROVIDER` selects the provider for the run and defaults to
-OpenAI. OpenAI and Gemini use the same provider factory used by the app.
-`openrouter` is headless-only and uses the OpenRouter Responses API with
+OpenAI. OpenAI, Gemini, and OpenRouter use the same provider factory used by
+the app. `openrouter` uses the OpenRouter Responses API with default model
 `openai/gpt-5.5`, reasoning effort `high`, and `OPENROUTER_API_KEY` from the
-environment or `.env`. Gemini reads `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or
-legacy Vite-prefixed variants from the environment or `.env`.
+environment or `.env`. OpenRouter response ids are captured for traceability,
+but the harness keeps repair/edit context client-side because OpenRouter
+Responses beta is stateless for multi-turn context; requests include the active
+agent `session_id` for provider routing/cache grouping. Gemini uses the
+Interactions API and reads
+`GEMINI_API_KEY`, `GOOGLE_API_KEY`, or legacy Vite-prefixed variants from the
+environment or `.env`.
 `HEADLESS_AGENT_IMAGE_PATH` or comma-separated `HEADLESS_AGENT_IMAGE_PATHS`
 loads local PNG/JPEG/WEBP/GIF files as reference image attachments and copies
 them into each run's `reference-images/` artifact folder.
@@ -71,7 +76,9 @@ print a live waiting heartbeat and defaults to 30 seconds.
 The default agent-run timeout is one hour so stress runs can behave like real
 pipeline runs; recent live runs completed in roughly 12-15 minutes but need
 enough margin for slower repair turns.
-The default repair cap is ten repair turns, matching the app runtime.
+The default headless repair cap is ten repair turns for diagnostic control.
+The app runtime does not apply an implicit fixed repair cap; it relies on run
+timeout, no-progress stops, context continuation, and user cancellation.
 Headless also has a diagnostic-only repeated-failure stop that returns a failed
 result before another model request once the same validation failure signature
 repeats three times. Set `HEADLESS_AGENT_REPEATED_FAILURE_STOP_STREAK=0` to let

@@ -43,6 +43,7 @@ describe('loadStartupProviderApiKeyStatus', () => {
         fetchLocalEnvApiKeys: async () => ({
           gemini: '  gemini-local-test  ',
           openai: '  sk-local-test  ',
+          openrouter: '  sk-or-local-test  ',
         }),
         hostname: 'localhost',
       }),
@@ -50,6 +51,7 @@ describe('loadStartupProviderApiKeyStatus', () => {
       apiKeys: {
         gemini: 'gemini-local-test',
         openai: 'sk-local-test',
+        openrouter: 'sk-or-local-test',
       },
       source: 'local_env',
     })
@@ -66,6 +68,7 @@ describe('loadStartupProviderApiKeyStatus', () => {
           return {
             gemini: 'gemini-should-not-load',
             openai: 'sk-should-not-load',
+            openrouter: 'sk-or-should-not-load',
           }
         },
         hostname: 'manifest3d.example',
@@ -85,6 +88,7 @@ describe('resolveStartupProviderApiKeyStatus', () => {
         envApiKeys: {
           gemini: '',
           openai: '  sk-local-test  ',
+          openrouter: '',
         },
         hostname: 'localhost',
       }),
@@ -92,6 +96,7 @@ describe('resolveStartupProviderApiKeyStatus', () => {
       apiKeys: {
         gemini: '',
         openai: 'sk-local-test',
+        openrouter: '',
       },
       source: 'local_env',
     })
@@ -103,6 +108,7 @@ describe('resolveStartupProviderApiKeyStatus', () => {
         envApiKeys: {
           gemini: 'gemini-should-not-load',
           openai: 'sk-should-not-load',
+          openrouter: 'sk-or-should-not-load',
         },
         hostname: 'manifest3d.example',
       }),
@@ -118,6 +124,7 @@ describe('resolveStartupProviderApiKeyStatus', () => {
         envApiKeys: {
           gemini: '   ',
           openai: '',
+          openrouter: '',
         },
         hostname: 'localhost',
       }),
@@ -134,6 +141,7 @@ describe('provider API key readiness', () => {
       apiKeys: {
         gemini: '',
         openai: 'sk-local-test',
+        openrouter: '',
       },
       source: 'local_env' as const,
     }
@@ -154,6 +162,7 @@ describe('provider API key readiness', () => {
         {
           gemini: 'gemini-session',
           openai: '',
+          openrouter: '',
         },
       ),
     ).toBe(true)
@@ -167,6 +176,7 @@ describe('provider API key readiness', () => {
         {
           gemini: 'gemini-session',
           openai: '',
+          openrouter: '',
         },
       ),
     ).toBe(false)
@@ -180,12 +190,14 @@ describe('provider API key readiness', () => {
           apiKeys: {
             gemini: 'gemini-local',
             openai: 'sk-local',
+            openrouter: 'sk-or-local',
           },
           source: 'local_env',
         },
         {
           gemini: 'gemini-session',
           openai: '',
+          openrouter: '',
         },
       ),
     ).toBe('gemini-local')

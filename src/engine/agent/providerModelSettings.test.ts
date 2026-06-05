@@ -3,6 +3,7 @@ import {
   createDefaultProviderModelSettings,
   createGeminiModelConfig,
   createOpenAIModelConfig,
+  createOpenRouterModelConfig,
   parseProviderModelSettings,
   resetProviderModelId,
   resetProviderReasoningEffort,
@@ -22,6 +23,10 @@ describe('provider model settings', () => {
         modelId: 'gpt-5.5',
         reasoningEffort: 'high',
       },
+      openrouter: {
+        modelId: 'openai/gpt-5.5',
+        reasoningEffort: 'high',
+      },
     })
   })
 
@@ -37,6 +42,10 @@ describe('provider model settings', () => {
             modelId: 'gpt-custom',
             reasoningEffort: 'xhigh',
           },
+          openrouter: {
+            modelId: 'openai/custom',
+            reasoningEffort: 'trace-high',
+          },
         }),
       ),
     ).toEqual({
@@ -47,6 +56,10 @@ describe('provider model settings', () => {
       openai: {
         modelId: 'gpt-custom',
         reasoningEffort: 'xhigh',
+      },
+      openrouter: {
+        modelId: 'openai/custom',
+        reasoningEffort: 'trace-high',
       },
     })
   })
@@ -61,6 +74,10 @@ describe('provider model settings', () => {
         openai: {
           reasoningEffort: 'minimal',
         },
+        openrouter: {
+          modelId: 'openai/custom',
+          reasoningEffort: 'freeform-effort',
+        },
       }),
     ).toEqual({
       gemini: {
@@ -70,6 +87,10 @@ describe('provider model settings', () => {
       openai: {
         modelId: 'gpt-5.5',
         reasoningEffort: 'high',
+      },
+      openrouter: {
+        modelId: 'openai/custom',
+        reasoningEffort: 'freeform-effort',
       },
     })
   })
@@ -114,6 +135,15 @@ describe('provider model settings', () => {
       model: 'gemini-custom',
       thinkingLevel: 'minimal',
     })
+    expect(
+      createOpenRouterModelConfig({
+        modelId: '  openai/custom  ',
+        reasoningEffort: '  custom-high  ',
+      }),
+    ).toMatchObject({
+      model: 'openai/custom',
+      reasoningEffort: 'custom-high',
+    })
   })
 
   it('serializes settings for localStorage', () => {
@@ -128,6 +158,10 @@ describe('provider model settings', () => {
             modelId: 'gpt-custom',
             reasoningEffort: 'xhigh',
           },
+          openrouter: {
+            modelId: 'openai/custom',
+            reasoningEffort: 'freeform-high',
+          },
         }),
       ),
     ).toEqual({
@@ -138,6 +172,10 @@ describe('provider model settings', () => {
       openai: {
         modelId: 'gpt-custom',
         reasoningEffort: 'xhigh',
+      },
+      openrouter: {
+        modelId: 'openai/custom',
+        reasoningEffort: 'freeform-high',
       },
     })
   })

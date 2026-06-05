@@ -20,6 +20,15 @@ import {
   type CandidateHistorySnapshot,
 } from './candidateHistory'
 import {
+  createAgentSessionTracker,
+  type AgentSessionProviderContext,
+  type PersistedAgentSession,
+} from './agentSession'
+import {
+  parseManifestAgentToolCall,
+  type ManifestAgentToolName,
+} from './agentToolCalls'
+import {
   compileManifestPrompt,
   type PromptCompilerMode,
   type PromptImageAttachment,
@@ -71,6 +80,8 @@ export type RunManifestAgentLoopInput = {
   imageAttachments?: readonly AgentImageAttachment[]
   maxRepairTurns?: number
   mode: AgentLoopRunMode
+  parentAgentSessions?: readonly PersistedAgentSession[]
+  providerContext?: AgentSessionProviderContext
   runId?: string
   scene: ManifestScene
   selectedAsset?: ManifestAsset | null
@@ -93,12 +104,14 @@ export type RunManifestAgentLoopDependencies = {
 export type AgentLoopResult =
   | {
       asset: ManifestAsset
+      agentSessions: readonly PersistedAgentSession[]
       history: CandidateHistorySnapshot
       report: ValidationReport
       status: 'ready'
     }
   | {
       history: CandidateHistorySnapshot
+      agentSessions: readonly PersistedAgentSession[]
       message: string
       status: 'failed' | 'cancelled' | 'unavailable'
     }
@@ -113,10 +126,11 @@ export async function runManifestAgentLoop(
   const validateCandidate =
     dependencies.validateCandidate ?? validateManifestAssetCandidate
   const runId = input.runId ?? createRunId(dependencies.now)
-  const maxRepairTurns = input.maxRepairTurns ?? defaultRepairTurnCap
+  const maxRepairTurns = input.maxRepairTurns ?? Number.POSITIVE_INFINITY
   let scene = input.scene
   let mode: PromptCompilerMode = input.mode
-  let candidateJson: unknown
+  let candidateJson: unknown =
+    input.mode === 'edit' ? input.selectedAsset ?? undefined : undefined
   let validationFeedback: string | null = null
   let eventIndex = 0
   let repairTurns = 0
@@ -128,6 +142,19 @@ export async function runManifestAgentLoop(
     userInputHistory,
     input.imageAttachments ?? [],
   )
+  const sessionTracker = createAgentSessionTracker({
+    assetId: input.selectedAsset?.id ?? null,
+    now: dependencies.now,
+    parentSessions: input.parentAgentSessions ?? [],
+    providerContext:
+      input.providerContext ??
+      {
+        modelId: 'unknown',
+        provider: 'openai',
+        reasoningEffort: 'unknown',
+      },
+    runId,
+  })
 
   history.beginRun(runId)
   emit(
@@ -142,6 +169,7 @@ export async function runManifestAgentLoop(
 
   while (true) {
     if (input.signal?.aborted) {
+      sessionTracker.finish({ status: 'failed' })
       emit(
         publishEvent,
         runId,
@@ -153,6 +181,7 @@ export async function runManifestAgentLoop(
       )
 
       return {
+        agentSessions: sessionTracker.getSnapshot().sessions,
         history: history.getSnapshot(),
         message: 'The agent run was cancelled.',
         status: 'cancelled',
@@ -165,10 +194,22 @@ export async function runManifestAgentLoop(
       mode === 'repair' ? `repairTurn=${repairTurns}` : `mode=${mode}`,
     )
 
+    const replayContent =
+      mode === 'repair'
+        ? validationFeedback ?? 'Continue repairing the current canonical asset.'
+        : input.userPrompt
+    const startsContinuation = sessionTracker.shouldStartContinuation(replayContent)
+    const previousProviderResponseId = startsContinuation
+      ? null
+      : sessionTracker.getPreviousProviderResponseId()
     const prompt = compileManifestPrompt({
       candidateJson,
       imageAttachments: imageAttachmentMetadata(input.imageAttachments ?? []),
       mode,
+      omitCandidateJson:
+        mode === 'repair' && previousProviderResponseId !== null,
+      omitSelectedAssetJson:
+        mode === 'edit' && previousProviderResponseId !== null,
       scene,
       selectedAsset: input.selectedAsset ?? null,
       selectedAssetAttemptContext: input.selectedAssetAttemptContext ?? null,
@@ -176,9 +217,17 @@ export async function runManifestAgentLoop(
       userPrompt: input.userPrompt,
       validationFeedback,
     })
+    const preparedRequest = sessionTracker.prepareRequest({
+      candidateJson,
+      prompt,
+      replayContent,
+      validationFeedback,
+    })
     const agentRequest: AgentRequest = {
       imageAttachments: requestImageAttachments,
       prompt,
+      previousResponseId: preparedRequest.previousProviderResponseId,
+      sessionId: preparedRequest.sessionId,
       signal: input.signal,
     }
     finishCompilePrompt('passed')
@@ -193,6 +242,7 @@ export async function runManifestAgentLoop(
 
     if (input.signal?.aborted) {
       finishModelRequest('skipped')
+      sessionTracker.finish({ status: 'failed' })
       emit(
         publishEvent,
         runId,
@@ -204,6 +254,7 @@ export async function runManifestAgentLoop(
       )
 
       return {
+        agentSessions: sessionTracker.getSnapshot().sessions,
         history: history.getSnapshot(),
         message: 'The agent run was cancelled.',
         status: 'cancelled',
@@ -212,6 +263,7 @@ export async function runManifestAgentLoop(
 
     if (agentResponse.status === 'unavailable') {
       finishModelRequest('failed')
+      sessionTracker.finish({ status: 'failed' })
       emit(
         publishEvent,
         runId,
@@ -223,6 +275,7 @@ export async function runManifestAgentLoop(
       )
 
       return {
+        agentSessions: sessionTracker.getSnapshot().sessions,
         history: history.getSnapshot(),
         message: agentResponse.message,
         status: 'unavailable',
@@ -231,6 +284,7 @@ export async function runManifestAgentLoop(
 
     if (agentResponse.status === 'refused' || agentResponse.status === 'error') {
       finishModelRequest('failed')
+      sessionTracker.finish({ status: 'failed' })
       emit(
         publishEvent,
         runId,
@@ -242,6 +296,7 @@ export async function runManifestAgentLoop(
       )
 
       return {
+        agentSessions: sessionTracker.getSnapshot().sessions,
         history: history.getSnapshot(),
         message: agentResponse.message,
         status: 'failed',
@@ -249,6 +304,11 @@ export async function runManifestAgentLoop(
     }
 
     finishModelRequest('passed')
+    sessionTracker.recordModelResponse({
+      candidate: agentResponse.candidate,
+      providerResponseId: agentResponse.responseId,
+      rawText: agentResponse.rawText,
+    })
 
     const finishParseCandidate = beginStep(
       'parsing_candidate',
@@ -258,15 +318,30 @@ export async function runManifestAgentLoop(
         : null,
     )
 
+    const parsedToolCall = parseManifestAgentToolCall(
+      agentResponse.candidate,
+      getExpectedToolName(mode),
+    )
     const candidate =
-      mode === 'repair'
-        ? applyRepairPatch(candidateJson, agentResponse.candidate)
-        : { status: 'ok' as const, value: agentResponse.candidate }
+      parsedToolCall.status === 'error'
+        ? {
+            message: parsedToolCall.message,
+            rejectedPatchSummary: parsedToolCall.rejectedToolSummary,
+            status: 'error' as const,
+          }
+        : parsedToolCall.kind === 'patch'
+        ? applyRepairPatch(candidateJson, parsedToolCall.candidate)
+        : { status: 'ok' as const, value: parsedToolCall.candidate }
 
     if (candidate.status === 'error') {
+      sessionTracker.recordToolResult({
+        status: 'failed',
+        summary: candidate.message,
+      })
       finishParseCandidate('failed', candidate.message)
 
       if (repairTurns >= maxRepairTurns) {
+        sessionTracker.finish({ status: 'failed' })
         emit(
           publishEvent,
           runId,
@@ -278,6 +353,7 @@ export async function runManifestAgentLoop(
         )
 
         return {
+          agentSessions: sessionTracker.getSnapshot().sessions,
           history: history.getSnapshot(),
           message:
             'The agent could not produce a valid repair patch before the repair turn cap.',
@@ -305,6 +381,10 @@ export async function runManifestAgentLoop(
         repairTargetAttempt: history.getLatestAttempt(),
         rejectedPatchSummary: candidate.rejectedPatchSummary,
       })
+      sessionTracker.recordHarnessFeedback({
+        content: validationFeedback,
+        mode,
+      })
       scene = dependencies.sceneStore.getSnapshot().scene
 
       const finishRepairFeedback = beginStep(
@@ -317,6 +397,13 @@ export async function runManifestAgentLoop(
     }
 
     finishParseCandidate('passed')
+    sessionTracker.recordToolResult({
+      status: 'passed',
+      summary:
+        parsedToolCall.status === 'ok'
+          ? `${parsedToolCall.tool} applied.`
+          : 'Tool call applied.',
+    })
     patchApplicationErrorSignature = null
     patchApplicationErrorStreak = 0
 
@@ -338,6 +425,7 @@ export async function runManifestAgentLoop(
 
     if (validationResult.asset && validationResult.report.valid) {
       if (!history.canReportReady(candidate.value)) {
+        sessionTracker.finish({ candidate: candidate.value, status: 'failed' })
         emit(
           publishEvent,
           runId,
@@ -349,6 +437,7 @@ export async function runManifestAgentLoop(
         )
 
         return {
+          agentSessions: sessionTracker.getSnapshot().sessions,
           history: history.getSnapshot(),
           message:
             'The latest candidate no longer matches the successful validation report.',
@@ -366,6 +455,10 @@ export async function runManifestAgentLoop(
 
       const committedReport = withCommitStep(validationResult.report, true)
       finishCommit('passed')
+      sessionTracker.finish({
+        candidate: validationResult.asset,
+        status: 'complete',
+      })
 
       emit(
         publishEvent,
@@ -379,6 +472,7 @@ export async function runManifestAgentLoop(
 
       return {
         asset: validationResult.asset,
+        agentSessions: sessionTracker.getSnapshot().sessions,
         history: history.getSnapshot(),
         report: committedReport,
         status: 'ready',
@@ -386,6 +480,7 @@ export async function runManifestAgentLoop(
     }
 
     if (repairTurns >= maxRepairTurns) {
+      sessionTracker.finish({ candidate: candidate.value, status: 'failed' })
       emit(
         publishEvent,
         runId,
@@ -397,6 +492,7 @@ export async function runManifestAgentLoop(
       )
 
       return {
+        agentSessions: sessionTracker.getSnapshot().sessions,
         history: history.getSnapshot(),
         message: 'The agent could not produce a valid asset before the repair turn cap.',
         status: 'failed',
@@ -410,6 +506,10 @@ export async function runManifestAgentLoop(
       attempt,
       history.getSnapshot().attempts,
     )
+    sessionTracker.recordHarnessFeedback({
+      content: validationFeedback,
+      mode,
+    })
     scene = dependencies.sceneStore.getSnapshot().scene
 
     const finishRepairFeedback = beginStep(
@@ -463,6 +563,10 @@ function renderRepairFeedback(
     repeated: attempt.repeatedFailure,
     revision: attempt.revision,
   })
+}
+
+function getExpectedToolName(mode: PromptCompilerMode): ManifestAgentToolName {
+  return mode === 'create' ? 'submit_manifest_asset' : 'apply_manifest_patch'
 }
 
 export function createRelationLoopHints(attempts: readonly CandidateAttempt[]) {

@@ -1,41 +1,43 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentRequest } from '../../src/engine/agent/providerClient'
+import type { AgentRequest } from './providerClient'
 import {
-  buildOpenRouterHeadlessResponsesRequestBody,
-  buildOpenRouterHeadlessSmokeRequestBody,
-  createOpenRouterHeadlessManifestClient,
-  openRouterHeadlessModelConfig,
-  openRouterHeadlessResponsesEndpoint,
-  runOpenRouterHeadlessSmokeRequest,
-} from './openRouterHeadlessClient'
+  buildOpenRouterResponsesRequestBody,
+  createOpenRouterManifestClient,
+  openRouterResponsesEndpoint,
+} from './openRouterManifestClient'
 
 type FetchLike = (
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => Promise<Response>
 
-describe('openRouterHeadlessClient', () => {
-  it('builds an OpenRouter Responses request that mirrors the OpenAI manifest path', () => {
-    const body = buildOpenRouterHeadlessResponsesRequestBody(
-      createAgentRequest('create'),
-    )
+describe('openRouterManifestClient', () => {
+  it('builds an OpenRouter Responses request from the shared app path', () => {
+    const body = buildOpenRouterResponsesRequestBody({
+      ...createAgentRequest('create'),
+      previousResponseId: 'resp_previous_should_not_chain',
+      sessionId: 'openrouter-run:session:1',
+    })
 
     expect(body).toMatchObject({
       background: false,
-      max_output_tokens: openRouterHeadlessModelConfig.maxOutputTokens,
+      max_output_tokens: 64_000,
       model: 'openai/gpt-5.5',
       reasoning: {
         effort: 'high',
       },
+      session_id: 'openrouter-run:session:1',
       store: false,
-      temperature: openRouterHeadlessModelConfig.temperature,
+      temperature: 1,
       text: {
         format: {
+          name: 'manifest3d_tool_call',
           strict: true,
           type: 'json_schema',
         },
       },
     })
+    expect(body).not.toHaveProperty('previous_response_id')
     expect(body.input[0]?.content[0]).toEqual({
       text: 'Create a small asset.',
       type: 'input_text',
@@ -43,8 +45,11 @@ describe('openRouterHeadlessClient', () => {
   })
 
   it('posts to the OpenRouter Responses endpoint and parses output_text JSON', async () => {
-    const fetcher = vi.fn(async () =>
-      createJsonResponse({
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input
+      void init
+
+      return createJsonResponse({
         id: 'resp_test',
         output: [
           {
@@ -59,9 +64,9 @@ describe('openRouterHeadlessClient', () => {
           },
         ],
         status: 'completed',
-      }),
-    )
-    const client = createOpenRouterHeadlessManifestClient({
+      })
+    })
+    const client = createOpenRouterManifestClient({
       apiKey: 'or-test-key',
       fetcher,
     })
@@ -69,7 +74,7 @@ describe('openRouterHeadlessClient', () => {
     const response = await client.generateAsset(createAgentRequest('create'))
 
     expect(fetcher).toHaveBeenCalledOnce()
-    expect(fetcher.mock.calls[0]?.[0]).toBe(openRouterHeadlessResponsesEndpoint)
+    expect(fetcher.mock.calls[0]?.[0]).toBe(openRouterResponsesEndpoint)
 
     const requestInit = fetcher.mock.calls[0]?.[1]
     const requestBody =
@@ -116,7 +121,7 @@ describe('openRouterHeadlessClient', () => {
         id: 'chatcmpl_test',
       }),
     )
-    const client = createOpenRouterHeadlessManifestClient({
+    const client = createOpenRouterManifestClient({
       apiKey: 'or-test-key',
       fetcher,
     })
@@ -135,7 +140,7 @@ describe('openRouterHeadlessClient', () => {
 
   it('reports missing OpenRouter keys without sending a request', async () => {
     const fetcher = vi.fn()
-    const client = createOpenRouterHeadlessManifestClient({ fetcher })
+    const client = createOpenRouterManifestClient({ fetcher })
 
     const response = await client.generateAsset(createAgentRequest('create'))
 
@@ -148,85 +153,16 @@ describe('openRouterHeadlessClient', () => {
     })
   })
 
-  it('retries transient network failures once by default', async () => {
-    const fetcher = vi
-      .fn<Parameters<FetchLike>, ReturnType<FetchLike>>()
-      .mockRejectedValueOnce(new Error('fetch failed'))
-      .mockResolvedValueOnce(
-        createJsonResponse({
-          id: 'resp_retry',
-          output_text: '{"ok":true}',
-          status: 'completed',
-        }),
-      )
-    const client = createOpenRouterHeadlessManifestClient({
-      apiKey: 'or-test-key',
-      fetcher,
-      retryDelayMs: 0,
-    })
-
-    const response = await client.generateAsset(createAgentRequest('create'))
-
-    expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(response).toEqual({
-      candidate: {
-        ok: true,
-      },
-      rawText: '{"ok":true}',
-      responseId: 'resp_retry',
-      status: 'ok',
-    })
-  })
-
-  it('retries transient HTTP failures once by default', async () => {
-    const fetcher = vi
-      .fn<Parameters<FetchLike>, ReturnType<FetchLike>>()
-      .mockResolvedValueOnce(
-        createJsonResponse(
-          {
-            error: {
-              message: 'temporary upstream failure',
-            },
-          },
-          { status: 503 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        createJsonResponse({
-          id: 'resp_http_retry',
-          output_text: '{"ok":true}',
-          status: 'completed',
-        }),
-      )
-    const client = createOpenRouterHeadlessManifestClient({
-      apiKey: 'or-test-key',
-      fetcher,
-      retryDelayMs: 0,
-    })
-
-    const response = await client.generateAsset(createAgentRequest('create'))
-
-    expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(response).toEqual({
-      candidate: {
-        ok: true,
-      },
-      rawText: '{"ok":true}',
-      responseId: 'resp_http_retry',
-      status: 'ok',
-    })
-  })
-
   it('retries transient response body failures once by default', async () => {
     const fetcher = vi
-      .fn<Parameters<FetchLike>, ReturnType<FetchLike>>()
+      .fn<FetchLike>()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         text: async () => {
           throw new TypeError('terminated')
         },
-      } as Response)
+      } as unknown as Response)
       .mockResolvedValueOnce(
         createJsonResponse({
           id: 'resp_body_retry',
@@ -234,7 +170,7 @@ describe('openRouterHeadlessClient', () => {
           status: 'completed',
         }),
       )
-    const client = createOpenRouterHeadlessManifestClient({
+    const client = createOpenRouterManifestClient({
       apiKey: 'or-test-key',
       fetcher,
       retryDelayMs: 0,
@@ -264,7 +200,7 @@ describe('openRouterHeadlessClient', () => {
         { status: 404 },
       ),
     )
-    const client = createOpenRouterHeadlessManifestClient({
+    const client = createOpenRouterManifestClient({
       apiKey: 'or-test-key',
       fetcher,
     })
@@ -279,56 +215,6 @@ describe('openRouterHeadlessClient', () => {
       statusCode: 404,
     })
   })
-
-  it('builds and sends a small structured smoke request', async () => {
-    const smokeBody = buildOpenRouterHeadlessSmokeRequestBody({
-      label: 'client-only',
-      prompt: 'Return ok true.',
-    })
-
-    expect(smokeBody).toMatchObject({
-      background: false,
-      max_output_tokens: 200,
-      model: 'openai/gpt-5.5',
-      reasoning: {
-        effort: 'high',
-      },
-      store: false,
-      text: {
-        format: {
-          name: 'openrouter_headless_client_smoke',
-          strict: true,
-          type: 'json_schema',
-        },
-      },
-      user: 'client-only',
-    })
-
-    const fetcher = vi.fn(async () =>
-      createJsonResponse({
-        id: 'resp_smoke',
-        output_text: '{"ok":true,"label":"client-only"}',
-        status: 'completed',
-      }),
-    )
-    const response = await runOpenRouterHeadlessSmokeRequest({
-      apiKey: 'or-test-key',
-      fetcher,
-      label: 'client-only',
-      prompt: 'Return ok true.',
-    })
-
-    expect(fetcher).toHaveBeenCalledOnce()
-    expect(response).toEqual({
-      candidate: {
-        label: 'client-only',
-        ok: true,
-      },
-      rawText: '{"ok":true,"label":"client-only"}',
-      responseId: 'resp_smoke',
-      status: 'ok',
-    })
-  })
 })
 
 function createAgentRequest(
@@ -341,19 +227,20 @@ function createAgentRequest(
         mode,
         selectedAssetId: null,
       },
-      system: 'You are a Manifest3D generator.',
+      system: 'System instructions.',
       user: 'Create a small asset.',
     },
   }
 }
 
-function createJsonResponse(value: unknown, init: ResponseInit = {}) {
-  return new Response(JSON.stringify(value), {
+function createJsonResponse(
+  payload: unknown,
+  init: ResponseInit = { status: 200 },
+) {
+  return new Response(JSON.stringify(payload), {
     headers: {
       'Content-Type': 'application/json',
-      ...init.headers,
     },
-    status: init.status ?? 200,
-    statusText: init.statusText,
+    ...init,
   })
 }

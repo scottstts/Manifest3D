@@ -26,7 +26,12 @@ import type {
   AgentResponse,
   ManifestProviderClient,
 } from '../../src/engine/agent/providerClient'
-import type { ModelProvider } from '../../src/engine/config/modelConfig'
+import {
+  geminiModelConfig,
+  modelConfig,
+  openRouterModelConfig,
+  type ModelProvider,
+} from '../../src/engine/config/modelConfig'
 import { createAssetLibraryStore } from '../../src/engine/persistence/assetLibraryStore'
 import { createMemoryAssetLibraryRepository } from '../../src/engine/persistence/assetLibraryRepository'
 import { createSceneStore } from '../../src/engine/scene/sceneStore'
@@ -53,11 +58,10 @@ import {
   createHeadlessPatchApplicationStopper,
   type HeadlessPatchApplicationStopState,
 } from './headlessPatchApplicationStopper'
-import { createOpenRouterHeadlessManifestClient } from './openRouterHeadlessClient'
 
 type HeadlessAgentResult = Awaited<ReturnType<typeof runManifestAgentLoop>>
 type HeadlessAttempt = HeadlessAgentResult['history']['attempts'][number]
-type HeadlessModelProvider = ModelProvider | 'openrouter'
+type HeadlessModelProvider = ModelProvider
 
 type HeadlessRepairReplaySeed = {
   candidate: unknown
@@ -259,6 +263,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
             maxRepairTurns,
             imageAttachments,
             mode: 'create',
+            providerContext: createHeadlessProviderContext(provider),
             runId,
             scene: emptyScene,
             signal: abortController.signal,
@@ -330,6 +335,7 @@ describeLiveHeadless('headless agent pipeline smoke', () => {
 
       if (result.status === 'ready') {
         const savedVersion = await assetLibraryStore.saveValidatedVersion({
+          agentSessions: result.agentSessions,
           asset: result.asset,
           history: result.history,
           parentVersionId: null,
@@ -397,13 +403,10 @@ function createCapturedClient({
   repairReplaySeed?: HeadlessRepairReplaySeed | null
   shouldStopBeforeRequest?: () => string | null
 }) {
-  const realClient =
-    provider === 'openrouter'
-      ? createOpenRouterHeadlessManifestClient({ apiKey })
-      : createManifestProviderClient({
-          apiKey,
-          provider,
-        })
+  const realClient = createManifestProviderClient({
+    apiKey,
+    provider,
+  })
   const exchanges: CapturedExchange[] = []
   let pendingRepairReplaySeed = repairReplaySeed ?? null
   const client: ManifestProviderClient = {
@@ -1377,7 +1380,31 @@ function readHeadlessModelProvider(): HeadlessModelProvider {
     .trim()
     .toLowerCase()
 
-  return provider === 'openrouter' ? 'openrouter' : parseModelProvider(provider)
+  return parseModelProvider(provider)
+}
+
+function createHeadlessProviderContext(provider: HeadlessModelProvider) {
+  if (provider === 'gemini') {
+    return {
+      modelId: geminiModelConfig.model,
+      provider,
+      reasoningEffort: geminiModelConfig.thinkingLevel,
+    }
+  }
+
+  if (provider === 'openrouter') {
+    return {
+      modelId: openRouterModelConfig.model,
+      provider,
+      reasoningEffort: openRouterModelConfig.reasoningEffort,
+    }
+  }
+
+  return {
+    modelId: modelConfig.model,
+    provider,
+    reasoningEffort: modelConfig.reasoningEffort,
+  }
 }
 
 function readRequiredProviderApiKey(provider: HeadlessModelProvider) {

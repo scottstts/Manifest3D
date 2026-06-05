@@ -11,17 +11,18 @@ export const geminiThinkingLevelOptions = [
   'medium',
   'high',
 ] as const
+export const openRouterDefaultReasoningEffort = 'high'
 
 export type OpenAIReasoningEffort =
   (typeof openAIReasoningEffortOptions)[number]
 export type GeminiThinkingLevel = (typeof geminiThinkingLevelOptions)[number]
-export type ReasoningEffort = OpenAIReasoningEffort | GeminiThinkingLevel
+export type ReasoningEffort = string
 
 export type ModelConfig = {
   agentRunTimeoutMs: number
   maxOutputTokens: number
   model: string
-  reasoningEffort: OpenAIReasoningEffort
+  reasoningEffort: string
   temperature: number
 }
 
@@ -49,14 +50,26 @@ export const geminiModelConfig: GeminiModelConfig = {
   agentRunTimeoutMs: 3_600_000,
 }
 
-export const modelProviderOptions = ['openai', 'gemini'] as const
+export const openRouterModelConfig: ModelConfig = {
+  ...modelConfig,
+  model: 'openai/gpt-5.5',
+  reasoningEffort: openRouterDefaultReasoningEffort,
+}
+
+export const modelProviderOptions = ['openai', 'gemini', 'openrouter'] as const
 
 export type ModelProvider = (typeof modelProviderOptions)[number]
 
 export function getProviderReasoningEffortOptions(
   provider: ModelProvider,
-): readonly ReasoningEffort[] {
-  return provider === 'gemini'
+): readonly string[] {
+  return provider === 'openrouter'
+    ? []
+    : provider === 'gemini'
     ? geminiThinkingLevelOptions
     : openAIReasoningEffortOptions
+}
+
+export function isProviderReasoningEffortFreeform(provider: ModelProvider) {
+  return provider === 'openrouter'
 }

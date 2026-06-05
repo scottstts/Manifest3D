@@ -28,6 +28,7 @@ export function createEmptyProviderApiKeys(): ProviderApiKeyMap {
   return {
     gemini: '',
     openai: '',
+    openrouter: '',
   }
 }
 
@@ -152,12 +153,14 @@ function parseLocalProviderApiKeyPayload(payload: unknown): ProviderApiKeyMap {
     return normalizeProviderApiKeys({
       gemini: readString(payload.apiKeys.gemini),
       openai: readString(payload.apiKeys.openai),
+      openrouter: readString(payload.apiKeys.openrouter),
     })
   }
 
   return normalizeProviderApiKeys({
     gemini: readString(payload.geminiApiKey),
     openai: readString(payload.openaiApiKey) || readString(payload.apiKey),
+    openrouter: readString(payload.openrouterApiKey),
   })
 }
 

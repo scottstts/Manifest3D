@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
 import {
   manifestAssetResponseJsonSchema,
-  manifestRepairPatchResponseFormatName,
-  manifestRepairPatchResponseJsonSchema,
+  manifestToolCallResponseFormatName,
+  manifestToolCallResponseJsonSchema,
 } from '../schema/manifestContract'
 import { modelConfig } from '../config/modelConfig'
 import type { ManifestScene } from '../schema/manifestTypes'
@@ -47,7 +47,7 @@ describe('buildOpenAIResponsesRequestBody', () => {
     expect(body.background).toBe(true)
     expect(body.store).toBe(true)
     expect(body.text.format).toMatchObject({
-      name: 'manifest3d_asset',
+      name: 'manifest3d_tool_call',
       strict: true,
       type: 'json_schema',
     })
@@ -68,10 +68,10 @@ describe('buildOpenAIResponsesRequestBody', () => {
 
   it('uses strict-compatible object schemas for the response format', () => {
     expect(findStrictRequiredMismatches(manifestAssetResponseJsonSchema)).toEqual([])
-    expect(findStrictRequiredMismatches(manifestRepairPatchResponseJsonSchema)).toEqual([])
+    expect(findStrictRequiredMismatches(manifestToolCallResponseJsonSchema)).toEqual([])
   })
 
-  it('uses the repair patch schema for repair prompts', () => {
+  it('uses the compact tool-call schema for repair prompts', () => {
     const prompt = compileManifestPrompt({
       candidateJson: createValidValidationFixtureAsset(),
       mode: 'repair',
@@ -83,51 +83,21 @@ describe('buildOpenAIResponsesRequestBody', () => {
     const body = buildOpenAIResponsesRequestBody({ prompt })
 
     expect(body.text.format).toMatchObject({
-      name: manifestRepairPatchResponseFormatName,
-      schema: manifestRepairPatchResponseJsonSchema,
+      name: manifestToolCallResponseFormatName,
+      schema: manifestToolCallResponseJsonSchema,
     })
   })
 
-  it('allows repair patches to replace numeric vectors without permitting empty array values', () => {
-    const valueVariants = getRepairPatchValueVariants()
-    const arrayVariants = valueVariants.filter(
-      (variant) => isRecord(variant) && variant.type === 'array',
-    )
+  it('keeps repair response schema compact and domain-agnostic', () => {
+    const schemaJson = JSON.stringify(manifestToolCallResponseJsonSchema)
 
-    expect(
-      arrayVariants.some(
-        (variant) =>
-          isRecord(variant) &&
-          variant.minItems === 3 &&
-          variant.maxItems === 3 &&
-          isRecord(variant.items) &&
-          variant.items.type === 'number',
-      ),
-    ).toBe(true)
-    expect(
-      arrayVariants.filter(
-        (variant) => isRecord(variant) && variant.minItems === undefined,
-      ),
-    ).toEqual([])
-  })
-
-  it('keeps path-scoped objects out of generic repair patch values', () => {
-    const valueVariantsJson = JSON.stringify(getRepairPatchValueVariants())
-    const patchOperationJson = JSON.stringify(getRepairPatchOperationVariants())
-
-    expect(valueVariantsJson).not.toContain('part_exists')
-    expect(valueVariantsJson).not.toContain('joint_exists')
-    expect(valueVariantsJson).not.toContain('allow_overlap')
-    expect(valueVariantsJson).not.toContain('schemaVersion')
-    expect(valueVariantsJson).not.toContain('Stable visual id')
-
-    expect(patchOperationJson).toContain('/visuals')
-    expect(patchOperationJson).toContain('/geometry')
-    expect(patchOperationJson).toContain('Stable visual id')
-    expect(patchOperationJson).toContain('^/checks')
-    expect(patchOperationJson).toContain('part_exists')
-    expect(patchOperationJson).toContain('^/allowances')
-    expect(patchOperationJson).toContain('allow_overlap')
+    expect(schemaJson).toContain('submit_manifest_asset')
+    expect(schemaJson).toContain('apply_manifest_patch')
+    expect(schemaJson).toContain('argumentsJson')
+    expect(schemaJson).not.toContain('schemaVersion')
+    expect(schemaJson).not.toContain('part_exists')
+    expect(schemaJson).not.toContain('allow_overlap')
+    expect(schemaJson.length).toBeLessThan(1_500)
   })
 
   it('constrains generated vectors, geometry arrays, and bounded numbers', () => {
@@ -458,42 +428,6 @@ function getAnyOfVariant(schema: unknown, type: string) {
   }
 
   return variant
-}
-
-function getRepairPatchValueVariants() {
-  const replaceOperation = getRepairPatchOperationVariants().find(
-    (entry) =>
-      isRecord(entry) &&
-      isRecord(entry.properties) &&
-      isRecord(entry.properties.op) &&
-      Array.isArray(entry.properties.op.enum) &&
-      entry.properties.op.enum.includes('replace') &&
-      !JSON.stringify(entry).includes('^/checks') &&
-      !JSON.stringify(entry).includes('^/allowances'),
-  )
-
-  if (!replaceOperation || !isRecord(replaceOperation)) {
-    throw new Error('Missing generic replace patch operation schema.')
-  }
-
-  const valueSchema = getProperty(replaceOperation, 'value')
-
-  if (!isRecord(valueSchema) || !Array.isArray(valueSchema.anyOf)) {
-    throw new Error('Patch value schema has no anyOf variants.')
-  }
-
-  return valueSchema.anyOf
-}
-
-function getRepairPatchOperationVariants() {
-  const patchArray = getProperty(manifestRepairPatchResponseJsonSchema, 'patch')
-  const patchOperation = getArrayItem(patchArray)
-
-  if (!isRecord(patchOperation) || !Array.isArray(patchOperation.anyOf)) {
-    throw new Error('Patch operation schema has no anyOf variants.')
-  }
-
-  return patchOperation.anyOf
 }
 
 function findStrictRequiredMismatches(
