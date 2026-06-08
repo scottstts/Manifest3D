@@ -7,7 +7,7 @@ import {
 } from '../testing/validationFixtureAsset'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import { createSceneStore } from '../scene/sceneStore'
-import { createValidationTimeline } from '../agent/validationTimeline'
+import { createValidationTimeline } from '../agent/session/validationTimeline'
 import { commitValidatedAsset } from './commitValidatedAsset'
 import { validateManifestAssetCandidate } from './validateManifest'
 import { createValidationReport } from './reportBuilder'

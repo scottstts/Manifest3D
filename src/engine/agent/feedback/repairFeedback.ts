@@ -2,8 +2,8 @@ import type {
   ValidationSignal,
   ValidationSignalBundle,
   ValidationStage,
-} from '../schema/validationTypes'
-import type { ManifestProbeReport } from '../validation/probeReport'
+} from '../../schema/validationTypes'
+import type { ManifestProbeReport } from '../../validation/probeReport'
 import type { ValidationFailureCluster } from './failureClusters'
 
 export type RenderValidationFeedbackOptions = {

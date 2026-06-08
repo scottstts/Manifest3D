@@ -2,9 +2,19 @@
 
 This document describes the implemented Manifest3D agent pipeline: prompt compilation, provider boundaries, candidate freshness, repair feedback, persistence context, and headless stress runs.
 
+## Source Layout
+
+The root of `src/engine/agent/` is intentionally thin: `agentLoop.ts` owns orchestration and public loop types, while supporting code lives in subfolders. Session state belongs in `session/`; provider transports and settings belong in `provider/`; prompt compilation and raw prompt sources belong in `prompt/`; provider tool-call parsing belongs in `protocol/`; JSON patch mechanics belong in `patch/`; validation feedback rendering belongs in `feedback/`; loop-local formatting, patch feedback, event, and attachment helpers belong in `loop/`. Keep future helpers in the narrowest matching subfolder instead of growing the agent root.
+
+## Schema Ownership
+
+`src/engine/schema/manifestSchema.ts` owns the canonical runtime Manifest3D validation model through Zod. `manifestTypes.ts` derives public TypeScript input/output types from those schemas so there is not a second hand-maintained manifest shape. Provider-facing JSON schema generation lives in `manifestContract.ts` and `zodProviderJsonSchema.ts`: the adapter starts from `z.toJSONSchema(...)`, normalizes it for strict structured-output providers, and then applies provider-only constraints such as requiring defaultable output fields, forcing generated assets to report `metadata.generationStatus: "ready"`, keeping check `pose` optional through strict-compatible variants, and using stricter joint variants for model output.
+
+Provider quirks must stay at the provider/contract boundary. Central Zod schemas should describe what the app can parse and validate; OpenAI/OpenRouter/Gemini compatibility changes should be handled either by the JSON-schema adapter or by provider-specific request formatting, not by weakening the runtime validation model.
+
 ## Prompt Sources
 
-Prompt text lives under `src/engine/agent/prompts/` and is imported by `promptCompiler.ts` through Vite raw imports. Long prompt strings should stay out of `agentLoop.ts`, provider clients, UI code, and tests.
+Prompt text lives under `src/engine/agent/prompt/prompts/` and is imported by `src/engine/agent/prompt/promptCompiler.ts` through Vite raw imports. Long prompt strings should stay out of `agentLoop.ts`, provider clients, UI code, and tests.
 
 The prompt contract emphasizes:
 
@@ -36,13 +46,13 @@ Image attachments flow through the same prompt compiler metadata and provider re
 
 ## Provider Boundary
 
-Provider-specific transport details belong inside provider clients. UI, scene, and persistence code talk through the agent loop and shared provider client interfaces.
+Provider-specific transport details belong under `src/engine/agent/provider/`. UI, scene, and persistence code talk through the root agent loop and shared provider client interfaces. Provider-specific clients live in subfolders such as `provider/openai/`, `provider/openrouter/`, and `provider/gemini/`; provider selection, key, and model-setting utilities stay in the provider folder, not the agent root.
 
 OpenAI is the starting provider default. The last provider selected in the Providers panel is cached as the next default. Per-provider Model ID and Reasoning Effort preferences are cached in localStorage and default from `modelConfig.ts`; OpenAI maps reasoning effort to `reasoning.effort` with `none`/`low`/`medium`/`high`/`xhigh`, while Gemini maps it to `thinkingConfig.thinkingLevel` with `minimal`/`low`/`medium`/`high`. API keys are never persisted outside local `.env` or the current browser session.
 
 Localhost and loopback runs load provider keys only through the dev-server `.env` endpoint. The top-bar status dot is green when at least one local provider key is available. Non-localhost runs use in-memory per-provider keys from the Providers panel, and readiness reflects the currently selected provider.
 
-OpenAI uses Responses API background mode in `openAiManifestClient.ts`: requests set `background: true` and `store: true`, then poll the response id until terminal status. This avoids one long idle HTTP response for high-reasoning strict-schema generations. The tradeoff is that background polling is not ZDR-compatible, so changing it requires a replacement long-running transport strategy.
+OpenAI uses Responses API background mode in `src/engine/agent/provider/openai/openAiManifestClient.ts`: requests set `background: true` and `store: true`, then poll the response id until terminal status. This avoids one long idle HTTP response for high-reasoning strict-schema generations. The tradeoff is that background polling is not ZDR-compatible, so changing it requires a replacement long-running transport strategy.
 
 OpenRouter uses Chat Completions as its live transport. It keeps a narrow legacy parser path for old Responses-shaped diagnostics, but OpenRouter-owned request failures and parser failures must stay branded as OpenRouter in app timelines. Do not let the OpenAI Responses parser leak OpenAI-specific wording when it is reused from the OpenRouter client.
 
@@ -50,7 +60,7 @@ Repair/edit mode uses a shared compact patch tool schema across providers: `{ "t
 
 ## Candidate History And Freshness
 
-`candidateHistory.ts` is pure TypeScript and independent from React. It tracks an active run id, candidate revisions, stable fingerprints, validation attempts, the latest successful attempt, and repeated failure signatures.
+`src/engine/agent/session/candidateHistory.ts` is pure TypeScript and independent from React. It tracks an active run id, candidate revisions, stable fingerprints, validation attempts, the latest successful attempt, and repeated failure signatures.
 
 The readiness invariant is fingerprint-based:
 

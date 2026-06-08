@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
-import { geminiModelConfig } from '../config/modelConfig'
-import type { ManifestScene } from '../schema/manifestTypes'
-import { compileManifestPrompt } from './promptCompiler'
+import { createValidValidationFixtureAsset } from '../../../testing/validationFixtureAsset'
+import { geminiModelConfig } from '../../../config/modelConfig'
+import type { ManifestScene } from '../../../schema/manifestTypes'
+import { compileManifestPrompt } from '../../prompt/promptCompiler'
 import {
   buildGeminiGenerateContentRequestBody,
   buildGeminiInteractionsRequestBody,

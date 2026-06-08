@@ -1,11 +1,11 @@
 import type {
   AgentUserInputHistoryEntry,
 } from '../engine/agent/agentLoop'
-import type { AgentImageAttachment } from '../engine/agent/providerClient'
+import type { AgentImageAttachment } from '../engine/agent/provider/providerClient'
 import {
   createAgentProgressTimeline,
   type AgentTimelineItem,
-} from '../engine/agent/validationTimeline'
+} from '../engine/agent/session/validationTimeline'
 import type {
   AssetLibraryAsset,
   AssetLibraryVersion,

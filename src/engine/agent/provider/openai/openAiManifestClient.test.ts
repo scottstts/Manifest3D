@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
+import { createValidValidationFixtureAsset } from '../../../testing/validationFixtureAsset'
 import {
   manifestAssetResponseJsonSchema,
   manifestToolCallResponseFormatName,
   manifestToolCallResponseJsonSchema,
-} from '../schema/manifestContract'
-import { modelConfig } from '../config/modelConfig'
-import type { ManifestScene } from '../schema/manifestTypes'
-import { compileManifestPrompt } from './promptCompiler'
+} from '../../../schema/manifestContract'
+import { modelConfig } from '../../../config/modelConfig'
+import type { ManifestScene } from '../../../schema/manifestTypes'
+import { compileManifestPrompt } from '../../prompt/promptCompiler'
 import {
   buildOpenAIResponsesRequestBody,
   createOpenAIManifestClient,

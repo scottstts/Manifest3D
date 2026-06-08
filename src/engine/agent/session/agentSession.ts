@@ -1,7 +1,7 @@
-import type { CompiledManifestPrompt, PromptCompilerMode } from './promptCompiler'
-import type { ModelProvider } from '../config/modelConfig'
+import type { CompiledManifestPrompt, PromptCompilerMode } from '../prompt/promptCompiler'
+import type { ModelProvider } from '../../config/modelConfig'
 import { createCandidateFingerprint } from './candidateHistory'
-import { summarizeToolCandidate } from './agentToolCalls'
+import { summarizeToolCandidate } from '../protocol/agentToolCalls'
 
 export type AgentSessionProviderContext = {
   modelId: string

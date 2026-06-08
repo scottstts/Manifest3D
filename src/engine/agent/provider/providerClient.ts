@@ -1,4 +1,4 @@
-import type { CompiledManifestPrompt, PromptImageAttachment } from './promptCompiler'
+import type { CompiledManifestPrompt, PromptImageAttachment } from '../prompt/promptCompiler'
 
 export type AgentImageAttachment = PromptImageAttachment & {
   detail?: 'auto' | 'high' | 'low' | 'original'

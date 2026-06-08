@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   createInvalidValidationFixtureAsset,
   createValidValidationFixtureAsset,
-} from '../testing/validationFixtureAsset'
-import { validateManifestAssetCandidate } from '../validation/validateManifest'
+} from '../../testing/validationFixtureAsset'
+import { validateManifestAssetCandidate } from '../../validation/validateManifest'
 import {
   createValidationReport,
   createValidationSignal,
-} from '../validation/reportBuilder'
+} from '../../validation/reportBuilder'
 import { createCandidateHistory } from './candidateHistory'
-import type { AgentLoopEvent } from './agentLoop'
+import type { AgentLoopEvent } from '../agentLoop'
 import {
   createAgentProgressTimeline,
   createCandidateHistoryTimeline,

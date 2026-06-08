@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { AgentImageAttachment } from '../engine/agent/providerClient'
+import type { AgentImageAttachment } from '../engine/agent/provider/providerClient'
 
 type PromptComposerProps = {
   disabled?: boolean

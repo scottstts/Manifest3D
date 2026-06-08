@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createValidationSignal } from '../validation/reportBuilder'
+import { createValidationSignal } from '../../validation/reportBuilder'
 import { createValidationFailureClusters } from './failureClusters'
 
 describe('createValidationFailureClusters', () => {

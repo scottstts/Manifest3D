@@ -1,6 +1,6 @@
 import type { AgentLoopEvent } from '../agent/agentLoop'
-import type { PersistedAgentSession } from '../agent/agentSession'
-import type { CandidateAttempt } from '../agent/candidateHistory'
+import type { PersistedAgentSession } from '../agent/session/agentSession'
+import type { CandidateAttempt } from '../agent/session/candidateHistory'
 import type { ManifestAsset } from '../schema/manifestTypes'
 import type { ValidationReport } from '../schema/validationTypes'
 

@@ -1,314 +1,104 @@
-export type ManifestVector3 = readonly [number, number, number]
-export type ManifestVector2 = readonly [number, number]
+/*
+TS types are inferred from zod validation model
+*/
 
-export type ManifestAxis = 'x' | 'y' | 'z'
-export type ManifestAxes = ManifestAxis | 'xy' | 'xz' | 'yz' | 'xyz'
+import type { z } from 'zod'
+import type {
+  manifestAllowanceSchema,
+  manifestAssetMetadataSchema,
+  manifestAssetSchema,
+  manifestAxesSchema,
+  manifestAxisSchema,
+  manifestCheckSchema,
+  manifestGeometrySchema,
+  manifestJointControlBindingSchema,
+  manifestJointControlLimitsSchema,
+  manifestJointControlSchema,
+  manifestJointLimitsSchema,
+  manifestJointPoseSchema,
+  manifestJointSchema,
+  manifestJointTypeSchema,
+  manifestMaterialEmissionAnimationSchema,
+  manifestMaterialEmissionInterpolationSchema,
+  manifestMaterialEmissionKeyframeSchema,
+  manifestMaterialEmissionSchema,
+  manifestMaterialSchema,
+  manifestMaterialSideSchema,
+  manifestPartAttachmentSchema,
+  manifestPartRoleSchema,
+  manifestPartSchema,
+  manifestPathContactTargetSchema,
+  manifestPoseSpecSchema,
+  manifestSceneSchema,
+  manifestTransformSchema,
+  manifestVector2Schema,
+  manifestVector3Schema,
+  manifestVisualSchema,
+} from './manifestSchema'
 
-export type ManifestTransform = {
-  position?: ManifestVector3
-  rotation?: ManifestVector3
-  scale?: ManifestVector3
-}
-
-export type ManifestPartAttachment = {
-  partId: string
-  position: ManifestVector3
-}
-
-export type ManifestGeometry =
-  | {
-      type: 'box'
-      size: ManifestVector3
-    }
-  | {
-      type: 'roundedBox'
-      size: ManifestVector3
-      radius: number
-      segments?: number
-    }
-  | {
-      type: 'cylinder'
-      radiusTop: number
-      radiusBottom: number
-      height: number
-      radialSegments?: number
-    }
-  | {
-      type: 'sphere'
-      radius: number
-      widthSegments?: number
-      heightSegments?: number
-    }
-  | {
-      type: 'torus'
-      radius: number
-      tube: number
-      radialSegments?: number
-      tubularSegments?: number
-    }
-  | {
-      type: 'cone'
-      radius: number
-      height: number
-      radialSegments?: number
-    }
-  | {
-      type: 'capsule'
-      radius: number
-      height: number
-      capSegments?: number
-      radialSegments?: number
-      heightSegments?: number
-    }
-  | {
-      type: 'lathe'
-      points: readonly ManifestVector2[]
-      segments?: number
-      phiStart?: number
-      phiLength?: number
-    }
-  | {
-      type: 'extrude'
-      shape: readonly ManifestVector2[]
-      depth: number
-      bevelEnabled?: boolean
-      bevelSize?: number
-      bevelThickness?: number
-      bevelSegments?: number
-    }
-  | {
-      type: 'tube'
-      points: readonly ManifestVector3[]
-      radius: number
-      tubularSegments?: number
-      radialSegments?: number
-      closed?: boolean
-    }
-  | {
-      type: 'connectorTube'
-      start: ManifestPartAttachment
-      end: ManifestPartAttachment
-      radius: number
-      sag?: number
-      tubularSegments?: number
-      radialSegments?: number
-    }
-
-export type ManifestMaterialSide = 'front' | 'back' | 'double'
-
-export type ManifestMaterial = {
-  id: string
-  name: string
-  color: string
-  metalness: number
-  roughness: number
-  opacity?: number
-  side?: ManifestMaterialSide
-  emission?: ManifestMaterialEmission | null
-  emissionAnimation?: ManifestMaterialEmissionAnimation | null
-}
-
-export type ManifestMaterialEmission = {
-  hasEmission: boolean
-  color: string
-  intensity: number
-}
-
-export type ManifestMaterialEmissionInterpolation = 'linear' | 'step'
-
-export type ManifestMaterialEmissionKeyframe = ManifestMaterialEmission & {
-  time: number
-}
-
-export type ManifestMaterialEmissionAnimation = {
-  id: string
-  name: string
-  interpolation: ManifestMaterialEmissionInterpolation
-  keyframes: ManifestMaterialEmissionKeyframe[]
-  loop: boolean
-}
-
-export type ManifestVisual = {
-  id: string
-  name?: string
-  geometry: ManifestGeometry
-  transform: ManifestTransform
-  materialId: string
-}
-
-export type ManifestPartRole =
-  | 'base'
-  | 'housing'
-  | 'handle'
-  | 'wheel'
-  | 'hinge'
-  | 'control'
-  | 'decor'
-  | 'support'
-  | 'fastener'
-  | 'mechanism'
-
-export type ManifestPart = {
-  id: string
-  name: string
-  role?: ManifestPartRole
-  description?: string
-  visuals: ManifestVisual[]
-}
-
-export type ManifestJointType = 'fixed' | 'revolute' | 'prismatic' | 'continuous'
-
-export type ManifestJointLimits = {
-  lower?: number
-  upper?: number
-  effort?: number
-  velocity?: number
-}
-
-export type ManifestJoint = {
-  id: string
-  name: string
-  type: ManifestJointType
-  parentPartId: string
-  childPartId: string
-  origin: ManifestTransform
-  axis?: ManifestVector3
-  limits?: ManifestJointLimits
-}
-
-export type ManifestJointPose = {
-  jointId: string
-  value: number
-}
-
-export type ManifestJointControlBinding = {
-  jointId: string
-  scale: number
-  offset: number
-}
-
-export type ManifestJointControlLimits = {
-  lower: number
-  upper: number
-}
-
-export type ManifestJointControl = {
-  id: string
-  name: string
-  joints: ManifestJointControlBinding[]
-  limits: ManifestJointControlLimits
-}
-
-export type ManifestPoseSpec = {
-  name?: string
+// Public manifest types are derived from the canonical Zod schemas. Most of the
+// app works with authorable manifest input shapes so legacy/defaultable fields
+// such as material.side and asset.controls stay assignable before parsing.
+export type ManifestVector3 = z.input<typeof manifestVector3Schema>
+export type ManifestVector2 = z.input<typeof manifestVector2Schema>
+export type ManifestAxis = z.input<typeof manifestAxisSchema>
+export type ManifestAxes = z.input<typeof manifestAxesSchema>
+export type ManifestTransform = z.input<typeof manifestTransformSchema>
+export type ManifestPartAttachment = z.input<typeof manifestPartAttachmentSchema>
+export type ManifestGeometry = z.input<typeof manifestGeometrySchema>
+export type ManifestMaterialSide = z.input<typeof manifestMaterialSideSchema>
+export type ManifestMaterialEmission = z.input<
+  typeof manifestMaterialEmissionSchema
+>
+export type ManifestMaterialEmissionInterpolation = z.input<
+  typeof manifestMaterialEmissionInterpolationSchema
+>
+export type ManifestMaterialEmissionKeyframe = z.input<
+  typeof manifestMaterialEmissionKeyframeSchema
+>
+export type ManifestMaterialEmissionAnimation = z.input<
+  typeof manifestMaterialEmissionAnimationSchema
+>
+export type ManifestMaterial = z.input<typeof manifestMaterialSchema>
+export type ManifestVisual = z.input<typeof manifestVisualSchema>
+export type ManifestPartRole = z.input<typeof manifestPartRoleSchema>
+export type ManifestPart = z.input<typeof manifestPartSchema>
+export type ManifestJointType = z.input<typeof manifestJointTypeSchema>
+export type ManifestJointLimits = z.input<typeof manifestJointLimitsSchema>
+export type ManifestJoint = z.input<typeof manifestJointSchema>
+export type ManifestJointPose = z.input<typeof manifestJointPoseSchema>
+export type ManifestJointControlBinding = z.input<
+  typeof manifestJointControlBindingSchema
+>
+export type ManifestJointControlLimits = z.input<
+  typeof manifestJointControlLimitsSchema
+>
+export type ManifestJointControl = z.input<typeof manifestJointControlSchema>
+export type ManifestPoseSpec = Omit<
+  z.input<typeof manifestPoseSpecSchema>,
+  'joints'
+> & {
   joints: readonly ManifestJointPose[]
 }
-
-export type ManifestPathContactTarget = {
-  partId: string
-  visualId?: string
-}
-
-type ManifestCheckPoseField = {
-  pose?: ManifestPoseSpec
-}
-
-export type ManifestCheck =
-  | ({ type: 'part_exists'; partId: string } & ManifestCheckPoseField)
-  | ({
-      type: 'joint_exists'
-      jointId: string
-      jointType?: ManifestJointType
-    } & ManifestCheckPoseField)
-  | ({
-      type: 'expect_material_side'
-      visualId: string
-      side: ManifestMaterialSide
-    } & ManifestCheckPoseField)
-  | ({
-      type: 'expect_contact'
-      partAId: string
-      partBId: string
-      visualAId?: string
-      visualBId?: string
-      contactTolerance?: number
-      maxPenetration?: number
-    } & ManifestCheckPoseField)
-  | ({
-      type: 'expect_path_contacts'
-      pathPartId: string
-      pathVisualId?: string
-      targets: readonly ManifestPathContactTarget[]
-      minContacts?: number
-      contactTolerance?: number
-      maxPenetration?: number
-    } & ManifestCheckPoseField)
-  | ({
-      type: 'expect_gap'
-      positivePartId: string
-      negativePartId: string
-      axis: ManifestAxis
-      minGap?: number
-      maxGap?: number
-      maxPenetration?: number
-      positiveVisualId?: string
-      negativeVisualId?: string
-    } & ManifestCheckPoseField)
-  | ({
-      type: 'expect_overlap'
-      partAId: string
-      partBId: string
-      axes: ManifestAxes
-      minOverlap?: number
-      visualAId?: string
-      visualBId?: string
-    } & ManifestCheckPoseField)
-  | ({
-      type: 'expect_within'
-      innerPartId: string
-      outerPartId: string
-      axes: ManifestAxes
-      margin?: number
-      maxPenetration?: number
-      innerVisualId?: string
-      outerVisualId?: string
-    } & ManifestCheckPoseField)
-
-export type ManifestAllowance =
-  | {
-      type: 'allow_overlap'
-      partAId: string
-      partBId: string
-      visualAId?: string
-      visualBId?: string
-      reason: string
-    }
-  | { type: 'allow_isolated_part'; partId: string; reason: string }
-
-export type ManifestAssetMetadata = {
-  createdAt: string
-  updatedAt: string
-  sourceImageIds: string[]
-  generationStatus: 'draft' | 'validating' | 'ready' | 'failed'
-}
-
-export type ManifestAsset = {
-  schemaVersion: 2
-  id: string
-  name: string
-  prompt: string
-  units: 'meters'
-  parts: ManifestPart[]
-  joints: ManifestJoint[]
+export type ManifestPathContactTarget = z.input<
+  typeof manifestPathContactTargetSchema
+>
+export type ManifestCheck = z.input<typeof manifestCheckSchema>
+export type ManifestAllowance = z.input<typeof manifestAllowanceSchema>
+export type ManifestAssetMetadata = z.input<typeof manifestAssetMetadataSchema>
+export type ManifestAsset = Omit<
+  z.input<typeof manifestAssetSchema>,
+  'controls' | 'materials'
+> & {
   controls: ManifestJointControl[]
   materials: ManifestMaterial[]
-  checks: ManifestCheck[]
-  allowances: ManifestAllowance[]
-  metadata: ManifestAssetMetadata
 }
-
-export type ManifestScene = {
-  schemaVersion: 1
-  units: 'meters'
+export type ManifestScene = Omit<
+  z.input<typeof manifestSceneSchema>,
+  'assets'
+> & {
   assets: ManifestAsset[]
 }
+
+export type ParsedManifestAsset = z.output<typeof manifestAssetSchema>
+export type ParsedManifestScene = z.output<typeof manifestSceneSchema>

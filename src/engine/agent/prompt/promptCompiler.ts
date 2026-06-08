@@ -1,4 +1,4 @@
-import type { ManifestAsset, ManifestScene } from '../schema/manifestTypes'
+import type { ManifestAsset, ManifestScene } from '../../schema/manifestTypes'
 import createAssetPrompt from './prompts/createAsset.md?raw'
 import editAssetPrompt from './prompts/editAsset.md?raw'
 import examplesPrompt from './prompts/examples.md?raw'

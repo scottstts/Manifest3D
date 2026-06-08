@@ -1,7 +1,7 @@
 import {
   modelProviderOptions,
   type ModelProvider,
-} from '../config/modelConfig'
+} from '../../config/modelConfig'
 
 const defaultProvider: ModelProvider = 'openai'
 const providerPreferenceStorageKey = 'manifest3d:provider'

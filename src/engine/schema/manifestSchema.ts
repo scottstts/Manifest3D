@@ -1,5 +1,12 @@
+/*
+Zod validation model is the single source of truth for the 
+canonical Manifest3D asset schema
+
+Both schema TS types and the LLM provider side json schema (backbone)
+are derived from this zod runtime validation model
+*/
+
 import { z } from 'zod'
-import type { ManifestAsset, ManifestScene } from './manifestTypes'
 
 const finiteNumber = z.number().finite()
 const positiveNumber = finiteNumber.positive()
@@ -19,12 +26,12 @@ export const manifestVector3Schema = z.tuple([
   finiteNumber,
   finiteNumber,
 ])
-const manifestPositiveVector3Schema = z.tuple([
+export const manifestPositiveVector3Schema = z.tuple([
   positiveNumber,
   positiveNumber,
   positiveNumber,
 ])
-const manifestPartAttachmentSchema = z
+export const manifestPartAttachmentSchema = z
   .object({
     partId: nonEmptyId,
     position: manifestVector3Schema,
@@ -143,6 +150,38 @@ export const manifestGeometrySchema = z.discriminatedUnion('type', [
     .strict(),
 ])
 
+export const manifestMaterialEmissionSchema = z
+  .object({
+    hasEmission: z.boolean(),
+    color: hexColor,
+    intensity: materialEmissionIntensity,
+  })
+  .strict()
+
+export const manifestMaterialEmissionInterpolationSchema = z.enum([
+  'linear',
+  'step',
+])
+
+export const manifestMaterialEmissionKeyframeSchema = z
+  .object({
+    time: materialEmissionKeyframeTime,
+    hasEmission: z.boolean(),
+    color: hexColor,
+    intensity: materialEmissionIntensity,
+  })
+  .strict()
+
+export const manifestMaterialEmissionAnimationSchema = z
+  .object({
+    id: nonEmptyId,
+    name: z.string().trim().min(1),
+    interpolation: manifestMaterialEmissionInterpolationSchema,
+    keyframes: z.array(manifestMaterialEmissionKeyframeSchema).min(2),
+    loop: z.boolean(),
+  })
+  .strict()
+
 export const manifestMaterialSchema = z
   .object({
     id: nonEmptyId,
@@ -152,35 +191,8 @@ export const manifestMaterialSchema = z
     roughness: finiteNumber.min(0).max(1),
     opacity: finiteNumber.min(0).max(1).optional(),
     side: manifestMaterialSideSchema.default('front'),
-    emission: z
-      .object({
-        hasEmission: z.boolean(),
-        color: hexColor,
-        intensity: materialEmissionIntensity,
-      })
-      .strict()
-      .nullable()
-      .optional(),
-    emissionAnimation: z
-      .object({
-        id: nonEmptyId,
-        name: z.string().trim().min(1),
-        interpolation: z.enum(['linear', 'step']),
-        keyframes: z
-          .array(
-            z
-              .object({
-                time: materialEmissionKeyframeTime,
-                hasEmission: z.boolean(),
-                color: hexColor,
-                intensity: materialEmissionIntensity,
-              })
-              .strict(),
-          )
-          .min(2),
-        loop: z.boolean(),
-      })
-      .strict()
+    emission: manifestMaterialEmissionSchema.nullable().optional(),
+    emissionAnimation: manifestMaterialEmissionAnimationSchema
       .nullable()
       .optional(),
   })
@@ -256,41 +268,50 @@ export const manifestJointControlBindingSchema = z
   })
   .strict()
 
+export const manifestJointControlLimitsSchema = z
+  .object({
+    lower: finiteNumber,
+    upper: finiteNumber,
+  })
+  .strict()
+
 export const manifestJointControlSchema = z
   .object({
     id: nonEmptyId,
     name: z.string().trim().min(1),
     joints: z.array(manifestJointControlBindingSchema).min(1),
-    limits: z
-      .object({
-        lower: finiteNumber,
-        upper: finiteNumber,
-      })
-      .strict(),
+    limits: manifestJointControlLimitsSchema,
   })
   .strict()
 
-const manifestAxesSchema = z.enum(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'])
-const manifestPathContactTargetSchema = z
+export const manifestAxisSchema = z.enum(['x', 'y', 'z'])
+export const manifestAxesSchema = z.enum([
+  'x',
+  'y',
+  'z',
+  'xy',
+  'xz',
+  'yz',
+  'xyz',
+])
+export const manifestPathContactTargetSchema = z
   .object({
     partId: nonEmptyId,
     visualId: nonEmptyId.optional(),
   })
   .strict()
 
+export const manifestJointPoseSchema = z
+  .object({
+    jointId: nonEmptyId,
+    value: finiteNumber,
+  })
+  .strict()
+
 export const manifestPoseSpecSchema = z
   .object({
     name: z.string().trim().min(1).optional(),
-    joints: z
-      .array(
-        z
-          .object({
-            jointId: nonEmptyId,
-            value: finiteNumber,
-          })
-          .strict(),
-      )
-      .min(1),
+    joints: z.array(manifestJointPoseSchema).min(1),
   })
   .strict()
 
@@ -347,7 +368,7 @@ export const manifestCheckSchema = z.discriminatedUnion('type', [
       type: z.literal('expect_gap'),
       positivePartId: nonEmptyId,
       negativePartId: nonEmptyId,
-      axis: z.enum(['x', 'y', 'z']),
+      axis: manifestAxisSchema,
       minGap: finiteNumber.optional(),
       maxGap: finiteNumber.optional(),
       maxPenetration: nonNegativeNumber.optional(),
@@ -383,7 +404,7 @@ export const manifestCheckSchema = z.discriminatedUnion('type', [
     .strict(),
 ])
 
-const manifestAllowanceSchema = z.discriminatedUnion('type', [
+export const manifestAllowanceSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('allow_overlap'),
@@ -403,6 +424,15 @@ const manifestAllowanceSchema = z.discriminatedUnion('type', [
     .strict(),
 ])
 
+export const manifestAssetMetadataSchema = z
+  .object({
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    sourceImageIds: z.array(z.string()),
+    generationStatus: z.enum(['draft', 'validating', 'ready', 'failed']),
+  })
+  .strict()
+
 export const manifestAssetSchema = z
   .object({
     schemaVersion: z.literal(2),
@@ -416,14 +446,7 @@ export const manifestAssetSchema = z
     materials: z.array(manifestMaterialSchema).min(1),
     checks: z.array(manifestCheckSchema),
     allowances: z.array(manifestAllowanceSchema),
-    metadata: z
-      .object({
-        createdAt: z.string().datetime(),
-        updatedAt: z.string().datetime(),
-        sourceImageIds: z.array(z.string()),
-        generationStatus: z.enum(['draft', 'validating', 'ready', 'failed']),
-      })
-      .strict(),
+    metadata: manifestAssetMetadataSchema,
   })
   .strict()
 
@@ -435,16 +458,20 @@ export const manifestSceneSchema = z
   })
   .strict()
 
-export function parseManifestAsset(candidate: unknown): ManifestAsset {
-  return manifestAssetSchema.parse(candidate) as ManifestAsset
+export function parseManifestAsset(
+  candidate: unknown,
+): z.output<typeof manifestAssetSchema> {
+  return manifestAssetSchema.parse(candidate)
 }
 
 export function safeParseManifestAsset(candidate: unknown) {
   return manifestAssetSchema.safeParse(candidate)
 }
 
-export function parseManifestScene(candidate: unknown): ManifestScene {
-  return manifestSceneSchema.parse(candidate) as ManifestScene
+export function parseManifestScene(
+  candidate: unknown,
+): z.output<typeof manifestSceneSchema> {
+  return manifestSceneSchema.parse(candidate)
 }
 
 export function safeParseManifestScene(candidate: unknown) {

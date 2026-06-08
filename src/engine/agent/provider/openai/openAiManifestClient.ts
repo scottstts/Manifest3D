@@ -1,17 +1,17 @@
-import { modelConfig, type ModelConfig } from '../config/modelConfig'
+import { modelConfig, type ModelConfig } from '../../../config/modelConfig'
 import {
   manifestAssetResponseFormatName,
   manifestAssetResponseJsonSchema,
   manifestToolCallResponseFormatName,
   manifestToolCallResponseJsonSchema,
-} from '../schema/manifestContract'
+} from '../../../schema/manifestContract'
 import type {
   AgentImageAttachment,
   AgentRequest,
   AgentResponse,
   OpenAIManifestClient,
-} from './providerClient'
-import { createProviderModelHttpErrorMessage } from './providerModelErrors'
+} from '../providerClient'
+import { createProviderModelHttpErrorMessage } from '../providerModelErrors'
 
 type FetchLike = (
   input: RequestInfo | URL,

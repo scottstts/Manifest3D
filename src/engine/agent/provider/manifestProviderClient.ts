@@ -1,7 +1,7 @@
-import type { ModelProvider } from '../config/modelConfig'
-import { createGeminiManifestClient } from './geminiManifestClient'
-import { createOpenAIManifestClient } from './openAiManifestClient'
-import { createOpenRouterManifestClient } from './openRouterManifestClient'
+import type { ModelProvider } from '../../config/modelConfig'
+import { createGeminiManifestClient } from './gemini/geminiManifestClient'
+import { createOpenAIManifestClient } from './openai/openAiManifestClient'
+import { createOpenRouterManifestClient } from './openrouter/openRouterManifestClient'
 import type { ManifestProviderClient } from './providerClient'
 import {
   createGeminiModelConfig,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createCandidateHistory } from '../agent/candidateHistory'
+import { createCandidateHistory } from '../agent/session/candidateHistory'
 import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
 import { validateManifestAssetCandidate } from '../validation/validateManifest'
 import {

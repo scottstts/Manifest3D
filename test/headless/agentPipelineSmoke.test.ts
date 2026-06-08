@@ -17,16 +17,16 @@ import {
   createValidationFailureClusters,
   createValidationFailureClusterSignature,
   type ValidationFailureCluster,
-} from '../../src/engine/agent/failureClusters'
-import { createManifestProviderClient } from '../../src/engine/agent/manifestProviderClient'
-import { parseModelProvider } from '../../src/engine/agent/providerPreference'
-import type { ProviderModelSettings } from '../../src/engine/agent/providerModelSettings'
+} from '../../src/engine/agent/feedback/failureClusters'
+import { createManifestProviderClient } from '../../src/engine/agent/provider/manifestProviderClient'
+import { parseModelProvider } from '../../src/engine/agent/provider/providerPreference'
+import type { ProviderModelSettings } from '../../src/engine/agent/provider/providerModelSettings'
 import type {
   AgentImageAttachment,
   AgentRequest,
   AgentResponse,
   ManifestProviderClient,
-} from '../../src/engine/agent/providerClient'
+} from '../../src/engine/agent/provider/providerClient'
 import {
   geminiModelConfig,
   modelConfig,

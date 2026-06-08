@@ -1,7 +1,7 @@
 import type {
   ValidationSignal,
   ValidationStage,
-} from '../schema/validationTypes'
+} from '../../schema/validationTypes'
 
 export type ValidationFailureCluster = {
   code: string

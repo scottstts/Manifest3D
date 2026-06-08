@@ -7,7 +7,7 @@ import {
   type GeminiModelConfig,
   type ModelConfig,
   type ModelProvider,
-} from '../config/modelConfig'
+} from '../../config/modelConfig'
 
 export type ProviderModelSettings = {
   modelId: string

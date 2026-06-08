@@ -1,21 +1,21 @@
-import { parseOpenAIManifestResponse } from './openAiManifestClient'
+import { parseOpenAIManifestResponse } from '../openai/openAiManifestClient'
 import type {
   AgentImageAttachment,
   AgentRequest,
   AgentResponse,
   ManifestProviderClient,
-} from './providerClient'
-import { createProviderModelHttpErrorMessage } from './providerModelErrors'
+} from '../providerClient'
+import { createProviderModelHttpErrorMessage } from '../providerModelErrors'
 import {
   openRouterModelConfig,
   type ModelConfig,
-} from '../config/modelConfig'
+} from '../../../config/modelConfig'
 import {
   manifestAssetResponseFormatName,
   manifestAssetResponseJsonSchema,
   manifestToolCallResponseFormatName,
   manifestToolCallResponseJsonSchema,
-} from '../schema/manifestContract'
+} from '../../../schema/manifestContract'
 
 const openRouterManifestAssetResponseJsonSchema =
   createOpenRouterCompatibleJsonSchema(manifestAssetResponseJsonSchema)

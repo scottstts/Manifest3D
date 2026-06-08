@@ -9,8 +9,8 @@ import {
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { AgentImageAttachment } from '../engine/agent/providerClient'
-import type { AgentTimelineItem } from '../engine/agent/validationTimeline'
+import type { AgentImageAttachment } from '../engine/agent/provider/providerClient'
+import type { AgentTimelineItem } from '../engine/agent/session/validationTimeline'
 import type { ValidationReport } from '../engine/schema/validationTypes'
 import { AgentTimeline } from './AgentTimeline'
 import { PromptComposer } from './PromptComposer'

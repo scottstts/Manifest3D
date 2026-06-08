@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createValidValidationFixtureAsset } from '../testing/validationFixtureAsset'
-import { parseManifestAsset } from '../schema/manifestSchema'
-import type { ManifestScene } from '../schema/manifestTypes'
+import { createValidValidationFixtureAsset } from '../../testing/validationFixtureAsset'
+import { parseManifestAsset } from '../../schema/manifestSchema'
+import type { ManifestScene } from '../../schema/manifestTypes'
 import { compileManifestPrompt } from './promptCompiler'
 import examplesPrompt from './prompts/examples.md?raw'
 

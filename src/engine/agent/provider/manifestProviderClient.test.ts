@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ManifestScene } from '../schema/manifestTypes'
-import { compileManifestPrompt } from './promptCompiler'
+import type { ManifestScene } from '../../schema/manifestTypes'
+import { compileManifestPrompt } from '../prompt/promptCompiler'
 import { createManifestProviderClient } from './manifestProviderClient'
 
 const emptyScene: ManifestScene = {

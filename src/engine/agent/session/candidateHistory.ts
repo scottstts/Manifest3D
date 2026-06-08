@@ -1,10 +1,10 @@
-import type { ValidationReport, ValidationSignal } from '../schema/validationTypes'
-import type { ManifestProbeReport } from '../validation/probeReport'
+import type { ValidationReport, ValidationSignal } from '../../schema/validationTypes'
+import type { ManifestProbeReport } from '../../validation/probeReport'
 import {
   createValidationFailureClusters,
   createValidationFailureClusterSignature,
   type ValidationFailureCluster,
-} from './failureClusters'
+} from '../feedback/failureClusters'
 
 export type CandidateAttemptStatus = 'success' | 'failure'
 

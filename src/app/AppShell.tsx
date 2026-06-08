@@ -46,7 +46,7 @@ import {
   runManifestAgentLoop,
   type AgentLoopEvent,
 } from '../engine/agent/agentLoop'
-import { createCandidateHistory } from '../engine/agent/candidateHistory'
+import { createCandidateHistory } from '../engine/agent/session/candidateHistory'
 import {
   canUseInAppProviderApiKeyInput,
   createEmptyProviderApiKeys,
@@ -54,13 +54,13 @@ import {
   isProviderApiKeyLoaded,
   loadStartupProviderApiKeyStatus,
   resolveStartupProviderApiKeyStatus,
-} from '../engine/agent/providerApiKey'
-import { createManifestProviderClient } from '../engine/agent/manifestProviderClient'
+} from '../engine/agent/provider/providerApiKey'
+import { createManifestProviderClient } from '../engine/agent/provider/manifestProviderClient'
 import {
   getProviderLabel,
   readPreferredModelProvider,
   writePreferredModelProvider,
-} from '../engine/agent/providerPreference'
+} from '../engine/agent/provider/providerPreference'
 import {
   readProviderModelSettings,
   resetProviderModelId,
@@ -68,8 +68,8 @@ import {
   updateProviderModelId,
   updateProviderReasoningEffort,
   writeProviderModelSettings,
-} from '../engine/agent/providerModelSettings'
-import type { AgentImageAttachment } from '../engine/agent/providerClient'
+} from '../engine/agent/provider/providerModelSettings'
+import type { AgentImageAttachment } from '../engine/agent/provider/providerClient'
 import {
   findAssetLibraryVersion,
   getAdjacentAssetVersions,
@@ -91,7 +91,7 @@ import {
   createAgentProgressTimeline,
   type AgentProgressSnapshot,
   type AgentTimelineItem,
-} from '../engine/agent/validationTimeline'
+} from '../engine/agent/session/validationTimeline'
 import {
   downloadGlbExport,
   exportManifestAssetGlb,

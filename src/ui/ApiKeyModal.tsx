@@ -6,8 +6,8 @@ import {
   modelProviderOptions,
   type ModelProvider,
 } from '../engine/config/modelConfig'
-import { getProviderLabel } from '../engine/agent/providerPreference'
-import type { ProviderModelSettings } from '../engine/agent/providerModelSettings'
+import { getProviderLabel } from '../engine/agent/provider/providerPreference'
+import type { ProviderModelSettings } from '../engine/agent/provider/providerModelSettings'
 
 type ApiKeyModalProps = {
   isOpen: boolean

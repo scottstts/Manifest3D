@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentRequest } from './providerClient'
+import type { AgentRequest } from '../providerClient'
 import {
   buildOpenRouterChatCompletionsRequestBody,
   createOpenRouterManifestClient,

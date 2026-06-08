@@ -19,12 +19,12 @@ import {
 import {
   createCandidateHistory,
   type CandidateAttempt,
-} from './candidateHistory'
+} from './session/candidateHistory'
 import type {
   AgentRequest,
   AgentResponse,
   ManifestProviderClient,
-} from './providerClient'
+} from './provider/providerClient'
 
 const emptyScene: ManifestScene = {
   assets: [],

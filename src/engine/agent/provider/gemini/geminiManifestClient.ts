@@ -1,18 +1,18 @@
 import {
   geminiModelConfig,
   type GeminiModelConfig,
-} from '../config/modelConfig'
+} from '../../../config/modelConfig'
 import {
   manifestAssetResponseJsonSchema,
   manifestToolCallResponseJsonSchema,
-} from '../schema/manifestContract'
+} from '../../../schema/manifestContract'
 import type {
   AgentImageAttachment,
   AgentRequest,
   AgentResponse,
   ManifestProviderClient,
-} from './providerClient'
-import { createProviderModelHttpErrorMessage } from './providerModelErrors'
+} from '../providerClient'
+import { createProviderModelHttpErrorMessage } from '../providerModelErrors'
 
 type FetchLike = (
   input: RequestInfo | URL,

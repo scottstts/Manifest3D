@@ -4,7 +4,7 @@ import {
   createValidValidationFixtureAsset,
 } from '../testing/validationFixtureAsset'
 import { validateManifestAssetCandidate } from '../validation/validateManifest'
-import { createCandidateHistory } from '../agent/candidateHistory'
+import { createCandidateHistory } from '../agent/session/candidateHistory'
 import {
   createEmptyAssetLibrarySnapshot,
   getAdjacentAssetVersions,

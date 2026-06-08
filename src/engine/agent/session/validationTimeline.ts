@@ -3,12 +3,12 @@ import type {
   ValidationSignal,
   ValidationStage,
   ValidationStepStatus,
-} from '../schema/validationTypes'
+} from '../../schema/validationTypes'
 import type {
   CandidateAttempt,
   CandidateHistorySnapshot,
 } from './candidateHistory'
-import type { AgentLoopEvent } from './agentLoop'
+import type { AgentLoopEvent } from '../agentLoop'
 
 export type AgentTimelineItemKind =
   | 'agent_step'

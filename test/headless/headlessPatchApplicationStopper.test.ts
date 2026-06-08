@@ -52,6 +52,5 @@ function patchErrorEvent(detail: string): AgentLoopEvent {
     label: 'Parse candidate JSON',
     state: 'parsing_candidate',
     status: 'failed',
-    timestamp: new Date(0).toISOString(),
   }
 }

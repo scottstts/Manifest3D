@@ -8,7 +8,7 @@ import {
 import {
   createValidationTimeline,
   type AgentTimelineItem,
-} from '../engine/agent/validationTimeline'
+} from '../engine/agent/session/validationTimeline'
 import type { ValidationReport } from '../engine/schema/validationTypes'
 
 type AgentTimelineProps = {

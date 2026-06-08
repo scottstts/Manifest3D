@@ -1,7 +1,7 @@
 import {
   modelProviderOptions,
   type ModelProvider,
-} from '../config/modelConfig'
+} from '../../config/modelConfig'
 
 export type ProviderApiKeySource = 'local_env' | 'none'
 

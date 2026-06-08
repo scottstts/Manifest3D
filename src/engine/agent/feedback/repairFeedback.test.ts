@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ValidationSignalBundle } from '../schema/validationTypes'
-import { createValidationSignal } from '../validation/reportBuilder'
+import type { ValidationSignalBundle } from '../../schema/validationTypes'
+import { createValidationSignal } from '../../validation/reportBuilder'
 import { renderValidationSignals } from './repairFeedback'
 
 describe('renderValidationSignals', () => {
