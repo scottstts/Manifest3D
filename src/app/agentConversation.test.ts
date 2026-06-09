@@ -59,6 +59,7 @@ describe('agent conversation helpers', () => {
       'agent',
     ])
     expect(transcript[0]).toMatchObject({
+      modelId: 'openai/gpt-5.5',
       role: 'user',
       text: 'Create from the first reference.',
     })
@@ -67,6 +68,11 @@ describe('agent conversation helpers', () => {
         ? transcript[0].imageAttachments[0].imageUrl
         : null,
     ).toBe('data:image/png;base64,first')
+    expect(transcript[2]).toMatchObject({
+      modelId: 'gemini-flash-latest',
+      role: 'user',
+      text: 'Make the lid thicker.',
+    })
     expect(transcript[1]).toMatchObject({
       role: 'agent',
       status: 'Ready: Validation Crate v1',
@@ -97,6 +103,18 @@ describe('agent conversation helpers', () => {
     ).toEqual([])
     expect(createVersionTranscript(asset, asset.versions[0])).toEqual([])
   })
+
+  it('shows unknown model for saved prompt versions without a persisted model id', () => {
+    const legacy = buildLegacyPromptAsset()
+    const asset = legacy[0]
+    const transcript = createVersionTranscript(asset, asset.versions[0])
+
+    expect(transcript[0]).toMatchObject({
+      modelId: 'unknown model',
+      role: 'user',
+      text: 'Create a legacy prompt asset.',
+    })
+  })
 })
 
 function buildTwoTurnAsset(): {
@@ -111,6 +129,7 @@ function buildTwoTurnAsset(): {
 
   const first = saveValidatedAssetVersion(createEmptyAssetLibrarySnapshot(), {
     agentEvents: createPersistedRunEvents('run-v1'),
+    agentSessions: [createPersistedAgentSession('run-v1', 'openai/gpt-5.5')],
     asset: assetV1,
     history: historyV1.getSnapshot(),
     now: () => '2026-05-17T00:00:00.000Z',
@@ -137,6 +156,7 @@ function buildTwoTurnAsset(): {
 
   const second = saveValidatedAssetVersion(first.snapshot, {
     agentEvents: createPersistedRunEvents('run-v2'),
+    agentSessions: [createPersistedAgentSession('run-v2', 'gemini-flash-latest')],
     asset: assetV2,
     history: historyV2.getSnapshot(),
     now: () => '2026-05-17T00:01:00.000Z',
@@ -187,4 +207,44 @@ function buildLegacyAsset(): AssetLibraryAsset[] {
     now: () => '2026-05-17T00:00:00.000Z',
     validationReport: report,
   }).snapshot.assets
+}
+
+function buildLegacyPromptAsset(): AssetLibraryAsset[] {
+  const asset = createValidValidationFixtureAsset()
+  const report = validateManifestAssetCandidate(asset).report
+  const history = createCandidateHistory({ runId: 'run-legacy-prompt' })
+
+  history.recordValidationAttempt(asset, report)
+
+  return saveValidatedAssetVersion(createEmptyAssetLibrarySnapshot(), {
+    agentEvents: createPersistedRunEvents('run-legacy-prompt'),
+    asset,
+    history: history.getSnapshot(),
+    now: () => '2026-05-17T00:00:00.000Z',
+    userInput: {
+      imageAttachments: [],
+      text: 'Create a legacy prompt asset.',
+    },
+    validationReport: report,
+  }).snapshot.assets
+}
+
+function createPersistedAgentSession(runId: string, modelId: string) {
+  return {
+    assetId: null,
+    contextBufferTokens: 50_000,
+    contextLimitTokens: 256_000,
+    createdAt: '2026-05-17T00:00:00.000Z',
+    exchanges: [],
+    latestAssetFingerprint: null,
+    latestProviderResponseId: null,
+    modelId,
+    parentSessionId: null,
+    provider: 'openrouter' as const,
+    reasoningEffort: 'high',
+    sessionId: `${runId}:session:1`,
+    status: 'complete' as const,
+    tokenEstimate: 0,
+    updatedAt: '2026-05-17T00:00:00.000Z',
+  }
 }

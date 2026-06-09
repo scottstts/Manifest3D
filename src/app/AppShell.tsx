@@ -135,6 +135,7 @@ import {
   createVersionTimeline,
   createVersionTranscript,
   formatAttemptContext,
+  formatTranscriptModelId,
   persistSubmittedUserInput,
 } from './agentConversation'
 
@@ -836,6 +837,7 @@ export function AppShell() {
       const runStatus = runSelectedAsset
         ? `Editing ${runSelectedAsset.name}`
         : 'Creating asset'
+      const runModelId = selectedProviderModelSettings.modelId
       const assistantMessageId = `${runId}:assistant`
       const abortController = new AbortController()
       let didTimeOut = false
@@ -857,6 +859,7 @@ export function AppShell() {
         {
           id: `${runId}:user`,
           imageAttachments,
+          modelId: formatTranscriptModelId(runModelId),
           role: 'user',
           text: userPrompt,
         },
@@ -939,7 +942,7 @@ export function AppShell() {
           parentAgentSessions: runSelectedVersion?.agentSessions ?? [],
           providerContext: {
             maxOutputTokens: modelConfig.maxOutputTokens,
-            modelId: selectedProviderModelSettings.modelId,
+            modelId: runModelId,
             provider: selectedProvider,
             reasoningEffort: selectedProviderModelSettings.reasoningEffort,
           },
@@ -1003,19 +1006,30 @@ export function AppShell() {
             validationReport: result.report,
           })
           const readyStatus = `Ready: ${result.asset.name} v${savedVersion.versionNumber}`
+          const savedAsset =
+            assetLibraryStore
+              .getSnapshot()
+              .library.assets.find(
+                (asset) => asset.assetId === savedVersion.assetId,
+              ) ?? null
+          const savedTranscript = savedAsset
+            ? createVersionTranscript(savedAsset, savedVersion)
+            : null
           const finalRun = agentRunsRef.current.find((run) => run.runId === runId)
           const wasActive = activeAgentRunIdRef.current === runId
 
           updateAgentRunView(runId, (currentRun) => ({
             ...currentRun,
-            chatTranscriptItems: updateAgentTranscriptItem(
-              currentRun.chatTranscriptItems,
-              assistantMessageId,
-              {
-                status: readyStatus,
-                timelineItems: resultTimelineItems,
-              },
-            ),
+            chatTranscriptItems:
+              savedTranscript ??
+              updateAgentTranscriptItem(
+                currentRun.chatTranscriptItems,
+                assistantMessageId,
+                {
+                  status: readyStatus,
+                  timelineItems: resultTimelineItems,
+                },
+              ),
             isRunning: false,
             status: readyStatus,
           }))
@@ -1026,6 +1040,7 @@ export function AppShell() {
             setAgentStatus(readyStatus)
             setProgressTimelineItems(resultTimelineItems)
             setChatTranscriptItems((currentItems) =>
+              savedTranscript ??
               updateAgentTranscriptItem(currentItems, assistantMessageId, {
                 status: readyStatus,
                 timelineItems: resultTimelineItems,

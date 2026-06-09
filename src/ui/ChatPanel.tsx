@@ -21,6 +21,7 @@ export type ChatPanelTranscriptItem =
   | {
       id: string
       imageAttachments: readonly AgentImageAttachment[]
+      modelId: string
       role: 'user'
       text: string
     }
@@ -79,7 +80,7 @@ export function ChatPanel({
         transcriptItems
           .map((item) =>
             item.role === 'user'
-              ? `${item.id}:user:${item.text}:${item.imageAttachments.length}`
+              ? `${item.id}:user:${item.text}:${item.modelId}:${item.imageAttachments.length}`
               : `${item.id}:agent:${item.status ?? ''}:${item.timelineItems
                   .map(
                     (timelineItem) =>
@@ -255,6 +256,12 @@ function ChatTranscript({
               </div>
             )}
             <p>{item.text}</p>
+            <span
+              aria-label={`Model ID: ${item.modelId}`}
+              className="chat-message__model-id"
+            >
+              {item.modelId}
+            </span>
           </article>
         ) : (
           <article className="chat-message is-agent" key={item.id}>

@@ -1218,6 +1218,20 @@ a.viewport-toolbar__button {
   box-shadow: 0 12px 24px rgb(85 80 220 / 0.17);
 }
 
+.chat-message__model-id {
+  justify-self: end;
+  max-width: min(100%, 290px);
+  margin-top: 4px;
+  padding-right: 4px;
+  color: #6d72b7;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .chat-message.is-agent {
   justify-items: start;
   padding-bottom: 2px;

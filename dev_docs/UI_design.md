@@ -56,6 +56,8 @@ Multiple create/edit runs may continue in the background. Running create jobs ap
 
 Opening a running row restores that task's prompt message and progress timeline until it finishes. App jobs run against isolated scene stores so browsing saved assets does not mutate in-flight prompt context.
 
+Prompt messages show the raw model id underneath the user prompt bubble. Active runs display the submitted runtime model setting immediately, while saved/history transcripts resolve the label from the version's persisted agent session `modelId`; saved prompt versions without that field show `unknown model`.
+
 Saved versions persist agent events alongside validation attempts. History opens reconstruct the same continuous progress timeline from persisted events and attempts when available; older versions without events reconstruct from attempts only.
 
 Asset history items represent one logical asset with multiple versions. Opening an asset defaults to its last selected version, falling back to the latest version. Asset ordering is by original creation time descending.

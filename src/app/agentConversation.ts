@@ -14,6 +14,25 @@ import type {
 } from '../engine/persistence/assetLibraryTypes'
 import type { ChatPanelTranscriptItem } from '../ui/ChatPanel'
 
+export const unknownModelIdLabel = 'unknown model'
+
+export function formatTranscriptModelId(modelId: unknown): string {
+  return typeof modelId === 'string' && modelId.trim()
+    ? modelId.trim()
+    : unknownModelIdLabel
+}
+
+export function resolveVersionModelId(version: AssetLibraryVersion): string {
+  const sessions = Array.isArray(version.agentSessions)
+    ? version.agentSessions
+    : []
+  const sessionWithModelId = sessions.find((session) =>
+    Boolean(formatTranscriptModelId(session?.modelId) !== unknownModelIdLabel),
+  )
+
+  return formatTranscriptModelId(sessionWithModelId?.modelId)
+}
+
 export type SubmittedUserInput = {
   imageAttachments: readonly AgentImageAttachment[]
   text: string
@@ -71,6 +90,7 @@ export function createVersionTranscript(
       items.push({
         id: `${lineageVersion.versionId}:user`,
         imageAttachments: toAgentImageAttachments(lineageVersion.userInput),
+        modelId: resolveVersionModelId(lineageVersion),
         role: 'user',
         text: lineageVersion.userInput.text,
       })
