@@ -554,6 +554,32 @@ describe('openRouterManifestClient', () => {
     expect(response.message).not.toContain('OpenAI')
   })
 
+
+
+  it('reports empty successful OpenRouter bodies as transport/context-like failures', async () => {
+    const fetcher = vi.fn(async () =>
+      new Response('', {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        status: 200,
+      }),
+    )
+    const client = createOpenRouterManifestClient({
+      apiKey: 'or-test-key',
+      fetcher,
+    })
+
+    const response = await client.generateAsset(createAgentRequest('repair'))
+
+    expect(response).toEqual({
+      message:
+        'OpenRouter returned an empty successful response body. This can happen when an upstream provider terminates a very large request or response; retry with a smaller prompt/candidate context.',
+      responseId: null,
+      status: 'error',
+    })
+  })
+
   it('reports unexpected successful OpenRouter payloads without OpenAI wording', async () => {
     const fetcher = vi.fn(async () =>
       createJsonResponse({

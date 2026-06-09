@@ -1440,6 +1440,12 @@ function createHeadlessProviderContext(
   settings: ProviderModelSettings,
 ) {
   return {
+    maxOutputTokens:
+      provider === 'gemini'
+        ? geminiModelConfig.maxOutputTokens
+        : provider === 'openrouter'
+        ? openRouterModelConfig.maxOutputTokens
+        : modelConfig.maxOutputTokens,
     modelId: settings.modelId,
     provider,
     reasoningEffort: settings.reasoningEffort,

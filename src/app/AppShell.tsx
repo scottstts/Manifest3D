@@ -938,6 +938,7 @@ export function AppShell() {
           mode,
           parentAgentSessions: runSelectedVersion?.agentSessions ?? [],
           providerContext: {
+            maxOutputTokens: modelConfig.maxOutputTokens,
             modelId: selectedProviderModelSettings.modelId,
             provider: selectedProvider,
             reasoningEffort: selectedProviderModelSettings.reasoningEffort,

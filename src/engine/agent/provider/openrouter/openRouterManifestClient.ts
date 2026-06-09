@@ -123,6 +123,7 @@ export function createOpenRouterManifestClient(
       return parseOpenRouterManifestResponse(
         result.json,
         request.prompt.metadata.mode,
+        result.rawText,
       )
     },
   }
@@ -168,6 +169,7 @@ export function buildOpenRouterChatCompletionsRequestBody(
 function parseOpenRouterManifestResponse(
   response: unknown,
   mode: AgentRequest['prompt']['metadata']['mode'],
+  rawResponseText = '',
 ): AgentResponse {
   const openRouterErrorMessage = extractOpenRouterErrorMessage(response)
 
@@ -228,7 +230,7 @@ function parseOpenRouterManifestResponse(
   }
 
   return {
-    message: createOpenRouterUnexpectedResponseMessage(response),
+    message: createOpenRouterUnexpectedResponseMessage(response, rawResponseText),
     responseId,
     status: 'error',
   }
@@ -704,7 +706,20 @@ function isOpenAIResponsesLikeResponse(value: unknown) {
   )
 }
 
-function createOpenRouterUnexpectedResponseMessage(value: unknown) {
+function createOpenRouterUnexpectedResponseMessage(
+  value: unknown,
+  rawResponseText = '',
+) {
+  const body = rawResponseText.trim()
+
+  if (!body) {
+    return 'OpenRouter returned an empty successful response body. This can happen when an upstream provider terminates a very large request or response; retry with a smaller prompt/candidate context.'
+  }
+
+  if (value === null) {
+    return `OpenRouter returned a successful response body that was not JSON: ${summarizeText(body)}`
+  }
+
   const details: string[] = []
 
   if (isRecord(value)) {

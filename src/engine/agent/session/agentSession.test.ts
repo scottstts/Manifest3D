@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { createAgentSessionTracker } from './agentSession'
+import {
+  agentSessionContextLimitTokens,
+  createAgentSessionTracker,
+  estimateAgentRequestInputTokens,
+  getSafeInputTokenLimit,
+} from './agentSession'
 
 describe('createAgentSessionTracker', () => {
   it('persists normalized replay exchanges without full compiled prompts', () => {
@@ -202,6 +207,151 @@ describe('createAgentSessionTracker', () => {
 
     expect(childTracker.getPreviousProviderResponseId()).toBeNull()
     expect(childTracker.getSnapshot().sessions[0]?.parentSessionId).toBeNull()
+  })
+
+
+  it('uses the compiled prompt, not just replay text, for continuation budgeting', () => {
+    const safeInputTokenLimit = getSafeInputTokenLimit({ maxOutputTokens: 64_000 })
+    const parentSession = {
+      assetId: null,
+      contextBufferTokens: 64_000,
+      contextLimitTokens: agentSessionContextLimitTokens,
+      createdAt: '2026-06-04T00:00:00.000Z',
+      exchanges: [],
+      latestAssetFingerprint: null,
+      latestProviderResponseId: 'resp-near-limit',
+      modelId: 'gpt-5.5',
+      parentSessionId: null,
+      provider: 'openai' as const,
+      reasoningEffort: 'high',
+      sessionId: 'parent:session:1',
+      status: 'active' as const,
+      tokenEstimate: safeInputTokenLimit - 10,
+      updatedAt: '2026-06-04T00:00:00.000Z',
+    }
+    const tracker = createAgentSessionTracker({
+      now: createNow(),
+      parentSessions: [parentSession],
+      providerContext: {
+        maxOutputTokens: 64_000,
+        modelId: 'gpt-5.5',
+        provider: 'openai',
+        reasoningEffort: 'high',
+      },
+      runId: 'child-near-limit',
+    })
+    const prompt = {
+      metadata: {
+        imageAttachmentCount: 0,
+        mode: 'repair' as const,
+        selectedAssetId: null,
+      },
+      system: 'system',
+      user: 'x'.repeat(80),
+    }
+
+    expect(tracker.shouldStartContinuation({ prompt })).toBe(true)
+
+    const prepared = tracker.prepareRequest({
+      candidateJson: { id: 'candidate', schemaVersion: 2 },
+      prompt,
+      replayContent: 'tiny repair feedback',
+      validationFeedback: 'tiny repair feedback',
+    })
+
+    expect(prepared).toMatchObject({
+      includeCandidateJson: true,
+      previousProviderResponseId: null,
+      status: 'ready',
+    })
+    expect(tracker.getSnapshot().sessions).toHaveLength(2)
+  })
+
+  it('does not accumulate prior OpenRouter request estimates when checking a stateless provider', () => {
+    const tracker = createAgentSessionTracker({
+      now: createNow(),
+      providerContext: {
+        maxOutputTokens: 64_000,
+        modelId: 'openai/gpt-5.5',
+        provider: 'openrouter',
+        reasoningEffort: 'high',
+      },
+      runId: 'openrouter-stateless-budget',
+    })
+    const prompt = {
+      metadata: {
+        imageAttachmentCount: 0,
+        mode: 'repair' as const,
+        selectedAssetId: null,
+      },
+      system: 'system',
+      user: 'x'.repeat(8_000),
+    }
+
+    for (let index = 0; index < 5; index += 1) {
+      const prepared = tracker.prepareRequest({
+        candidateJson: { id: `candidate-${index}`, schemaVersion: 2 },
+        prompt,
+        replayContent: `repair feedback ${index}`,
+        validationFeedback: `repair feedback ${index}`,
+      })
+
+      expect(prepared.status).toBe('ready')
+      tracker.recordModelResponse({
+        candidate: {
+          operations: [],
+          tool: 'apply_manifest_patch',
+        },
+        providerResponseId: `or-${index}`,
+        rawText: '{}',
+      })
+    }
+
+    const snapshot = tracker.getSnapshot().sessions
+
+    expect(snapshot).toHaveLength(1)
+    expect(snapshot[0]?.tokenEstimate).toBe(
+      estimateAgentRequestInputTokens({ prompt }) + 1,
+    )
+  })
+
+  it('returns a preflight context error for a single request that cannot fit a fresh context', () => {
+    const tracker = createAgentSessionTracker({
+      now: createNow(),
+      providerContext: {
+        maxOutputTokens: 64_000,
+        modelId: 'openai/gpt-5.5',
+        provider: 'openrouter',
+        reasoningEffort: 'high',
+      },
+      runId: 'openrouter-too-large',
+    })
+    const prompt = {
+      metadata: {
+        imageAttachmentCount: 0,
+        mode: 'repair' as const,
+        selectedAssetId: null,
+      },
+      system: 'system',
+      user: 'x'.repeat((getSafeInputTokenLimit({ maxOutputTokens: 64_000 }) + 1) * 4),
+    }
+
+    const prepared = tracker.prepareRequest({
+      candidateJson: { id: 'too-large', schemaVersion: 2 },
+      prompt,
+      replayContent: 'tiny repair feedback',
+      validationFeedback: 'tiny repair feedback',
+    })
+
+    expect(prepared).toMatchObject({
+      contextLimitTokens: 256_000,
+      safeInputTokenLimit: 192_000,
+      status: 'context_exceeded',
+    })
+    if (prepared.status !== 'context_exceeded') {
+      throw new Error('Expected preflight context budget failure.')
+    }
+    expect(prepared.message).toContain('stopped before sending')
   })
 })
 

@@ -209,11 +209,8 @@ export async function runManifestAgentLoop(
       mode === 'repair'
         ? validationFeedback ?? 'Continue repairing the current canonical asset.'
         : input.userPrompt
-    const startsContinuation = sessionTracker.shouldStartContinuation(replayContent)
-    const previousProviderResponseId = startsContinuation
-      ? null
-      : sessionTracker.getPreviousProviderResponseId()
-    const prompt = compileManifestPrompt({
+    const previousProviderResponseId = sessionTracker.getPreviousProviderResponseId()
+    let prompt = compileManifestPrompt({
       candidateJson,
       imageAttachments: imageAttachmentMetadata(input.imageAttachments ?? []),
       mode,
@@ -228,12 +225,57 @@ export async function runManifestAgentLoop(
       userPrompt: input.userPrompt,
       validationFeedback,
     })
+
+    if (
+      sessionTracker.shouldStartContinuation({
+        imageAttachments: requestImageAttachments,
+        prompt,
+      })
+    ) {
+      prompt = compileManifestPrompt({
+        candidateJson,
+        imageAttachments: imageAttachmentMetadata(input.imageAttachments ?? []),
+        mode,
+        omitCandidateJson: false,
+        omitSelectedAssetJson: false,
+        scene,
+        selectedAsset: input.selectedAsset ?? null,
+        selectedAssetAttemptContext: input.selectedAssetAttemptContext ?? null,
+        userInputHistory: userInputHistoryMetadata(userInputHistory),
+        userPrompt: input.userPrompt,
+        validationFeedback,
+      })
+    }
+
     const preparedRequest = sessionTracker.prepareRequest({
       candidateJson,
+      imageAttachments: requestImageAttachments,
       prompt,
       replayContent,
       validationFeedback,
     })
+
+    if (preparedRequest.status === 'context_exceeded') {
+      finishCompilePrompt('failed', preparedRequest.message)
+      sessionTracker.finish({ status: 'failed' })
+      emit(
+        publishEvent,
+        runId,
+        nextEventIndex,
+        'failed',
+        'Context budget exceeded',
+        preparedRequest.message,
+        'failed',
+      )
+
+      return {
+        agentSessions: sessionTracker.getSnapshot().sessions,
+        history: history.getSnapshot(),
+        message: preparedRequest.message,
+        status: 'failed',
+      }
+    }
+
     const agentRequest: AgentRequest = {
       imageAttachments: requestImageAttachments,
       prompt,

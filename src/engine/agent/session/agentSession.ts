@@ -1,9 +1,11 @@
 import type { CompiledManifestPrompt, PromptCompilerMode } from '../prompt/promptCompiler'
+import type { AgentImageAttachment } from '../provider/providerClient'
 import type { ModelProvider } from '../../config/modelConfig'
 import { createCandidateFingerprint } from './candidateHistory'
 import { summarizeToolCandidate } from '../protocol/agentToolCalls'
 
 export type AgentSessionProviderContext = {
+  maxOutputTokens?: number
   modelId: string
   provider: ModelProvider
   reasoningEffort: string
@@ -70,6 +72,28 @@ export type PersistedAgentSession = {
   updatedAt: string
 }
 
+export type AgentSessionRequestTokenInput = {
+  imageAttachments?: readonly AgentImageAttachment[]
+  prompt: CompiledManifestPrompt
+}
+
+export type AgentSessionPrepareResult =
+  | {
+      includeCandidateJson: boolean
+      previousProviderResponseId: string | null
+      requestTokenEstimate: number
+      sessionId: string
+      status: 'ready'
+    }
+  | {
+      contextLimitTokens: number
+      message: string
+      requestTokenEstimate: number
+      safeInputTokenLimit: number
+      sessionId: string
+      status: 'context_exceeded'
+    }
+
 export type AgentSessionTracker = {
   finish: (input: {
     candidate?: unknown
@@ -83,15 +107,12 @@ export type AgentSessionTracker = {
   }
   prepareRequest: (input: {
     candidateJson: unknown
+    imageAttachments?: readonly AgentImageAttachment[]
     replayContent: string
     prompt: CompiledManifestPrompt
     validationFeedback: string | null
-  }) => {
-    includeCandidateJson: boolean
-    previousProviderResponseId: string | null
-    sessionId: string
-  }
-  shouldStartContinuation: (replayContent: string) => boolean
+  }) => AgentSessionPrepareResult
+  shouldStartContinuation: (input: AgentSessionRequestTokenInput) => boolean
   recordHarnessFeedback: (input: {
     content: string
     mode: PromptCompilerMode
@@ -110,8 +131,11 @@ export type AgentSessionTracker = {
 export const agentSessionContextLimitTokens = 256_000
 export const agentSessionContextBufferTokens = 50_000
 
-const continuationThresholdTokens =
-  agentSessionContextLimitTokens - agentSessionContextBufferTokens
+const imageTokenReserveByDetail = {
+  high: 1_024,
+  low: 256,
+  auto: 512,
+} as const
 
 export function createAgentSessionTracker({
   assetId = null,
@@ -131,13 +155,17 @@ export function createAgentSessionTracker({
   const supportsServerContinuation = supportsProviderResponseContinuation(
     providerContext.provider,
   )
+  const contextBufferTokens = getEffectiveContextBufferTokens(providerContext)
+  const continuationThresholdTokens = getSafeInputTokenLimit(providerContext)
   const reusableParentSession = findReusableParentSession(
     parentSessions,
     providerContext,
     supportsServerContinuation,
+    continuationThresholdTokens,
   )
   let activeSession = createSession({
     assetId,
+    contextBufferTokens,
     latestProviderResponseId:
       reusableParentSession?.latestProviderResponseId ?? null,
     now,
@@ -169,29 +197,49 @@ export function createAgentSessionTracker({
     return activeSession.sessionId
   }
 
-  function shouldStartContinuation(replayContent: string) {
+  function shouldStartContinuation(input: AgentSessionRequestTokenInput) {
+    if (!supportsServerContinuation) {
+      return false
+    }
+
     return (
-      activeSession.tokenEstimate + estimateTokensFromText(replayContent) >
+      activeSession.tokenEstimate + estimateAgentRequestInputTokens(input) >
       continuationThresholdTokens
     )
   }
 
   function prepareRequest({
     candidateJson,
+    imageAttachments,
     prompt,
     replayContent,
     validationFeedback,
   }: {
     candidateJson: unknown
+    imageAttachments?: readonly AgentImageAttachment[]
     replayContent: string
     prompt: CompiledManifestPrompt
     validationFeedback: string | null
-  }) {
-    if (shouldStartContinuation(replayContent)) {
+  }): AgentSessionPrepareResult {
+    const requestTokenEstimate = estimateAgentRequestInputTokens({
+      imageAttachments,
+      prompt,
+    })
+
+    if (requestTokenEstimate > continuationThresholdTokens) {
+      return createContextExceededPrepareResult({
+        requestTokenEstimate,
+        sessionId: activeSession.sessionId,
+        thresholdTokens: continuationThresholdTokens,
+      })
+    }
+
+    if (shouldStartContinuation({ imageAttachments, prompt })) {
       const candidateFingerprint =
         candidateJson === undefined ? null : createCandidateFingerprint(candidateJson)
       activeSession = createSession({
         assetId,
+        contextBufferTokens,
         latestProviderResponseId: null,
         now,
         parentSessionId: activeSession.sessionId,
@@ -215,7 +263,13 @@ export function createAgentSessionTracker({
       kind: 'user',
       mode: prompt.metadata.mode,
     })
-    activeSession.tokenEstimate += estimateTokensFromText(replayContent)
+
+    if (supportsServerContinuation) {
+      activeSession.tokenEstimate += requestTokenEstimate
+    } else {
+      activeSession.tokenEstimate = requestTokenEstimate
+    }
+
     touch()
 
     const previousProviderResponseId = getPreviousProviderResponseId()
@@ -225,7 +279,9 @@ export function createAgentSessionTracker({
         prompt.metadata.mode === 'repair' &&
         previousProviderResponseId === null,
       previousProviderResponseId,
+      requestTokenEstimate,
       sessionId: activeSession.sessionId,
+      status: 'ready',
     }
   }
 
@@ -241,7 +297,6 @@ export function createAgentSessionTracker({
       kind: 'harness_feedback',
       mode,
     })
-    activeSession.tokenEstimate += estimateTokensFromText(content)
     touch()
   }
 
@@ -279,7 +334,6 @@ export function createAgentSessionTracker({
       status,
       summary,
     })
-    activeSession.tokenEstimate += estimateTokensFromText(summary)
     touch()
   }
 
@@ -348,8 +402,32 @@ export function createAgentSessionTracker({
   }
 }
 
+function createContextExceededPrepareResult({
+  requestTokenEstimate,
+  sessionId,
+  thresholdTokens,
+}: {
+  requestTokenEstimate: number
+  sessionId: string
+  thresholdTokens: number
+}): Extract<AgentSessionPrepareResult, { status: 'context_exceeded' }> {
+  return {
+    contextLimitTokens: agentSessionContextLimitTokens,
+    message: [
+      `The compiled provider request is estimated at ${formatTokenCount(requestTokenEstimate)} input tokens, which exceeds the safe per-request budget of ${formatTokenCount(thresholdTokens)} tokens.`,
+      `The harness reserves ${formatTokenCount(agentSessionContextLimitTokens - thresholdTokens)} tokens for model output/reasoning inside the ${formatTokenCount(agentSessionContextLimitTokens)} token context window.`,
+      'This run was stopped before sending the request so the provider does not terminate the connection with a context-length or transport error.',
+    ].join(' '),
+    requestTokenEstimate,
+    safeInputTokenLimit: thresholdTokens,
+    sessionId,
+    status: 'context_exceeded',
+  }
+}
+
 function createSession({
   assetId,
+  contextBufferTokens,
   latestProviderResponseId,
   now,
   parentSessionId,
@@ -358,6 +436,7 @@ function createSession({
   tokenEstimate,
 }: {
   assetId: string | null
+  contextBufferTokens: number
   latestProviderResponseId: string | null
   now: () => string
   parentSessionId: string | null
@@ -370,7 +449,7 @@ function createSession({
 
   return {
     assetId,
-    contextBufferTokens: agentSessionContextBufferTokens,
+    contextBufferTokens,
     contextLimitTokens: agentSessionContextLimitTokens,
     createdAt,
     exchanges: [],
@@ -391,6 +470,7 @@ function findReusableParentSession(
   parentSessions: readonly PersistedAgentSession[],
   providerContext: AgentSessionProviderContext,
   supportsServerContinuation: boolean,
+  continuationThresholdTokens: number,
 ) {
   if (!supportsServerContinuation) {
     return null
@@ -408,6 +488,47 @@ function findReusableParentSession(
 
 export function supportsProviderResponseContinuation(provider: ModelProvider) {
   return provider === 'openai' || provider === 'gemini'
+}
+
+export function getEffectiveContextBufferTokens(
+  providerContext: Pick<AgentSessionProviderContext, 'maxOutputTokens'>,
+) {
+  return Math.max(
+    agentSessionContextBufferTokens,
+    providerContext.maxOutputTokens ?? 0,
+  )
+}
+
+export function getSafeInputTokenLimit(
+  providerContext: Pick<AgentSessionProviderContext, 'maxOutputTokens'>,
+) {
+  return Math.max(
+    1,
+    agentSessionContextLimitTokens - getEffectiveContextBufferTokens(providerContext),
+  )
+}
+
+export function estimateAgentRequestInputTokens({
+  imageAttachments = [],
+  prompt,
+}: AgentSessionRequestTokenInput) {
+  const promptTokens = estimateTokensFromText(`${prompt.system}\n${prompt.user}`)
+  const imageTokens = imageAttachments.reduce(
+    (total, attachment) => total + estimateImageAttachmentTokens(attachment),
+    0,
+  )
+
+  return promptTokens + imageTokens
+}
+
+function estimateImageAttachmentTokens(attachment: AgentImageAttachment) {
+  const detail = attachment.detail === 'low'
+    ? 'low'
+    : attachment.detail === 'high'
+    ? 'high'
+    : 'auto'
+
+  return imageTokenReserveByDetail[detail]
 }
 
 function extractToolCall(candidate: unknown) {
@@ -448,6 +569,10 @@ function stringifySummary(value: unknown) {
 
 function estimateTokensFromText(value: string) {
   return Math.max(1, Math.ceil(value.length / 4))
+}
+
+function formatTokenCount(value: number) {
+  return value.toLocaleString('en-US')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

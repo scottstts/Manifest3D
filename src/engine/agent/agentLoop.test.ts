@@ -20,6 +20,7 @@ import {
   createCandidateHistory,
   type CandidateAttempt,
 } from './session/candidateHistory'
+import { getSafeInputTokenLimit } from './session/agentSession'
 import type {
   AgentRequest,
   AgentResponse,
@@ -1980,6 +1981,53 @@ describe('runManifestAgentLoop', () => {
       ['ref-initial', 'ref-current'],
       ['ref-initial', 'ref-current'],
     ])
+  })
+
+
+
+  it('stops before provider request when the compiled prompt cannot fit the safe context budget', async () => {
+    const sceneStore = createSceneStore(emptyScene)
+    const requests: AgentRequest[] = []
+    const safeInputLimit = getSafeInputTokenLimit({ maxOutputTokens: 64_000 })
+    const client: ManifestProviderClient = {
+      async generateAsset(request) {
+        requests.push(request)
+
+        return {
+          message: 'should not be called',
+          responseId: null,
+          status: 'error',
+        }
+      },
+    }
+
+    const result = await runManifestAgentLoop(
+      {
+        mode: 'create',
+        providerContext: {
+          maxOutputTokens: 64_000,
+          modelId: 'openai/gpt-5.5',
+          provider: 'openrouter',
+          reasoningEffort: 'high',
+        },
+        runId: 'run-context-budget-stop',
+        scene: emptyScene,
+        userPrompt: 'x'.repeat((safeInputLimit + 1) * 4),
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('failed')
+    if (result.status !== 'failed') {
+      throw new Error('Expected context-budget preflight to fail.')
+    }
+    expect(result.message).toContain('safe per-request budget')
+    expect(result.message).toContain('stopped before sending')
+    expect(requests).toHaveLength(0)
+    expect(sceneStore.getSnapshot().scene.assets).toHaveLength(0)
   })
 
   it('surfaces missing-key unavailable state without recording attempts or changing the scene', async () => {
