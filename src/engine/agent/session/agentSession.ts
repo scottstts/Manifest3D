@@ -1,5 +1,10 @@
 import type { CompiledManifestPrompt, PromptCompilerMode } from '../prompt/promptCompiler'
-import type { AgentImageAttachment } from '../provider/providerClient'
+import type {
+  AgentConversationMessage,
+  AgentGeminiCachedContentState,
+  AgentImageAttachment,
+  AgentProviderResponseState,
+} from '../provider/providerClient'
 import type { ModelProvider } from '../../config/modelConfig'
 import { createCandidateFingerprint } from './candidateHistory'
 import { summarizeToolCandidate } from '../protocol/agentToolCalls'
@@ -54,6 +59,10 @@ export type PersistedAgentSessionExchange =
       sequence: number
     }
 
+export type PersistedAgentProviderState = {
+  geminiCachedContent?: AgentGeminiCachedContentState | null
+}
+
 export type PersistedAgentSession = {
   assetId: string | null
   contextBufferTokens: number
@@ -65,6 +74,7 @@ export type PersistedAgentSession = {
   modelId: string
   parentSessionId: string | null
   provider: ModelProvider
+  providerState?: PersistedAgentProviderState
   reasoningEffort: string
   sessionId: string
   status: 'active' | 'complete' | 'failed'
@@ -73,12 +83,14 @@ export type PersistedAgentSession = {
 }
 
 export type AgentSessionRequestTokenInput = {
+  conversationMessages?: readonly AgentConversationMessage[]
   imageAttachments?: readonly AgentImageAttachment[]
   prompt: CompiledManifestPrompt
 }
 
 export type AgentSessionPrepareResult =
   | {
+      geminiCachedContent: AgentSessionGeminiCachePrepareResult | null
       includeCandidateJson: boolean
       previousProviderResponseId: string | null
       requestTokenEstimate: number
@@ -94,12 +106,25 @@ export type AgentSessionPrepareResult =
       status: 'context_exceeded'
     }
 
+export type AgentSessionGeminiCacheInput = {
+  cacheKey: string
+  sourceMediaIds: readonly string[]
+  stableImageAttachments?: readonly AgentImageAttachment[]
+  stablePrompt: CompiledManifestPrompt
+}
+
+export type AgentSessionGeminiCachePrepareResult = AgentSessionGeminiCacheInput & {
+  cacheExpiresAt: string | null
+  cachedContentName: string | null
+}
+
 export type AgentSessionTracker = {
   finish: (input: {
     candidate?: unknown
     status: PersistedAgentSession['status']
   }) => void
   getPreviousProviderResponseId: () => string | null
+  getProviderContextStrategy: () => AgentProviderContextStrategy
   getSessionId: () => string
   getSnapshot: () => {
     activeSessionId: string
@@ -107,8 +132,10 @@ export type AgentSessionTracker = {
   }
   prepareRequest: (input: {
     candidateJson: unknown
+    conversationMessages?: readonly AgentConversationMessage[]
     imageAttachments?: readonly AgentImageAttachment[]
     replayContent: string
+    geminiCache?: AgentSessionGeminiCacheInput | null
     prompt: CompiledManifestPrompt
     validationFeedback: string | null
   }) => AgentSessionPrepareResult
@@ -119,6 +146,7 @@ export type AgentSessionTracker = {
   }) => void
   recordModelResponse: (input: {
     candidate: unknown
+    providerState?: AgentProviderResponseState | null
     providerResponseId: string | null
     rawText: string
   }) => void
@@ -127,6 +155,11 @@ export type AgentSessionTracker = {
     summary: string
   }) => void
 }
+
+export type AgentProviderContextStrategy =
+  | 'explicit_cached_content'
+  | 'provider_response_continuation'
+  | 'stateless_replay'
 
 export const agentSessionContextLimitTokens = 256_000
 export const agentSessionContextBufferTokens = 50_000
@@ -152,9 +185,11 @@ export function createAgentSessionTracker({
 }): AgentSessionTracker {
   let sequence = 0
   const sessions: PersistedAgentSession[] = []
-  const supportsServerContinuation = supportsProviderResponseContinuation(
+  const providerContextStrategy = getAgentProviderContextStrategy(
     providerContext.provider,
   )
+  const supportsServerContinuation =
+    providerContextStrategy === 'provider_response_continuation'
   const contextBufferTokens = getEffectiveContextBufferTokens(providerContext)
   const continuationThresholdTokens = getSafeInputTokenLimit(providerContext)
   const reusableParentSession = findReusableParentSession(
@@ -171,8 +206,11 @@ export function createAgentSessionTracker({
     now,
     parentSessionId: reusableParentSession?.sessionId ?? null,
     providerContext,
+    providerState: cloneProviderState(reusableParentSession?.providerState),
     runId,
-    tokenEstimate: reusableParentSession?.tokenEstimate ?? 0,
+    tokenEstimate: supportsServerContinuation
+      ? reusableParentSession?.tokenEstimate ?? 0
+      : 0,
   })
 
   sessions.push(activeSession)
@@ -183,6 +221,7 @@ export function createAgentSessionTracker({
       sessions: sessions.map((session) => ({
         ...session,
         exchanges: [...session.exchanges],
+        providerState: cloneProviderState(session.providerState),
       })),
     }
   }
@@ -191,6 +230,10 @@ export function createAgentSessionTracker({
     return supportsServerContinuation
       ? activeSession.latestProviderResponseId
       : null
+  }
+
+  function getProviderContextStrategy() {
+    return providerContextStrategy
   }
 
   function getSessionId() {
@@ -210,25 +253,36 @@ export function createAgentSessionTracker({
 
   function prepareRequest({
     candidateJson,
+    conversationMessages,
     imageAttachments,
+    geminiCache,
     prompt,
     replayContent,
     validationFeedback,
   }: {
     candidateJson: unknown
+    conversationMessages?: readonly AgentConversationMessage[]
+    geminiCache?: AgentSessionGeminiCacheInput | null
     imageAttachments?: readonly AgentImageAttachment[]
     replayContent: string
     prompt: CompiledManifestPrompt
     validationFeedback: string | null
   }): AgentSessionPrepareResult {
     const requestTokenEstimate = estimateAgentRequestInputTokens({
+      conversationMessages,
       imageAttachments,
       prompt,
     })
+    const contextTokenEstimate = geminiCache
+      ? estimateAgentRequestInputTokens({
+          imageAttachments: geminiCache.stableImageAttachments,
+          prompt: geminiCache.stablePrompt,
+        }) + requestTokenEstimate
+      : requestTokenEstimate
 
-    if (requestTokenEstimate > continuationThresholdTokens) {
+    if (contextTokenEstimate > continuationThresholdTokens) {
       return createContextExceededPrepareResult({
-        requestTokenEstimate,
+        requestTokenEstimate: contextTokenEstimate,
         sessionId: activeSession.sessionId,
         thresholdTokens: continuationThresholdTokens,
       })
@@ -244,6 +298,7 @@ export function createAgentSessionTracker({
         now,
         parentSessionId: activeSession.sessionId,
         providerContext,
+        providerState: undefined,
         runId,
         tokenEstimate: 0,
       })
@@ -273,8 +328,10 @@ export function createAgentSessionTracker({
     touch()
 
     const previousProviderResponseId = getPreviousProviderResponseId()
+    const geminiCachedContent = prepareGeminiCachedContent(geminiCache)
 
     return {
+      geminiCachedContent,
       includeCandidateJson:
         prompt.metadata.mode === 'repair' &&
         previousProviderResponseId === null,
@@ -302,10 +359,12 @@ export function createAgentSessionTracker({
 
   function recordModelResponse({
     candidate,
+    providerState,
     providerResponseId,
     rawText,
   }: {
     candidate: unknown
+    providerState?: AgentProviderResponseState | null
     providerResponseId: string | null
     rawText: string
   }) {
@@ -318,8 +377,43 @@ export function createAgentSessionTracker({
       tool: toolCall.tool,
     })
     activeSession.latestProviderResponseId = providerResponseId
+    if (providerState?.geminiCachedContent) {
+      activeSession.providerState = {
+        ...activeSession.providerState,
+        geminiCachedContent: {
+          ...providerState.geminiCachedContent,
+          sourceMediaIds: [...providerState.geminiCachedContent.sourceMediaIds],
+        },
+      }
+    }
     activeSession.tokenEstimate += estimateTokensFromText(rawText)
     touch()
+  }
+
+  function prepareGeminiCachedContent(
+    input: AgentSessionGeminiCacheInput | null | undefined,
+  ): AgentSessionGeminiCachePrepareResult | null {
+    if (!input) {
+      return null
+    }
+
+    const cachedContent = activeSession.providerState?.geminiCachedContent
+    const reusableCachedContent =
+      cachedContent &&
+      cachedContent.cacheKey === input.cacheKey &&
+      sameStringSet(cachedContent.sourceMediaIds, input.sourceMediaIds) &&
+      isUsableCacheExpiration(cachedContent.cacheExpiresAt, now())
+        ? cachedContent
+        : null
+
+    return {
+      cacheExpiresAt: reusableCachedContent?.cacheExpiresAt ?? null,
+      cachedContentName: reusableCachedContent?.cachedContentName ?? null,
+      cacheKey: input.cacheKey,
+      sourceMediaIds: [...input.sourceMediaIds],
+      stableImageAttachments: [...(input.stableImageAttachments ?? [])],
+      stablePrompt: input.stablePrompt,
+    }
   }
 
   function recordToolResult({
@@ -392,6 +486,7 @@ export function createAgentSessionTracker({
   return {
     finish,
     getPreviousProviderResponseId,
+    getProviderContextStrategy,
     getSessionId,
     getSnapshot,
     prepareRequest,
@@ -432,6 +527,7 @@ function createSession({
   now,
   parentSessionId,
   providerContext,
+  providerState,
   runId,
   tokenEstimate,
 }: {
@@ -441,6 +537,7 @@ function createSession({
   now: () => string
   parentSessionId: string | null
   providerContext: AgentSessionProviderContext
+  providerState?: PersistedAgentProviderState
   runId: string
   tokenEstimate: number
 }): PersistedAgentSession {
@@ -458,6 +555,7 @@ function createSession({
     modelId: providerContext.modelId,
     parentSessionId,
     provider: providerContext.provider,
+    ...(providerState ? { providerState } : {}),
     reasoningEffort: providerContext.reasoningEffort,
     sessionId: `${runId}:session:${sessionOrdinal}`,
     status: 'active',
@@ -472,22 +570,98 @@ function findReusableParentSession(
   supportsServerContinuation: boolean,
   continuationThresholdTokens: number,
 ) {
+  if (providerContext.provider === 'gemini') {
+    return [...parentSessions].reverse().find(
+      (session) =>
+        hasMatchingProviderContext(session, providerContext) &&
+        Boolean(session.providerState?.geminiCachedContent?.cachedContentName),
+    ) ?? null
+  }
+
   if (!supportsServerContinuation) {
     return null
   }
 
   return [...parentSessions].reverse().find(
     (session) =>
-      session.provider === providerContext.provider &&
-      session.modelId === providerContext.modelId &&
-      session.reasoningEffort === providerContext.reasoningEffort &&
+      hasMatchingProviderContext(session, providerContext) &&
       Boolean(session.latestProviderResponseId) &&
       session.tokenEstimate < continuationThresholdTokens,
   ) ?? null
 }
 
+function hasMatchingProviderContext(
+  session: PersistedAgentSession,
+  providerContext: AgentSessionProviderContext,
+) {
+  return (
+    session.provider === providerContext.provider &&
+    session.modelId === providerContext.modelId &&
+    session.reasoningEffort === providerContext.reasoningEffort
+  )
+}
+
+function cloneProviderState(
+  providerState: PersistedAgentProviderState | undefined,
+): PersistedAgentProviderState | undefined {
+  const geminiCachedContent = providerState?.geminiCachedContent
+
+  if (!geminiCachedContent) {
+    return undefined
+  }
+
+  return {
+    geminiCachedContent: {
+      ...geminiCachedContent,
+      sourceMediaIds: [...geminiCachedContent.sourceMediaIds],
+    },
+  }
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  const rightValues = new Set(right)
+
+  return left.every((value) => rightValues.has(value))
+}
+
+function isUsableCacheExpiration(
+  cacheExpiresAt: string | null,
+  currentTime: string,
+) {
+  if (!cacheExpiresAt) {
+    return true
+  }
+
+  const expiresAtMs = Date.parse(cacheExpiresAt)
+  const currentMs = Date.parse(currentTime)
+
+  if (!Number.isFinite(expiresAtMs) || !Number.isFinite(currentMs)) {
+    return true
+  }
+
+  return expiresAtMs > currentMs + 60_000
+}
+
 export function supportsProviderResponseContinuation(provider: ModelProvider) {
-  return provider === 'openai' || provider === 'gemini'
+  return provider === 'openai'
+}
+
+export function getAgentProviderContextStrategy(
+  provider: ModelProvider,
+): AgentProviderContextStrategy {
+  if (provider === 'openai') {
+    return 'provider_response_continuation'
+  }
+
+  if (provider === 'gemini') {
+    return 'explicit_cached_content'
+  }
+
+  return 'stateless_replay'
 }
 
 export function getEffectiveContextBufferTokens(
@@ -509,16 +683,33 @@ export function getSafeInputTokenLimit(
 }
 
 export function estimateAgentRequestInputTokens({
+  conversationMessages = [],
   imageAttachments = [],
   prompt,
 }: AgentSessionRequestTokenInput) {
-  const promptTokens = estimateTokensFromText(`${prompt.system}\n${prompt.user}`)
-  const imageTokens = imageAttachments.reduce(
-    (total, attachment) => total + estimateImageAttachmentTokens(attachment),
+  const hasConversationMessages = conversationMessages.length > 0
+  const promptTokens = estimateTokensFromText(
+    hasConversationMessages ? prompt.system : `${prompt.system}\n${prompt.user}`,
+  )
+  const imageTokens = hasConversationMessages
+    ? 0
+    : imageAttachments.reduce(
+        (total, attachment) => total + estimateImageAttachmentTokens(attachment),
+        0,
+      )
+  const conversationTokens = conversationMessages.reduce(
+    (total, message) =>
+      total +
+      estimateTokensFromText(message.content) +
+      (message.imageAttachments ?? []).reduce(
+        (imageTotal, attachment) =>
+          imageTotal + estimateImageAttachmentTokens(attachment),
+        0,
+      ),
     0,
   )
 
-  return promptTokens + imageTokens
+  return promptTokens + imageTokens + conversationTokens
 }
 
 function estimateImageAttachmentTokens(attachment: AgentImageAttachment) {

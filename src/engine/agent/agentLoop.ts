@@ -10,9 +10,11 @@ import {
   createCandidateHistory,
   type CandidateHistory,
   type CandidateHistorySnapshot,
+  createCandidateFingerprint,
 } from './session/candidateHistory'
 import {
   createAgentSessionTracker,
+  type AgentSessionGeminiCacheInput,
   type AgentSessionProviderContext,
   type PersistedAgentSession,
 } from './session/agentSession'
@@ -22,9 +24,12 @@ import {
 } from './protocol/agentToolCalls'
 import {
   compileManifestPrompt,
+  type CompiledManifestPrompt,
   type PromptCompilerMode,
+  type PromptContextScope,
 } from './prompt/promptCompiler'
 import type {
+  AgentConversationMessage,
   AgentImageAttachment,
   AgentRequest,
   ManifestProviderClient,
@@ -46,8 +51,10 @@ import {
   renderPatchApplicationFeedback,
 } from './loop/repairPatch'
 import {
-  collectRequestImageAttachments,
+  collectStableImageAttachments,
+  collectStatelessReplayImageAttachments,
   imageAttachmentMetadata,
+  statelessReplayUserInputHistoryMetadata,
   userInputHistoryMetadata,
 } from './loop/promptMetadata'
 
@@ -148,24 +155,32 @@ export async function runManifestAgentLoop(
   let runEvents: AgentLoopEvent[] = []
   let patchApplicationErrorSignature: string | null = null
   let patchApplicationErrorStreak = 0
+  let statelessReplayMessages: AgentConversationMessage[] = []
   const userInputHistory = input.userInputHistory ?? []
-  const requestImageAttachments = collectRequestImageAttachments(
+  const providerContext =
+    input.providerContext ??
+    {
+      modelId: 'unknown',
+      provider: 'openai',
+      reasoningEffort: 'unknown',
+    }
+  const stableImageAttachments = collectStableImageAttachments(
     userInputHistory,
     input.imageAttachments ?? [],
   )
+  const statelessReplayImageAttachments =
+    collectStatelessReplayImageAttachments(
+      userInputHistory,
+      input.imageAttachments ?? [],
+    )
   const sessionTracker = createAgentSessionTracker({
     assetId: input.selectedAsset?.id ?? null,
     now: dependencies.now,
     parentSessions: input.parentAgentSessions ?? [],
-    providerContext:
-      input.providerContext ??
-      {
-        modelId: 'unknown',
-        provider: 'openai',
-        reasoningEffort: 'unknown',
-      },
+    providerContext,
     runId,
   })
+  const providerContextStrategy = sessionTracker.getProviderContextStrategy()
 
   history.beginRun(runId)
   emit(
@@ -210,45 +225,102 @@ export async function runManifestAgentLoop(
         ? validationFeedback ?? 'Continue repairing the current canonical asset.'
         : input.userPrompt
     const previousProviderResponseId = sessionTracker.getPreviousProviderResponseId()
-    let prompt = compileManifestPrompt({
-      candidateJson,
-      imageAttachments: imageAttachmentMetadata(input.imageAttachments ?? []),
-      mode,
-      omitCandidateJson:
-        mode === 'repair' && previousProviderResponseId !== null,
-      omitSelectedAssetJson:
-        mode === 'edit' && previousProviderResponseId !== null,
-      scene,
-      selectedAsset: input.selectedAsset ?? null,
-      selectedAssetAttemptContext: input.selectedAssetAttemptContext ?? null,
-      userInputHistory: userInputHistoryMetadata(userInputHistory),
-      userPrompt: input.userPrompt,
-      validationFeedback,
-    })
+    const compilePrompt = (
+      contextScope: PromptContextScope,
+      imageAttachments: readonly AgentImageAttachment[],
+    ) => {
+      const promptUserInputHistory =
+        providerContextStrategy === 'stateless_replay'
+          ? statelessReplayUserInputHistoryMetadata(
+              userInputHistory,
+              input.imageAttachments ?? [],
+            )
+          : userInputHistoryMetadata(userInputHistory)
+
+      return compileManifestPrompt({
+        candidateJson,
+        contextScope,
+        imageAttachments: imageAttachmentMetadata(imageAttachments),
+        mode,
+        scene,
+        selectedAsset: input.selectedAsset ?? null,
+        selectedAssetAttemptContext: input.selectedAssetAttemptContext ?? null,
+        userInputHistory: promptUserInputHistory,
+        userPrompt: input.userPrompt,
+        validationFeedback,
+      })
+    }
+    let requestImageAttachments: readonly AgentImageAttachment[]
+    let geminiCache: AgentSessionGeminiCacheInput | null = null
+    let conversationMessages: readonly AgentConversationMessage[] | undefined
+    let prompt: CompiledManifestPrompt
+
+    if (providerContextStrategy === 'explicit_cached_content') {
+      const stablePrompt = compilePrompt('stable_cache', stableImageAttachments)
+
+      requestImageAttachments = []
+      prompt = compilePrompt('cached_delta', [])
+      geminiCache = {
+        cacheKey: createGeminiStableCacheKey({
+          imageAttachments: stableImageAttachments,
+          prompt: stablePrompt,
+          providerContext,
+        }),
+        sourceMediaIds: stableImageAttachments.map((attachment) => attachment.id),
+        stableImageAttachments,
+        stablePrompt,
+      }
+    } else if (
+      providerContextStrategy === 'provider_response_continuation' &&
+      previousProviderResponseId !== null
+    ) {
+      requestImageAttachments =
+        mode === 'repair' ? [] : input.imageAttachments ?? []
+      prompt = compilePrompt('stateful_delta', requestImageAttachments)
+    } else {
+      if (
+        providerContextStrategy === 'stateless_replay' &&
+        statelessReplayMessages.length > 0
+      ) {
+        requestImageAttachments = mode === 'repair'
+          ? []
+          : input.imageAttachments ?? []
+        prompt = compilePrompt('stateful_delta', requestImageAttachments)
+      } else {
+        requestImageAttachments =
+          providerContextStrategy === 'stateless_replay'
+            ? statelessReplayImageAttachments
+            : stableImageAttachments
+        prompt = compilePrompt('full', requestImageAttachments)
+      }
+    }
+
+    if (providerContextStrategy === 'stateless_replay') {
+      conversationMessages = [
+        ...statelessReplayMessages,
+        {
+          content: prompt.user,
+          imageAttachments: requestImageAttachments,
+          role: 'user',
+        },
+      ]
+    }
 
     if (
+      providerContextStrategy === 'provider_response_continuation' &&
       sessionTracker.shouldStartContinuation({
         imageAttachments: requestImageAttachments,
         prompt,
       })
     ) {
-      prompt = compileManifestPrompt({
-        candidateJson,
-        imageAttachments: imageAttachmentMetadata(input.imageAttachments ?? []),
-        mode,
-        omitCandidateJson: false,
-        omitSelectedAssetJson: false,
-        scene,
-        selectedAsset: input.selectedAsset ?? null,
-        selectedAssetAttemptContext: input.selectedAssetAttemptContext ?? null,
-        userInputHistory: userInputHistoryMetadata(userInputHistory),
-        userPrompt: input.userPrompt,
-        validationFeedback,
-      })
+      requestImageAttachments = stableImageAttachments
+      prompt = compilePrompt('full', requestImageAttachments)
     }
 
     const preparedRequest = sessionTracker.prepareRequest({
       candidateJson,
+      conversationMessages,
+      geminiCache,
       imageAttachments: requestImageAttachments,
       prompt,
       replayContent,
@@ -277,9 +349,26 @@ export async function runManifestAgentLoop(
     }
 
     const agentRequest: AgentRequest = {
+      conversationMessages,
       imageAttachments: requestImageAttachments,
       prompt,
       previousResponseId: preparedRequest.previousProviderResponseId,
+      providerState: preparedRequest.geminiCachedContent
+        ? {
+            geminiCachedContent: {
+              cacheExpiresAt:
+                preparedRequest.geminiCachedContent.cacheExpiresAt,
+              cacheKey: preparedRequest.geminiCachedContent.cacheKey,
+              cachedContentName:
+                preparedRequest.geminiCachedContent.cachedContentName,
+              sourceMediaIds:
+                preparedRequest.geminiCachedContent.sourceMediaIds,
+              stableImageAttachments:
+                preparedRequest.geminiCachedContent.stableImageAttachments,
+              stablePrompt: preparedRequest.geminiCachedContent.stablePrompt,
+            },
+          }
+        : undefined,
       sessionId: preparedRequest.sessionId,
       signal: input.signal,
     }
@@ -357,8 +446,18 @@ export async function runManifestAgentLoop(
     }
 
     finishModelRequest('passed')
+    if (providerContextStrategy === 'stateless_replay' && conversationMessages) {
+      statelessReplayMessages = [
+        ...conversationMessages,
+        {
+          content: agentResponse.rawText,
+          role: 'assistant',
+        },
+      ]
+    }
     sessionTracker.recordModelResponse({
       candidate: agentResponse.candidate,
+      providerState: agentResponse.providerState ?? null,
       providerResponseId: agentResponse.responseId,
       rawText: agentResponse.rawText,
     })
@@ -601,4 +700,28 @@ export async function runManifestAgentLoop(
       detail,
     )
   }
+}
+
+function createGeminiStableCacheKey({
+  imageAttachments,
+  prompt,
+  providerContext,
+}: {
+  imageAttachments: readonly AgentImageAttachment[]
+  prompt: CompiledManifestPrompt
+  providerContext: AgentSessionProviderContext
+}) {
+  return createCandidateFingerprint({
+    imageAttachments: imageAttachments.map((attachment) => ({
+      height: attachment.height ?? null,
+      id: attachment.id,
+      mediaType: attachment.mediaType,
+      name: attachment.name ?? null,
+      width: attachment.width ?? null,
+    })),
+    modelId: providerContext.modelId,
+    prompt,
+    provider: providerContext.provider,
+    reasoningEffort: providerContext.reasoningEffort,
+  })
 }

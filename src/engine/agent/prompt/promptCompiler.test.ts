@@ -174,6 +174,57 @@ describe('compileManifestPrompt', () => {
     expect(compiled.user).not.toContain('Example Hinged Box')
   })
 
+  it('builds stateful repair deltas without replaying candidate or scene context', () => {
+    const compiled = compileManifestPrompt({
+      candidateJson: createValidValidationFixtureAsset(),
+      contextScope: 'stateful_delta',
+      mode: 'repair',
+      scene: emptyScene,
+      userPrompt: 'Repair the candidate.',
+      validationFeedback: '<validation_signals>failed</validation_signals>',
+    })
+
+    expect(compiled.user).toContain('<task_instructions>')
+    expect(compiled.user).toContain('<validation_feedback>')
+    expect(compiled.user).toContain('Patch Tool Example')
+    expect(compiled.user).not.toContain('<candidate_json>')
+    expect(compiled.user).not.toContain('<current_scene>')
+    expect(compiled.user).not.toContain('<user_input_history>')
+  })
+
+  it('builds Gemini cached-context deltas with only dynamic feedback', () => {
+    const compiled = compileManifestPrompt({
+      candidateJson: createValidValidationFixtureAsset(),
+      contextScope: 'cached_delta',
+      mode: 'repair',
+      scene: emptyScene,
+      userPrompt: 'Repair the candidate.',
+      validationFeedback: '<validation_signals>failed</validation_signals>',
+    })
+
+    expect(compiled.user).toContain('<cached_context_delta>')
+    expect(compiled.user).toContain('<validation_feedback>')
+    expect(compiled.user).not.toContain('<candidate_json>')
+    expect(compiled.user).not.toContain('<task_instructions>')
+    expect(compiled.user).not.toContain('<response_contract>')
+  })
+
+  it('builds Gemini stable cache prompts without dynamic validation feedback', () => {
+    const compiled = compileManifestPrompt({
+      candidateJson: createValidValidationFixtureAsset(),
+      contextScope: 'stable_cache',
+      mode: 'repair',
+      scene: emptyScene,
+      userPrompt: 'Repair the candidate.',
+      validationFeedback: '<validation_signals>failed</validation_signals>',
+    })
+
+    expect(compiled.user).toContain('<candidate_json>')
+    expect(compiled.user).toContain('<task_instructions>')
+    expect(compiled.user).toContain('<response_contract>')
+    expect(compiled.user).not.toContain('<validation_feedback>')
+  })
+
   it('keeps the compact example parseable as Contract V2 JSON', () => {
     const exampleJson = extractFirstJsonCodeBlock(examplesPrompt)
 

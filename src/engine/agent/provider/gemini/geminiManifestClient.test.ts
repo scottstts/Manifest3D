@@ -4,8 +4,8 @@ import { geminiModelConfig } from '../../../config/modelConfig'
 import type { ManifestScene } from '../../../schema/manifestTypes'
 import { compileManifestPrompt } from '../../prompt/promptCompiler'
 import {
+  buildGeminiCachedContentRequestBody,
   buildGeminiGenerateContentRequestBody,
-  buildGeminiInteractionsRequestBody,
   buildGeminiResponseJsonSchema,
   createGeminiManifestClient,
   parseGeminiManifestResponse,
@@ -17,16 +17,19 @@ const emptyScene: ManifestScene = {
   units: 'meters',
 }
 
-describe('buildGeminiInteractionsRequestBody', () => {
-  it('builds Gemini Interactions structured-output requests with image payloads', () => {
+describe('Gemini cachedContent request builders', () => {
+  it('builds Gemini cachedContent requests with stable prompt and media payloads', () => {
     const prompt = compileManifestPrompt({
+      contextScope: 'stable_cache',
       mode: 'create',
       scene: emptyScene,
       userPrompt: 'Create a reference-based desk lamp.',
     })
 
-    const body = buildGeminiInteractionsRequestBody({
-      imageAttachments: [
+    const body = buildGeminiCachedContentRequestBody({
+      cacheKey: 'cache-key-1',
+      sourceMediaIds: ['ref-lamp'],
+      stableImageAttachments: [
         {
           id: 'ref-lamp',
           imageUrl: 'data:image/png;base64,abc123',
@@ -34,37 +37,71 @@ describe('buildGeminiInteractionsRequestBody', () => {
           name: 'lamp reference',
         },
       ],
-      prompt,
+      stablePrompt: prompt,
     })
 
-    expect(body.generation_config).toMatchObject({
-      max_output_tokens: 64_000,
-      temperature: 1,
-      thinking_level: 'high',
+    expect(body).toMatchObject({
+      displayName: 'manifest3d-cache-key-1',
+      model: 'models/gemini-flash-latest',
+      ttl: '3600s',
     })
-    expect(body.response_format).toMatchObject({
-      properties: {
-        schemaVersion: {
-          enum: [2],
-          type: 'integer',
-        },
-      },
-      type: 'object',
-    })
-    expect(body.system_instruction).toBe(prompt.system)
-    expect(body.input).toEqual(
+    expect(body.systemInstruction.parts[0]).toEqual({ text: prompt.system })
+    expect(body.contents[0].parts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           text: expect.stringContaining('Create a reference-based desk lamp.'),
-          type: 'text',
         }),
         expect.objectContaining({
-          data: 'abc123',
-          mime_type: 'image/png',
-          type: 'image',
+          inline_data: {
+            data: 'abc123',
+            mime_type: 'image/png',
+          },
         }),
       ]),
     )
+  })
+
+  it('builds generateContent requests that reference cachedContent without resending the system prompt', () => {
+    const prompt = compileManifestPrompt({
+      contextScope: 'cached_delta',
+      mode: 'repair',
+      scene: emptyScene,
+      userPrompt: 'Repair the candidate.',
+      validationFeedback: 'Geometry is too small.',
+    })
+
+    const body = buildGeminiGenerateContentRequestBody(
+      {
+        prompt,
+      },
+      geminiModelConfig,
+      {
+        cachedContentName: 'cachedContents/cache-123',
+      },
+    )
+
+    expect(body.cachedContent).toBe('cachedContents/cache-123')
+    expect(body).not.toHaveProperty('systemInstruction')
+    expect(body.contents[0].parts).toEqual([
+      {
+        text: expect.stringContaining('Geometry is too small.'),
+      },
+    ])
+    expect(body.generationConfig).toMatchObject({
+      maxOutputTokens: 64_000,
+      responseMimeType: 'application/json',
+      temperature: 1,
+      thinkingConfig: {
+        thinkingLevel: 'high',
+      },
+    })
+    expect(body.generationConfig.responseJsonSchema).toMatchObject({
+      properties: {
+        operations: {
+          type: 'array',
+        },
+      },
+    })
   })
 
   it('uses a compact shared tool-call schema for Gemini requests', () => {
@@ -103,7 +140,7 @@ describe('buildGeminiInteractionsRequestBody', () => {
     expect(schemaJson).toContain('additionalProperties')
   })
 
-  it('keeps the legacy generateContent helper on the shared tool schema', () => {
+  it('keeps direct generateContent requests on the shared tool schema', () => {
     const prompt = compileManifestPrompt({
       candidateJson: createValidValidationFixtureAsset(),
       mode: 'repair',
@@ -148,6 +185,128 @@ describe('createGeminiManifestClient', () => {
       status: 'unavailable',
     })
     expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('creates Gemini cachedContent before generateContent and persists the cache handle', async () => {
+    const stablePrompt = compileManifestPrompt({
+      contextScope: 'stable_cache',
+      imageAttachments: [
+        {
+          id: 'ref-lamp',
+          mediaType: 'image/png',
+          name: 'lamp reference',
+        },
+      ],
+      mode: 'create',
+      scene: emptyScene,
+      userPrompt: 'Create a reference-based desk lamp.',
+    })
+    const prompt = compileManifestPrompt({
+      contextScope: 'cached_delta',
+      mode: 'create',
+      scene: emptyScene,
+      userPrompt: 'Create a reference-based desk lamp.',
+    })
+    const candidate = createValidValidationFixtureAsset()
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            expireTime: '2026-06-12T13:00:00Z',
+            name: 'cachedContents/cache-123',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify(candidate),
+                    },
+                  ],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+            responseId: 'gemini-response-123',
+          }),
+          { status: 200 },
+        ),
+      )
+    const client = createGeminiManifestClient({
+      apiKey: 'gemini-test',
+      cacheEndpoint: 'https://example.test/v1beta/cachedContents',
+      endpoint: 'https://example.test/v1beta',
+      fetcher,
+    })
+
+    const result = await client.generateAsset({
+      prompt,
+      providerState: {
+        geminiCachedContent: {
+          cacheKey: 'cache-key-1',
+          sourceMediaIds: ['ref-lamp'],
+          stableImageAttachments: [
+            {
+              id: 'ref-lamp',
+              imageUrl: 'data:image/png;base64,abc123',
+              mediaType: 'image/png',
+              name: 'lamp reference',
+            },
+          ],
+          stablePrompt,
+        },
+      },
+    })
+
+    expect(result.status).toBe('ok')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls[0][0]).toBe(
+      'https://example.test/v1beta/cachedContents',
+    )
+    expect(readRequestBody(fetcher.mock.calls[0][1])).toMatchObject({
+      contents: [
+        {
+          parts: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.stringContaining('Create a reference-based desk lamp.'),
+            }),
+            expect.objectContaining({
+              inline_data: {
+                data: 'abc123',
+                mime_type: 'image/png',
+              },
+            }),
+          ]),
+        },
+      ],
+      model: 'models/gemini-flash-latest',
+      ttl: '3600s',
+    })
+    expect(fetcher.mock.calls[1][0]).toBe(
+      'https://example.test/v1beta/models/gemini-flash-latest:generateContent',
+    )
+    expect(readRequestBody(fetcher.mock.calls[1][1])).toMatchObject({
+      cachedContent: 'cachedContents/cache-123',
+    })
+    expect(result).toMatchObject({
+      providerState: {
+        geminiCachedContent: {
+          cacheExpiresAt: '2026-06-12T13:00:00Z',
+          cachedContentName: 'cachedContents/cache-123',
+          cacheKey: 'cache-key-1',
+          modelId: 'gemini-flash-latest',
+          provider: 'gemini',
+          sourceMediaIds: ['ref-lamp'],
+        },
+      },
+    })
   })
 
   it('normalizes invalid Gemini model errors', async () => {
@@ -217,7 +376,7 @@ describe('parseGeminiManifestResponse', () => {
     }
   })
 
-  it('parses JSON candidates from Gemini Interactions outputs', () => {
+  it('parses JSON candidates from Gemini output arrays', () => {
     const result = parseGeminiManifestResponse({
       id: 'interaction-123',
       outputs: [
@@ -272,3 +431,11 @@ describe('parseGeminiManifestResponse', () => {
     })
   })
 })
+
+function readRequestBody(init: RequestInit | undefined) {
+  if (typeof init?.body !== 'string') {
+    throw new Error('Expected request body to be a JSON string.')
+  }
+
+  return JSON.parse(init.body) as unknown
+}

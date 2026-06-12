@@ -7,6 +7,8 @@ import {
   manifestToolCallResponseJsonSchema,
 } from '../../../schema/manifestContract'
 import type {
+  AgentGeminiCachedContentRequest,
+  AgentGeminiCachedContentState,
   AgentImageAttachment,
   AgentRequest,
   AgentResponse,
@@ -34,23 +36,9 @@ type GeminiGenerateContentRequestPart =
   | GeminiGenerateContentTextPart
   | GeminiGenerateContentInlineDataPart
 
-type GeminiInteractionTextContent = {
-  text: string
-  type: 'text'
-}
-
-type GeminiInteractionImageContent = {
-  data: string
-  mime_type: string
-  type: 'image'
-}
-
-type GeminiInteractionContent =
-  | GeminiInteractionImageContent
-  | GeminiInteractionTextContent
-
 export type CreateGeminiManifestClientOptions = {
   apiKey?: string
+  cacheEndpoint?: string
   endpoint?: string
   fetcher?: FetchLike
   model?: GeminiModelConfig
@@ -60,8 +48,12 @@ export type GeminiGenerateContentRequestBody = ReturnType<
   typeof buildGeminiGenerateContentRequestBody
 >
 
-const defaultInteractionsEndpoint =
-  'https://generativelanguage.googleapis.com/v1beta/interactions'
+export type GeminiCachedContentRequestBody = ReturnType<
+  typeof buildGeminiCachedContentRequestBody
+>
+
+const defaultEndpointBase = 'https://generativelanguage.googleapis.com/v1beta'
+const defaultCacheTtlSeconds = 3_600
 const geminiJsonSchemaKeys = new Set([
   'additionalProperties',
   'anyOf',
@@ -84,7 +76,13 @@ export function createGeminiManifestClient(
   options: CreateGeminiManifestClientOptions = {},
 ): ManifestProviderClient {
   const config = options.model ?? geminiModelConfig
-  const endpoint = options.endpoint ?? defaultInteractionsEndpoint
+  const endpointBase = options.endpoint ?? defaultEndpointBase
+  const cacheEndpoint =
+    options.cacheEndpoint ?? createGeminiCachedContentEndpoint(endpointBase)
+  const generateContentEndpoint = createGeminiGenerateContentEndpoint(
+    endpointBase,
+    config.model,
+  )
   const fetcher = options.fetcher ?? fetch
   const apiKey = options.apiKey ?? ''
 
@@ -98,86 +96,88 @@ export function createGeminiManifestClient(
         }
       }
 
-      const body = buildGeminiInteractionsRequestBody(request, config)
-      let response: Response
+      const cacheRequest = request.providerState?.geminiCachedContent ?? null
+      const cachedContent = await ensureGeminiCachedContent({
+        apiKey,
+        cacheEndpoint,
+        config,
+        fetcher,
+        request: cacheRequest,
+        signal: request.signal,
+      })
 
-      try {
-        response = await fetcher(endpoint, {
-          body: JSON.stringify(body),
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          method: 'POST',
-          signal: request.signal,
-        })
-      } catch (error) {
+      if (cachedContent.status === 'error') {
         return {
-          message:
-            error instanceof Error
-              ? error.message
-              : 'The Gemini request could not be sent.',
+          message: cachedContent.message,
+          responseId: null,
+          status: 'error',
+          statusCode: cachedContent.statusCode,
+        }
+      }
+
+      const body = buildGeminiGenerateContentRequestBody(request, config, {
+        cachedContentName: cachedContent.cachedContentName,
+      })
+      const result = await sendGeminiJsonRequest({
+        apiKey,
+        body,
+        endpoint: generateContentEndpoint,
+        fetcher,
+        signal: request.signal,
+      })
+
+      if (result.status === 'network_error') {
+        return {
+          message: result.message,
           responseId: null,
           status: 'error',
         }
       }
 
-      let json: unknown
-
-      try {
-        json = await response.json()
-      } catch {
-        json = null
-      }
-
-      if (!response.ok) {
+      if (!result.response.ok) {
         return {
-          message: createGeminiHttpErrorMessage(json, response, config.model),
-          responseId: extractGeminiResponseId(json),
+          message: createGeminiHttpErrorMessage(
+            result.json,
+            result.response,
+            config.model,
+          ),
+          providerState: cachedContent.providerState
+            ? { geminiCachedContent: cachedContent.providerState }
+            : undefined,
+          responseId: extractGeminiResponseId(result.json),
           status: 'error',
-          statusCode: response.status,
+          statusCode: result.response.status,
         }
       }
 
-      return parseGeminiManifestResponse(json, request.prompt.metadata.mode)
-    },
-  }
-}
+      const parsed = parseGeminiManifestResponse(
+        result.json,
+        request.prompt.metadata.mode,
+      )
 
-export function buildGeminiInteractionsRequestBody(
-  request: AgentRequest,
-  config: GeminiModelConfig = geminiModelConfig,
-) {
-  return {
-    generation_config: {
-      max_output_tokens: config.maxOutputTokens,
-      temperature: config.temperature,
-      thinking_level: config.thinkingLevel,
+      return cachedContent.providerState
+        ? {
+            ...parsed,
+            providerState: {
+              geminiCachedContent: cachedContent.providerState,
+            },
+          }
+        : parsed
     },
-    input: [
-      {
-        text: request.prompt.user,
-        type: 'text',
-      },
-      ...formatInteractionImageContents(request.imageAttachments ?? []),
-    ],
-    model: config.model,
-    ...(request.previousResponseId
-      ? { previous_interaction_id: request.previousResponseId }
-      : {}),
-    response_format: buildGeminiResponseJsonSchema(
-      request.prompt.metadata.mode,
-    ),
-    store: true,
-    system_instruction: request.prompt.system,
   }
 }
 
 export function buildGeminiGenerateContentRequestBody(
   request: AgentRequest,
   config: GeminiModelConfig = geminiModelConfig,
+  options: {
+    cachedContentName?: string | null
+  } = {},
 ) {
+  const cachedContentName = options.cachedContentName ?? null
+
   return {
+    ...(cachedContentName ? { cachedContent: cachedContentName } : {}),
     contents: [
       {
         parts: [
@@ -201,13 +201,46 @@ export function buildGeminiGenerateContentRequestBody(
       },
     },
     store: false,
+    ...(cachedContentName
+      ? {}
+      : {
+          systemInstruction: {
+            parts: [
+              {
+                text: request.prompt.system,
+              },
+            ],
+          },
+        }),
+  }
+}
+
+export function buildGeminiCachedContentRequestBody(
+  request: AgentGeminiCachedContentRequest,
+  config: GeminiModelConfig = geminiModelConfig,
+) {
+  return {
+    contents: [
+      {
+        parts: [
+          {
+            text: request.stablePrompt.user,
+          },
+          ...formatImageParts(request.stableImageAttachments ?? []),
+        ],
+        role: 'user',
+      },
+    ],
+    displayName: createGeminiCacheDisplayName(request.cacheKey),
+    model: toGeminiModelResourceName(config.model),
     systemInstruction: {
       parts: [
         {
-          text: request.prompt.system,
+          text: request.stablePrompt.system,
         },
       ],
     },
+    ttl: `${defaultCacheTtlSeconds}s`,
   }
 }
 
@@ -223,6 +256,33 @@ export function buildGeminiResponseJsonSchema(
 
 function buildGeminiUserPrompt(request: AgentRequest) {
   return request.prompt.user
+}
+
+function createGeminiCachedContentEndpoint(endpointBase: string) {
+  return `${endpointBase.replace(/\/$/, '')}/cachedContents`
+}
+
+function createGeminiGenerateContentEndpoint(
+  endpointBase: string,
+  modelId: string,
+) {
+  if (endpointBase.includes(':generateContent')) {
+    return endpointBase
+  }
+
+  return `${endpointBase.replace(/\/$/, '')}/${toGeminiModelResourceName(
+    modelId,
+  )}:generateContent`
+}
+
+function toGeminiModelResourceName(modelId: string) {
+  const trimmed = modelId.trim()
+
+  return trimmed.startsWith('models/') ? trimmed : `models/${trimmed}`
+}
+
+function createGeminiCacheDisplayName(cacheKey: string) {
+  return `manifest3d-${cacheKey.replace(/[^a-z0-9_-]/gi, '-').slice(0, 116)}`
 }
 
 export function parseGeminiManifestResponse(
@@ -281,6 +341,161 @@ export function parseGeminiManifestResponse(
   }
 }
 
+type GeminiRequestResult =
+  | {
+      json: unknown
+      response: Response
+      status: 'response'
+    }
+  | {
+      message: string
+      status: 'network_error'
+    }
+
+type EnsureGeminiCachedContentResult =
+  | {
+      cachedContentName: string | null
+      providerState: AgentGeminiCachedContentState | null
+      status: 'ready'
+    }
+  | {
+      message: string
+      status: 'error'
+      statusCode?: number
+    }
+
+async function ensureGeminiCachedContent({
+  apiKey,
+  cacheEndpoint,
+  config,
+  fetcher,
+  request,
+  signal,
+}: {
+  apiKey: string
+  cacheEndpoint: string
+  config: GeminiModelConfig
+  fetcher: FetchLike
+  request: AgentGeminiCachedContentRequest | null
+  signal?: AbortSignal
+}): Promise<EnsureGeminiCachedContentResult> {
+  if (!request) {
+    return {
+      cachedContentName: null,
+      providerState: null,
+      status: 'ready',
+    }
+  }
+
+  if (request.cachedContentName) {
+    return {
+      cachedContentName: request.cachedContentName,
+      providerState: null,
+      status: 'ready',
+    }
+  }
+
+  const body = buildGeminiCachedContentRequestBody(request, config)
+  const result = await sendGeminiJsonRequest({
+    apiKey,
+    body,
+    endpoint: cacheEndpoint,
+    fetcher,
+    signal,
+  })
+
+  if (result.status === 'network_error') {
+    return {
+      message: result.message,
+      status: 'error',
+    }
+  }
+
+  if (!result.response.ok) {
+    return {
+      message: createGeminiHttpErrorMessage(
+        result.json,
+        result.response,
+        config.model,
+      ),
+      status: 'error',
+      statusCode: result.response.status,
+    }
+  }
+
+  const cachedContentName = extractGeminiCachedContentName(result.json)
+
+  if (!cachedContentName) {
+    return {
+      message: 'The Gemini cachedContent create response did not include a name.',
+      status: 'error',
+    }
+  }
+
+  return {
+    cachedContentName,
+    providerState: {
+      cacheExpiresAt: extractGeminiCacheExpiresAt(result.json),
+      cachedContentName,
+      cacheKey: request.cacheKey,
+      modelId: config.model,
+      provider: 'gemini',
+      sourceMediaIds: [...request.sourceMediaIds],
+    },
+    status: 'ready',
+  }
+}
+
+async function sendGeminiJsonRequest({
+  apiKey,
+  body,
+  endpoint,
+  fetcher,
+  signal,
+}: {
+  apiKey: string
+  body: unknown
+  endpoint: string
+  fetcher: FetchLike
+  signal?: AbortSignal
+}): Promise<GeminiRequestResult> {
+  let response: Response
+
+  try {
+    response = await fetcher(endpoint, {
+      body: JSON.stringify(body),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      method: 'POST',
+      signal,
+    })
+  } catch (error) {
+    return {
+      message:
+        error instanceof Error
+          ? error.message
+          : 'The Gemini request could not be sent.',
+      status: 'network_error',
+    }
+  }
+
+  let json: unknown
+
+  try {
+    json = await response.json()
+  } catch {
+    json = null
+  }
+
+  return {
+    json,
+    response,
+    status: 'response',
+  }
+}
+
 function formatImageParts(
   attachments: readonly AgentImageAttachment[],
 ): GeminiGenerateContentRequestPart[] {
@@ -303,30 +518,6 @@ function createInlineDataPart(
       data: parsedDataUrl.data,
       mime_type: parsedDataUrl.mimeType || attachment.mediaType,
     },
-  }
-}
-
-function formatInteractionImageContents(
-  attachments: readonly AgentImageAttachment[],
-): GeminiInteractionContent[] {
-  return attachments
-    .map((attachment) => createInteractionImageContent(attachment))
-    .filter((content): content is GeminiInteractionImageContent => content !== null)
-}
-
-function createInteractionImageContent(
-  attachment: AgentImageAttachment,
-): GeminiInteractionImageContent | null {
-  const parsedDataUrl = parseDataUrl(attachment.imageUrl)
-
-  if (!parsedDataUrl) {
-    return null
-  }
-
-  return {
-    data: parsedDataUrl.data,
-    mime_type: parsedDataUrl.mimeType || attachment.mediaType,
-    type: 'image',
   }
 }
 
@@ -406,6 +597,22 @@ function extractGeminiResponseId(value: unknown): string | null {
     : typeof value.responseId === 'string'
     ? value.responseId
     : null
+}
+
+function extractGeminiCachedContentName(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  return typeof value.name === 'string' ? value.name : null
+}
+
+function extractGeminiCacheExpiresAt(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  return typeof value.expireTime === 'string' ? value.expireTime : null
 }
 
 function extractGeminiErrorMessage(value: unknown): string | null {

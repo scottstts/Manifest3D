@@ -75,7 +75,7 @@ describe('createAgentSessionTracker', () => {
     expect(JSON.stringify(session)).not.toContain('very large schema')
   })
 
-  it('continues from a matching parent provider response id', () => {
+  it('reuses matching parent Gemini cachedContent metadata', () => {
     const parentTracker = createAgentSessionTracker({
       now: createNow(),
       providerContext: {
@@ -105,6 +105,16 @@ describe('createAgentSessionTracker', () => {
         argumentsJson: '{"asset":{"schemaVersion":2}}',
         tool: 'submit_manifest_asset',
       },
+      providerState: {
+        geminiCachedContent: {
+          cacheExpiresAt: '2026-06-04T01:00:00.000Z',
+          cachedContentName: 'cachedContents/parent-cache',
+          cacheKey: 'stable-cache-key',
+          modelId: 'gemini-flash-latest',
+          provider: 'gemini',
+          sourceMediaIds: ['ref-1'],
+        },
+      },
       providerResponseId: 'interaction-1',
       rawText: '{}',
     })
@@ -119,11 +129,46 @@ describe('createAgentSessionTracker', () => {
       },
       runId: 'child-run',
     })
+    const prepared = childTracker.prepareRequest({
+      candidateJson: undefined,
+      geminiCache: {
+        cacheKey: 'stable-cache-key',
+        sourceMediaIds: ['ref-1'],
+        stablePrompt: {
+          metadata: {
+            imageAttachmentCount: 0,
+            mode: 'create',
+            selectedAssetId: null,
+          },
+          system: 'system',
+          user: 'stable prompt',
+        },
+      },
+      prompt: {
+        metadata: {
+          imageAttachmentCount: 0,
+          mode: 'create',
+          selectedAssetId: null,
+        },
+        system: 'system',
+        user: 'cached delta',
+      },
+      replayContent: 'create prompt',
+      validationFeedback: null,
+    })
 
-    expect(childTracker.getPreviousProviderResponseId()).toBe('interaction-1')
+    expect(childTracker.getPreviousProviderResponseId()).toBeNull()
     expect(childTracker.getSnapshot().sessions[0]?.parentSessionId).toBe(
       'parent-run:session:1',
     )
+    expect(prepared).toMatchObject({
+      geminiCachedContent: {
+        cachedContentName: 'cachedContents/parent-cache',
+        cacheKey: 'stable-cache-key',
+        sourceMediaIds: ['ref-1'],
+      },
+      previousProviderResponseId: null,
+    })
   })
 
   it('persists OpenRouter response ids without using them for server-side continuation', () => {

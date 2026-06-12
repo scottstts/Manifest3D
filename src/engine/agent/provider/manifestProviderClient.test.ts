@@ -85,14 +85,19 @@ describe('createManifestProviderClient', () => {
 
       return new Response(
         JSON.stringify({
-          id: 'interaction-test',
-          outputs: [
+          candidates: [
             {
-              text: '{"schemaVersion":2}',
-              type: 'text',
+              content: {
+                parts: [
+                  {
+                    text: '{"schemaVersion":2}',
+                  },
+                ],
+              },
+              finishReason: 'STOP',
             },
           ],
-          status: 'completed',
+          responseId: 'gemini-test',
         }),
         { status: 200 },
       )
@@ -112,11 +117,11 @@ describe('createManifestProviderClient', () => {
     })
 
     expect(String(fetchInputs[0])).toContain(
-      'https://generativelanguage.googleapis.com/v1beta/interactions',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
     )
   })
 
-  it('passes custom Gemini model settings into the interaction request body', async () => {
+  it('passes custom Gemini model settings into the generateContent request body', async () => {
     const fetchInputs: Array<RequestInfo | URL> = []
     const bodies: unknown[] = []
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -125,14 +130,19 @@ describe('createManifestProviderClient', () => {
 
       return new Response(
         JSON.stringify({
-          id: 'interaction-test',
-          outputs: [
+          candidates: [
             {
-              text: '{"schemaVersion":2}',
-              type: 'text',
+              content: {
+                parts: [
+                  {
+                    text: '{"schemaVersion":2}',
+                  },
+                ],
+              },
+              finishReason: 'STOP',
             },
           ],
-          status: 'completed',
+          responseId: 'gemini-test',
         }),
         { status: 200 },
       )
@@ -155,12 +165,15 @@ describe('createManifestProviderClient', () => {
       }),
     })
 
-    expect(String(fetchInputs[0])).toContain('/v1beta/interactions')
+    expect(String(fetchInputs[0])).toContain(
+      '/v1beta/models/gemini-custom:generateContent',
+    )
     expect(bodies[0]).toMatchObject({
-      generation_config: {
-        thinking_level: 'medium',
+      generationConfig: {
+        thinkingConfig: {
+          thinkingLevel: 'medium',
+        },
       },
-      model: 'gemini-custom',
     })
   })
 

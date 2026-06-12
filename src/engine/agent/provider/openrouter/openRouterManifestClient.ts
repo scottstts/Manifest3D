@@ -1,5 +1,6 @@
 import { parseOpenAIManifestResponse } from '../openai/openAiManifestClient'
 import type {
+  AgentConversationMessage,
   AgentImageAttachment,
   AgentRequest,
   AgentResponse,
@@ -143,9 +144,18 @@ export function buildOpenRouterChatCompletionsRequestBody(
   const sessionId = sanitizeOpenRouterSessionId(request.sessionId)
 
   return {
+    ...(usesTopLevelPromptCaching(modelProfile)
+      ? {
+          cache_control: {
+            type: 'ephemeral',
+            ttl: '1h',
+          },
+        }
+      : {}),
     max_tokens: config.maxOutputTokens,
     messages: createOpenRouterMessages({
       attachments: request.imageAttachments ?? [],
+      conversationMessages: request.conversationMessages ?? null,
       modelProfile,
       systemPrompt: request.prompt.system,
       userPrompt: request.prompt.user,
@@ -497,11 +507,13 @@ function getOpenRouterModelProfile(modelId: string): OpenRouterModelProfile {
 
 function createOpenRouterMessages({
   attachments,
+  conversationMessages,
   modelProfile,
   systemPrompt,
   userPrompt,
 }: {
   attachments: readonly AgentImageAttachment[]
+  conversationMessages?: readonly AgentConversationMessage[] | null
   modelProfile: OpenRouterModelProfile
   systemPrompt: string
   userPrompt: string
@@ -511,16 +523,68 @@ function createOpenRouterMessages({
       content: createSystemMessageContent(systemPrompt, modelProfile),
       role: 'system',
     },
+    ...(conversationMessages && conversationMessages.length > 0
+      ? conversationMessages.map((message) =>
+          createOpenRouterConversationMessage(message, {
+            cacheable:
+              message === conversationMessages.at(-1) &&
+              usesUserMessagePromptCaching(modelProfile),
+          }),
+        )
+      : [
+          {
+            content: createOpenRouterUserContent(userPrompt, attachments, {
+              cacheable: usesUserMessagePromptCaching(modelProfile),
+            }),
+            role: 'user',
+          },
+        ]),
+  ]
+}
+
+function createOpenRouterConversationMessage(
+  message: AgentConversationMessage,
+  options: {
+    cacheable?: boolean
+  } = {},
+) {
+  if (message.role === 'assistant') {
+    return {
+      content: message.content,
+      role: 'assistant',
+    }
+  }
+
+  return {
+    content: createOpenRouterUserContent(
+      message.content,
+      message.imageAttachments ?? [],
+      options,
+    ),
+    role: 'user',
+  }
+}
+
+function createOpenRouterUserContent(
+  text: string,
+  attachments: readonly AgentImageAttachment[],
+  options: {
+    cacheable?: boolean
+  } = {},
+) {
+  return [
     {
-      content: [
-        {
-          text: userPrompt,
-          type: 'text',
-        },
-        ...formatImageContentParts(attachments),
-      ],
-      role: 'user',
+      ...(options.cacheable
+        ? {
+            cache_control: {
+              type: 'ephemeral',
+            },
+          }
+        : {}),
+      text,
+      type: 'text',
     },
+    ...formatImageContentParts(attachments),
   ]
 }
 
@@ -528,6 +592,10 @@ function createSystemMessageContent(
   systemPrompt: string,
   modelProfile: OpenRouterModelProfile,
 ) {
+  if (usesTopLevelPromptCaching(modelProfile)) {
+    return systemPrompt
+  }
+
   if (!usesExplicitPromptCaching(modelProfile)) {
     return systemPrompt
   }
@@ -545,6 +613,15 @@ function createSystemMessageContent(
 
 function usesExplicitPromptCaching(modelProfile: OpenRouterModelProfile) {
   return modelProfile === 'anthropic' || modelProfile === 'qwen'
+}
+
+function usesTopLevelPromptCaching(modelProfile: OpenRouterModelProfile) {
+  return modelProfile === 'anthropic'
+}
+
+function usesUserMessagePromptCaching(modelProfile: OpenRouterModelProfile) {
+  return usesExplicitPromptCaching(modelProfile) &&
+    !usesTopLevelPromptCaching(modelProfile)
 }
 
 function formatImageContentParts(attachments: readonly AgentImageAttachment[]) {

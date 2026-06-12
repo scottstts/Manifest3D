@@ -29,7 +29,35 @@ export function userInputHistoryMetadata(
   }))
 }
 
+export function statelessReplayUserInputHistoryMetadata(
+  history: readonly UserInputHistoryEntry[],
+  currentAttachments: readonly AgentImageAttachment[],
+): PromptUserInputHistoryEntry[] {
+  const currentAttachmentKeys = new Set(
+    currentAttachments.map((attachment) => imageAttachmentKey(attachment)),
+  )
+
+  return history.map((entry, index) => ({
+    imageAttachments: imageAttachmentMetadata(
+      index === 0
+        ? entry.imageAttachments ?? []
+        : (entry.imageAttachments ?? []).filter((attachment) =>
+            currentAttachmentKeys.has(imageAttachmentKey(attachment)),
+          ),
+    ),
+    text: entry.text,
+    turn: entry.turn,
+  }))
+}
+
 export function collectRequestImageAttachments(
+  history: readonly UserInputHistoryEntry[],
+  currentAttachments: readonly AgentImageAttachment[],
+) {
+  return collectStableImageAttachments(history, currentAttachments)
+}
+
+export function collectStableImageAttachments(
   history: readonly UserInputHistoryEntry[],
   currentAttachments: readonly AgentImageAttachment[],
 ) {
@@ -39,9 +67,26 @@ export function collectRequestImageAttachments(
     ...history.flatMap((entry) => entry.imageAttachments ?? []),
     ...currentAttachments,
   ]) {
-    attachmentsByKey.set(`${attachment.id}\n${attachment.imageUrl}`, attachment)
+    attachmentsByKey.set(imageAttachmentKey(attachment), attachment)
   }
 
   return [...attachmentsByKey.values()]
 }
 
+export function collectStatelessReplayImageAttachments(
+  history: readonly UserInputHistoryEntry[],
+  currentAttachments: readonly AgentImageAttachment[],
+) {
+  const originalAttachments = history[0]?.imageAttachments ?? []
+
+  return collectStableImageAttachments(
+    originalAttachments.length > 0
+      ? [{ imageAttachments: originalAttachments, text: '', turn: 0 }]
+      : [],
+    currentAttachments,
+  )
+}
+
+function imageAttachmentKey(attachment: AgentImageAttachment) {
+  return `${attachment.id}\n${attachment.imageUrl}`
+}

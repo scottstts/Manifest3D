@@ -1928,6 +1928,11 @@ describe('runManifestAgentLoop', () => {
           },
         ],
         mode: 'edit',
+        providerContext: {
+          modelId: 'openai/gpt-5.5',
+          provider: 'openrouter',
+          reasoningEffort: 'high',
+        },
         runId: 'run-user-history',
         scene: emptyScene,
         selectedAsset: createValidValidationFixtureAsset(),
@@ -1972,15 +1977,187 @@ describe('runManifestAgentLoop', () => {
     expect(requests[0].prompt.user).toContain('<user_input_history>')
     expect(requests[0].prompt.user).toContain('turn=0')
     expect(requests[0].prompt.user).toContain('id=ref-initial')
-    expect(requests[1].prompt.user).toContain('<user_input_history>')
+    expect(requests[1].prompt.user).not.toContain('<user_input_history>')
     expect(
       requests.map((request) =>
         request.imageAttachments?.map((attachment) => attachment.id),
       ),
     ).toEqual([
       ['ref-initial', 'ref-current'],
-      ['ref-initial', 'ref-current'],
+      [],
     ])
+    expect(requests[1].conversationMessages).toEqual([
+      expect.objectContaining({
+        imageAttachments: expect.arrayContaining([
+          expect.objectContaining({ id: 'ref-initial' }),
+          expect.objectContaining({ id: 'ref-current' }),
+        ]),
+        role: 'user',
+      }),
+      expect.objectContaining({
+        content: '{}',
+        role: 'assistant',
+      }),
+      expect.objectContaining({
+        imageAttachments: [],
+        role: 'user',
+      }),
+    ])
+    expect(requests[1].conversationMessages?.[2]?.content).toContain(
+      '<validation_feedback>',
+    )
+    expect(requests[1].conversationMessages?.[2]?.content).not.toContain(
+      '<candidate_json>',
+    )
+  })
+
+  it('uses OpenAI response ids for repair deltas without resending candidate JSON or images', async () => {
+    const requests: AgentRequest[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const client = createQueuedClient(
+      [
+        {
+          candidate: createInvalidValidationFixtureAsset(),
+          rawText: '{}',
+          responseId: 'resp_invalid',
+          status: 'ok',
+        },
+        {
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
+          rawText: '{}',
+          responseId: 'resp_valid',
+          status: 'ok',
+        },
+      ],
+      requests,
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        imageAttachments: [
+          {
+            id: 'ref-current',
+            imageUrl: 'data:image/png;base64,current',
+            mediaType: 'image/png',
+          },
+        ],
+        mode: 'create',
+        runId: 'run-openai-delta',
+        scene: emptyScene,
+        userPrompt: 'Create a reference-based utility crate.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(requests).toHaveLength(2)
+    expect(requests[0].previousResponseId).toBeNull()
+    expect(requests[0].imageAttachments?.map((attachment) => attachment.id)).toEqual([
+      'ref-current',
+    ])
+    expect(requests[1].previousResponseId).toBe('resp_invalid')
+    expect(requests[1].imageAttachments).toEqual([])
+    expect(requests[1].prompt.user).toContain('<validation_feedback>')
+    expect(requests[1].prompt.user).not.toContain('<candidate_json>')
+    expect(requests[1].prompt.user).not.toContain('<current_scene>')
+  })
+
+  it('uses Gemini cachedContent for stable repair context instead of generateContent replay', async () => {
+    const requests: AgentRequest[] = []
+    const sceneStore = createSceneStore(emptyScene)
+    const client = createQueuedClient(
+      [
+        {
+          candidate: createInvalidValidationFixtureAsset(),
+          providerState: {
+            geminiCachedContent: {
+              cacheExpiresAt: '2026-06-12T13:00:00.000Z',
+              cachedContentName: 'cachedContents/create-cache',
+              cacheKey: 'create-cache-key',
+              modelId: 'gemini-flash-latest',
+              provider: 'gemini',
+              sourceMediaIds: ['ref-current'],
+            },
+          },
+          rawText: '{}',
+          responseId: 'gemini-create',
+          status: 'ok',
+        },
+        {
+          candidate: replaceRootPatch(createValidValidationFixtureAsset()),
+          providerState: {
+            geminiCachedContent: {
+              cacheExpiresAt: '2026-06-12T13:00:00.000Z',
+              cachedContentName: 'cachedContents/repair-cache',
+              cacheKey: 'repair-cache-key',
+              modelId: 'gemini-flash-latest',
+              provider: 'gemini',
+              sourceMediaIds: ['ref-current'],
+            },
+          },
+          rawText: '{}',
+          responseId: 'gemini-repair',
+          status: 'ok',
+        },
+      ],
+      requests,
+    )
+
+    const result = await runManifestAgentLoop(
+      {
+        imageAttachments: [
+          {
+            id: 'ref-current',
+            imageUrl: 'data:image/png;base64,current',
+            mediaType: 'image/png',
+          },
+        ],
+        mode: 'create',
+        providerContext: {
+          modelId: 'gemini-flash-latest',
+          provider: 'gemini',
+          reasoningEffort: 'high',
+        },
+        runId: 'run-gemini-cache',
+        scene: emptyScene,
+        userPrompt: 'Create a reference-based utility crate.',
+      },
+      {
+        client,
+        sceneStore,
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    expect(requests).toHaveLength(2)
+    expect(requests[0].imageAttachments).toEqual([])
+    expect(requests[0].providerState?.geminiCachedContent).toMatchObject({
+      cachedContentName: null,
+      sourceMediaIds: ['ref-current'],
+    })
+    expect(
+      requests[0].providerState?.geminiCachedContent?.stablePrompt.user,
+    ).toContain('id=ref-current')
+    expect(requests[0].prompt.user).toContain('<cached_context_delta>')
+    expect(requests[0].prompt.user).not.toContain('<current_scene>')
+    expect(requests[1].providerState?.geminiCachedContent).toMatchObject({
+      cachedContentName: null,
+      sourceMediaIds: ['ref-current'],
+    })
+    expect(
+      requests[1].providerState?.geminiCachedContent?.stablePrompt.user,
+    ).toContain('<candidate_json>')
+    expect(requests[1].prompt.user).toContain('<validation_feedback>')
+    expect(requests[1].prompt.user).not.toContain('<candidate_json>')
+    expect(result.agentSessions.at(-1)?.providerState).toMatchObject({
+      geminiCachedContent: {
+        cachedContentName: 'cachedContents/repair-cache',
+        sourceMediaIds: ['ref-current'],
+      },
+    })
   })
 
 

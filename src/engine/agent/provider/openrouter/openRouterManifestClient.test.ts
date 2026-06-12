@@ -238,7 +238,7 @@ describe('openRouterManifestClient', () => {
     })
   })
 
-  it('marks Anthropic system prompts for explicit prompt caching', () => {
+  it('enables Anthropic automatic prompt caching with a 1h top-level cache control', () => {
     const body = buildOpenRouterChatCompletionsRequestBody(
       createAgentRequest('create'),
       {
@@ -250,17 +250,118 @@ describe('openRouterManifestClient', () => {
       },
     )
 
+    expect(body.cache_control).toEqual({
+      type: 'ephemeral',
+      ttl: '1h',
+    })
     expect(body.messages[0]).toEqual({
+      content: 'System instructions.',
+      role: 'system',
+    })
+  })
+
+  it('serializes accumulated stateless replay as an OpenRouter chat prefix', () => {
+    const body = buildOpenRouterChatCompletionsRequestBody({
+      ...createAgentRequest('repair'),
+      conversationMessages: [
+        {
+          content: 'Create a small asset.',
+          imageAttachments: [
+            {
+              id: 'ref-1',
+              imageUrl: 'data:image/png;base64,ref',
+              mediaType: 'image/png',
+            },
+          ],
+          role: 'user',
+        },
+        {
+          content: '{"schemaVersion":2,"id":"asset"}',
+          role: 'assistant',
+        },
+        {
+          content: 'Repair the current candidate.',
+          role: 'user',
+        },
+      ],
+    })
+
+    expect(body.messages).toEqual([
+      {
+        content: 'System instructions.',
+        role: 'system',
+      },
+      {
+        content: [
+          {
+            text: 'Create a small asset.',
+            type: 'text',
+          },
+          {
+            image_url: {
+              detail: 'high',
+              url: 'data:image/png;base64,ref',
+            },
+            type: 'image_url',
+          },
+        ],
+        role: 'user',
+      },
+      {
+        content: '{"schemaVersion":2,"id":"asset"}',
+        role: 'assistant',
+      },
+      {
+        content: [
+          {
+            text: 'Repair the current candidate.',
+            type: 'text',
+          },
+        ],
+        role: 'user',
+      },
+    ])
+  })
+
+  it('marks the latest user message as the moving cache breakpoint for explicit-cache OpenRouter models', () => {
+    const body = buildOpenRouterChatCompletionsRequestBody(
+      {
+        ...createAgentRequest('repair'),
+        conversationMessages: [
+          {
+            content: 'Create a small asset.',
+            role: 'user',
+          },
+          {
+            content: '{"schemaVersion":2,"id":"asset"}',
+            role: 'assistant',
+          },
+          {
+            content: 'Repair the current candidate.',
+            role: 'user',
+          },
+        ],
+      },
+      {
+        agentRunTimeoutMs: 60_000,
+        maxOutputTokens: 1_024,
+        model: 'qwen/qwen3-coder-plus',
+        reasoningEffort: 'high',
+        temperature: 1,
+      },
+    )
+
+    expect(body.messages.at(-1)).toMatchObject({
       content: [
         {
           cache_control: {
             type: 'ephemeral',
           },
-          text: 'System instructions.',
+          text: 'Repair the current candidate.',
           type: 'text',
         },
       ],
-      role: 'system',
+      role: 'user',
     })
   })
 

@@ -24,6 +24,7 @@ export type PromptUserInputHistoryEntry = {
 
 export type PromptCompilerInput = {
   candidateJson?: unknown
+  contextScope?: PromptContextScope
   imageAttachments?: readonly PromptImageAttachment[]
   mode: PromptCompilerMode
   omitCandidateJson?: boolean
@@ -35,6 +36,12 @@ export type PromptCompilerInput = {
   userPrompt: string
   validationFeedback?: string | null
 }
+
+export type PromptContextScope =
+  | 'cached_delta'
+  | 'full'
+  | 'stable_cache'
+  | 'stateful_delta'
 
 export type CompiledManifestPrompt = {
   metadata: {
@@ -59,9 +66,44 @@ export function compileManifestPrompt(
     throw new Error('Edit prompt compilation requires a selected asset.')
   }
 
+  const contextScope = input.contextScope ?? 'full'
   const system = joinSections([systemPrompt, schemaPrompt])
+  const user = compileUserPrompt(input, contextScope)
+
+  return {
+    metadata: {
+      imageAttachmentCount: input.imageAttachments?.length ?? 0,
+      mode: input.mode,
+      selectedAssetId: input.selectedAsset?.id ?? null,
+    },
+    system,
+    user,
+  }
+}
+
+function compileUserPrompt(
+  input: PromptCompilerInput,
+  contextScope: PromptContextScope,
+) {
+  if (contextScope === 'cached_delta') {
+    return compileCachedDeltaPrompt(input)
+  }
+
+  if (contextScope === 'stateful_delta') {
+    return compileStatefulDeltaPrompt(input)
+  }
+
+  return compileStableOrFullPrompt(input, contextScope)
+}
+
+function compileStableOrFullPrompt(
+  input: PromptCompilerInput,
+  contextScope: Extract<PromptContextScope, 'full' | 'stable_cache'>,
+) {
   const userInputHistory = formatUserInputHistory(input.userInputHistory ?? [])
-  const user = joinSections([
+  const includeValidationFeedback = contextScope === 'full'
+
+  return joinSections([
     userInputHistory ? tag('user_input_history', userInputHistory) : '',
     tag('task_mode', input.mode),
     tag('task_instructions', modePrompts[input.mode].trim()),
@@ -88,22 +130,46 @@ export function compileManifestPrompt(
       'image_attachments',
       formatImageAttachments(input.imageAttachments ?? []),
     ),
+    includeValidationFeedback && input.validationFeedback
+      ? tag('validation_feedback', input.validationFeedback.trim())
+      : '',
+    tag('examples', formatExamples(input.mode)),
+    tag('response_contract', formatResponseContract(input.mode)),
+  ])
+}
+
+function compileStatefulDeltaPrompt(input: PromptCompilerInput) {
+  return joinSections([
+    tag('task_mode', input.mode),
+    tag('task_instructions', modePrompts[input.mode].trim()),
+    input.mode === 'repair'
+      ? ''
+      : tag('user_prompt', normalizeUserPrompt(input.userPrompt)),
+    input.imageAttachments && input.imageAttachments.length > 0
+      ? tag('image_attachments', formatImageAttachments(input.imageAttachments))
+      : '',
     input.validationFeedback
       ? tag('validation_feedback', input.validationFeedback.trim())
       : '',
     tag('examples', formatExamples(input.mode)),
     tag('response_contract', formatResponseContract(input.mode)),
   ])
+}
 
-  return {
-    metadata: {
-      imageAttachmentCount: input.imageAttachments?.length ?? 0,
-      mode: input.mode,
-      selectedAssetId: input.selectedAsset?.id ?? null,
-    },
-    system,
-    user,
-  }
+function compileCachedDeltaPrompt(input: PromptCompilerInput) {
+  return joinSections([
+    tag(
+      'cached_context_delta',
+      [
+        'Use the referenced cachedContent as the complete stable Manifest3D context for this turn.',
+        'Do not ask for the stable prompt, media, selected asset, candidate JSON, examples, or response contract to be resent.',
+        'Return the JSON shape required by the cached response contract and the active structured-output schema.',
+      ].join('\n'),
+    ),
+    input.validationFeedback
+      ? tag('validation_feedback', input.validationFeedback.trim())
+      : '',
+  ])
 }
 
 function formatResponseContract(mode: PromptCompilerMode) {
