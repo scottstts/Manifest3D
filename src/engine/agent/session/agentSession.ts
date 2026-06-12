@@ -61,6 +61,7 @@ export type PersistedAgentSessionExchange =
 
 export type PersistedAgentProviderState = {
   geminiCachedContent?: AgentGeminiCachedContentState | null
+  openRouterSessionId?: string | null
 }
 
 export type PersistedAgentSession = {
@@ -92,6 +93,7 @@ export type AgentSessionPrepareResult =
   | {
       geminiCachedContent: AgentSessionGeminiCachePrepareResult | null
       includeCandidateJson: boolean
+      providerSessionId: string | null
       previousProviderResponseId: string | null
       requestTokenEstimate: number
       sessionId: string
@@ -198,6 +200,10 @@ export function createAgentSessionTracker({
     supportsServerContinuation,
     continuationThresholdTokens,
   )
+  const openRouterSessionId = getReusableOpenRouterSessionId(
+    parentSessions,
+    providerContext,
+  )
   let activeSession = createSession({
     assetId,
     contextBufferTokens,
@@ -206,7 +212,11 @@ export function createAgentSessionTracker({
     now,
     parentSessionId: reusableParentSession?.sessionId ?? null,
     providerContext,
-    providerState: cloneProviderState(reusableParentSession?.providerState),
+    providerState: createSessionProviderState({
+      openRouterSessionId,
+      parentProviderState: reusableParentSession?.providerState,
+      providerContext,
+    }),
     runId,
     tokenEstimate: supportsServerContinuation
       ? reusableParentSession?.tokenEstimate ?? 0
@@ -298,7 +308,11 @@ export function createAgentSessionTracker({
         now,
         parentSessionId: activeSession.sessionId,
         providerContext,
-        providerState: undefined,
+        providerState: createSessionProviderState({
+          openRouterSessionId,
+          parentProviderState: undefined,
+          providerContext,
+        }),
         runId,
         tokenEstimate: 0,
       })
@@ -335,6 +349,11 @@ export function createAgentSessionTracker({
       includeCandidateJson:
         prompt.metadata.mode === 'repair' &&
         previousProviderResponseId === null,
+      providerSessionId:
+        providerContext.provider === 'openrouter'
+          ? activeSession.providerState?.openRouterSessionId ??
+            activeSession.sessionId
+          : null,
       previousProviderResponseId,
       requestTokenEstimate,
       sessionId: activeSession.sessionId,
@@ -590,6 +609,23 @@ function findReusableParentSession(
   ) ?? null
 }
 
+function getReusableOpenRouterSessionId(
+  parentSessions: readonly PersistedAgentSession[],
+  providerContext: AgentSessionProviderContext,
+) {
+  if (providerContext.provider !== 'openrouter') {
+    return null
+  }
+
+  const parentSession = [...parentSessions].reverse().find((session) =>
+    hasMatchingProviderContext(session, providerContext),
+  )
+
+  return parentSession
+    ? parentSession.providerState?.openRouterSessionId ?? parentSession.sessionId
+    : null
+}
+
 function hasMatchingProviderContext(
   session: PersistedAgentSession,
   providerContext: AgentSessionProviderContext,
@@ -605,16 +641,43 @@ function cloneProviderState(
   providerState: PersistedAgentProviderState | undefined,
 ): PersistedAgentProviderState | undefined {
   const geminiCachedContent = providerState?.geminiCachedContent
+  const openRouterSessionId = providerState?.openRouterSessionId ?? null
 
-  if (!geminiCachedContent) {
+  if (!geminiCachedContent && !openRouterSessionId) {
     return undefined
   }
 
   return {
-    geminiCachedContent: {
-      ...geminiCachedContent,
-      sourceMediaIds: [...geminiCachedContent.sourceMediaIds],
-    },
+    ...(geminiCachedContent
+      ? {
+          geminiCachedContent: {
+            ...geminiCachedContent,
+            sourceMediaIds: [...geminiCachedContent.sourceMediaIds],
+          },
+        }
+      : {}),
+    ...(openRouterSessionId ? { openRouterSessionId } : {}),
+  }
+}
+
+function createSessionProviderState({
+  openRouterSessionId,
+  parentProviderState,
+  providerContext,
+}: {
+  openRouterSessionId: string | null
+  parentProviderState?: PersistedAgentProviderState
+  providerContext: AgentSessionProviderContext
+}) {
+  const providerState = cloneProviderState(parentProviderState)
+
+  if (providerContext.provider !== 'openrouter' || !openRouterSessionId) {
+    return providerState
+  }
+
+  return {
+    ...providerState,
+    openRouterSessionId,
   }
 }
 

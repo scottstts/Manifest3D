@@ -353,6 +353,7 @@ export async function runManifestAgentLoop(
       imageAttachments: requestImageAttachments,
       prompt,
       previousResponseId: preparedRequest.previousProviderResponseId,
+      providerSessionId: preparedRequest.providerSessionId,
       providerState: preparedRequest.geminiCachedContent
         ? {
             geminiCachedContent: {

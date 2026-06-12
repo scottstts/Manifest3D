@@ -141,7 +141,9 @@ export function buildOpenRouterChatCompletionsRequestBody(
     modelProfile,
     reasoningEffort,
   })
-  const sessionId = sanitizeOpenRouterSessionId(request.sessionId)
+  const sessionId = sanitizeOpenRouterSessionId(
+    request.providerSessionId ?? request.sessionId,
+  )
 
   return {
     ...(usesTopLevelPromptCaching(modelProfile)
@@ -163,9 +165,6 @@ export function buildOpenRouterChatCompletionsRequestBody(
     model: config.model,
     provider: {
       require_parameters: true,
-      sort: {
-        by: 'throughput',
-      },
     },
     ...(sessionId ? { session_id: sessionId } : {}),
     ...(reasoning ? { reasoning } : {}),

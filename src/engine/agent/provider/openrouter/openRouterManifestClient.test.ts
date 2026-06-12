@@ -54,9 +54,6 @@ describe('openRouterManifestClient', () => {
       model: 'openai/gpt-5.5',
       provider: {
         require_parameters: true,
-        sort: {
-          by: 'throughput',
-        },
       },
       reasoning: {
         exclude: true,
@@ -78,6 +75,17 @@ describe('openRouterManifestClient', () => {
     expect(body).not.toHaveProperty('max_output_tokens')
     expect(body).not.toHaveProperty('stream')
     expect(body).not.toHaveProperty('temperature')
+    expect(body.provider).not.toHaveProperty('sort')
+  })
+
+  it('uses providerSessionId for OpenRouter sticky routing when present', () => {
+    const body = buildOpenRouterChatCompletionsRequestBody({
+      ...createAgentRequest('repair'),
+      providerSessionId: 'parent-run:session:1',
+      sessionId: 'edit-run:session:1',
+    })
+
+    expect(body.session_id).toBe('parent-run:session:1')
   })
 
   it('uses explicit high image detail for OpenRouter image attachments by default', () => {
@@ -238,7 +246,7 @@ describe('openRouterManifestClient', () => {
     })
   })
 
-  it('enables Anthropic automatic prompt caching with a 1h top-level cache control', () => {
+  it('enables Anthropic top-level prompt caching for strict vendor routing', () => {
     const body = buildOpenRouterChatCompletionsRequestBody(
       createAgentRequest('create'),
       {
@@ -439,9 +447,6 @@ describe('openRouterManifestClient', () => {
       model: 'openai/gpt-5.5',
       provider: {
         require_parameters: true,
-        sort: {
-          by: 'throughput',
-        },
       },
       reasoning: {
         exclude: true,
@@ -455,6 +460,7 @@ describe('openRouterManifestClient', () => {
         type: 'json_schema',
       },
     })
+    expect(requestBody?.provider).not.toHaveProperty('sort')
     expect(response).toEqual({
       candidate: {
         id: 'smoke',

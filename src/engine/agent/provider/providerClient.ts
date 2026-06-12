@@ -42,6 +42,7 @@ export type AgentRequest = {
   imageAttachments?: readonly AgentImageAttachment[]
   prompt: CompiledManifestPrompt
   previousResponseId?: string | null
+  providerSessionId?: string | null
   providerState?: AgentProviderRequestState
   sessionId?: string | null
   signal?: AbortSignal

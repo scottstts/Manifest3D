@@ -215,6 +215,7 @@ describe('createAgentSessionTracker', () => {
     expect(preparedRepair).toMatchObject({
       includeCandidateJson: true,
       previousProviderResponseId: null,
+      providerSessionId: 'openrouter-run:session:1',
       sessionId: 'openrouter-run:session:1',
     })
   })
@@ -252,6 +253,80 @@ describe('createAgentSessionTracker', () => {
 
     expect(childTracker.getPreviousProviderResponseId()).toBeNull()
     expect(childTracker.getSnapshot().sessions[0]?.parentSessionId).toBeNull()
+  })
+
+  it('reuses the OpenRouter provider session id across edits of the same asset', () => {
+    const parentTracker = createAgentSessionTracker({
+      now: createNow(),
+      providerContext: {
+        modelId: 'anthropic/claude-sonnet-4.5',
+        provider: 'openrouter',
+        reasoningEffort: 'high',
+      },
+      runId: 'create-openrouter',
+    })
+    const parentPrepared = parentTracker.prepareRequest({
+      candidateJson: undefined,
+      prompt: {
+        metadata: {
+          imageAttachmentCount: 0,
+          mode: 'create',
+          selectedAssetId: null,
+        },
+        system: 'system',
+        user: 'create prompt',
+      },
+      replayContent: 'create prompt',
+      validationFeedback: null,
+    })
+
+    expect(parentPrepared).toMatchObject({
+      providerSessionId: 'create-openrouter:session:1',
+      sessionId: 'create-openrouter:session:1',
+    })
+    parentTracker.finish({
+      candidate: {
+        id: 'same-asset',
+        schemaVersion: 2,
+      },
+      status: 'complete',
+    })
+
+    const editTracker = createAgentSessionTracker({
+      now: createNow(),
+      parentSessions: parentTracker.getSnapshot().sessions,
+      providerContext: {
+        modelId: 'anthropic/claude-sonnet-4.5',
+        provider: 'openrouter',
+        reasoningEffort: 'high',
+      },
+      runId: 'edit-openrouter',
+    })
+    const editPrepared = editTracker.prepareRequest({
+      candidateJson: {
+        id: 'same-asset',
+        schemaVersion: 2,
+      },
+      prompt: {
+        metadata: {
+          imageAttachmentCount: 0,
+          mode: 'repair',
+          selectedAssetId: null,
+        },
+        system: 'system',
+        user: 'edit prompt',
+      },
+      replayContent: 'edit prompt',
+      validationFeedback: null,
+    })
+
+    expect(editPrepared).toMatchObject({
+      providerSessionId: 'create-openrouter:session:1',
+      sessionId: 'edit-openrouter:session:1',
+    })
+    expect(editTracker.getSnapshot().sessions[0]?.providerState).toMatchObject({
+      openRouterSessionId: 'create-openrouter:session:1',
+    })
   })
 
 
