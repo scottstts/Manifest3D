@@ -1,5 +1,9 @@
 import { Canvas } from '@react-three/fiber'
-import type { ComponentProps } from 'react'
+import type {
+  ComponentProps,
+  PointerEvent as ReactPointerEvent,
+  WheelEvent as ReactWheelEvent,
+} from 'react'
 import {
   Suspense,
   lazy,
@@ -9,6 +13,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { flushSync } from 'react-dom'
 import { Quaternion } from 'three'
 import type {
   SceneAssetInstance,
@@ -70,6 +75,13 @@ const webgpuRendererFactory =
 
 const PathTracingCanvas = lazy(() => import('./pathtracer/PathTracingCanvas'))
 
+function isPathTracingViewportInputTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLCanvasElement &&
+    target.classList.contains('webgpu-stage__canvas')
+  )
+}
+
 export function WebGPUCanvas({
   activeTransformTool,
   assets,
@@ -92,6 +104,7 @@ export function WebGPUCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const cameraQuaternionRef = useRef(new Quaternion())
   const cameraInteractionSettleTimeoutRef = useRef<number | null>(null)
+  const pathTracingInputSignalRef = useRef(0)
   const [status, setStatus] = useState<CanvasStatus>({ type: 'checking' })
   const [cameraQuaternionRevision, setCameraQuaternionRevision] = useState(0)
   const [cameraSnapshot, setCameraSnapshot] =
@@ -99,6 +112,10 @@ export function WebGPUCanvas({
   const [
     isPathTracingCameraInteractionActive,
     setIsPathTracingCameraInteractionActive,
+  ] = useState(false)
+  const [
+    isPathTracingDefaultPreviewHandoffPending,
+    setIsPathTracingDefaultPreviewHandoffPending,
   ] = useState(false)
   const [viewportSize, setViewportSize] = useState({ height: 1, width: 1 })
 
@@ -179,6 +196,10 @@ export function WebGPUCanvas({
 
   const shouldRenderCanvas =
     status.type === 'initializing' || status.type === 'ready'
+  const pathTracingDefaultPreviewActive =
+    renderMode === 'pathtracer' &&
+    (isPathTracingCameraInteractionActive ||
+      isPathTracingDefaultPreviewHandoffPending)
   const handleCameraQuaternionChange = useCallback(() => {
     setCameraQuaternionRevision((revision) => revision + 1)
   }, [])
@@ -202,8 +223,12 @@ export function WebGPUCanvas({
       return
     }
 
+    pathTracingInputSignalRef.current += 1
     clearCameraInteractionSettleTimeout()
-    setIsPathTracingCameraInteractionActive(true)
+    flushSync(() => {
+      setIsPathTracingDefaultPreviewHandoffPending(true)
+      setIsPathTracingCameraInteractionActive(true)
+    })
   }, [clearCameraInteractionSettleTimeout, renderMode])
   const handleCameraInteractionEnded = useCallback(() => {
     if (renderMode !== 'pathtracer') {
@@ -229,6 +254,7 @@ export function WebGPUCanvas({
     clearCameraInteractionSettleTimeout()
     const resetTimeout = window.setTimeout(() => {
       setIsPathTracingCameraInteractionActive(false)
+      setIsPathTracingDefaultPreviewHandoffPending(false)
     }, 0)
 
     return () => window.clearTimeout(resetTimeout)
@@ -240,6 +266,46 @@ export function WebGPUCanvas({
     },
     [clearCameraInteractionSettleTimeout],
   )
+  const handlePathTracingDefaultPreviewFrameReady = useCallback(() => {
+    setIsPathTracingDefaultPreviewHandoffPending(false)
+  }, [])
+  const handleViewportPointerDownCapture = useCallback((
+    event: ReactPointerEvent,
+  ) => {
+    if (!isPathTracingViewportInputTarget(event.target)) {
+      return
+    }
+
+    handleCameraInteractionStarted()
+  }, [handleCameraInteractionStarted])
+  const handleViewportPointerUpCapture = useCallback((
+    event: ReactPointerEvent,
+  ) => {
+    if (!isPathTracingViewportInputTarget(event.target)) {
+      return
+    }
+
+    handleCameraInteractionEnded()
+  }, [handleCameraInteractionEnded])
+  const handleViewportPointerCancelCapture = useCallback((
+    event: ReactPointerEvent,
+  ) => {
+    if (!isPathTracingViewportInputTarget(event.target)) {
+      return
+    }
+
+    handleCameraInteractionEnded()
+  }, [handleCameraInteractionEnded])
+  const handleViewportWheelCapture = useCallback((
+    event: ReactWheelEvent,
+  ) => {
+    if (!isPathTracingViewportInputTarget(event.target)) {
+      return
+    }
+
+    handleCameraInteractionStarted()
+    handleCameraInteractionEnded()
+  }, [handleCameraInteractionEnded, handleCameraInteractionStarted])
 
   return (
     <div
@@ -265,7 +331,11 @@ export function WebGPUCanvas({
               onSelectionCleared()
             }
           }}
+          onPointerDownCapture={handleViewportPointerDownCapture}
           onPointerMissed={onSelectionCleared}
+          onPointerCancelCapture={handleViewportPointerCancelCapture}
+          onPointerUpCapture={handleViewportPointerUpCapture}
+          onWheelCapture={handleViewportWheelCapture}
           shadows
         >
           <WebGPUScene
@@ -280,6 +350,7 @@ export function WebGPUCanvas({
             onCameraInteractionStarted={handleCameraInteractionStarted}
             onCameraQuaternionChange={handleCameraQuaternionChange}
             onCameraSnapshotChange={handleCameraSnapshotChange}
+            pathTracingDefaultPreviewActive={pathTracingDefaultPreviewActive}
             renderMode={renderMode}
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             selectedTargetId={selectedTargetId}
@@ -302,7 +373,12 @@ export function WebGPUCanvas({
             leftPanelOcclusionWidth={leftPanelOcclusionWidth}
             materialAnimationValuesByInstance={materialAnimationValuesByInstance}
             denoiseEnabled={pathTracingDenoiseEnabled}
+            isDefaultPreviewActive={pathTracingDefaultPreviewActive}
+            inputPrioritySignalRef={pathTracingInputSignalRef}
             isCameraInteractionActive={isPathTracingCameraInteractionActive}
+            onDefaultPreviewFrameReady={
+              handlePathTracingDefaultPreviewFrameReady
+            }
             rightPanelOcclusionWidth={rightPanelOcclusionWidth}
             worldMode={worldMode}
           />

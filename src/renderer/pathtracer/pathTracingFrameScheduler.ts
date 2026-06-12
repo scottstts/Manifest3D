@@ -5,10 +5,16 @@ export type PathTracingFrameState = {
   sampleCount: number
 }
 
-export type PathTracingSampleLimitState = {
-  interactionSampleLimit: number
+export type PathTracingDefaultPreviewState = {
+  hasPriorityInputSignal: boolean
   isCameraInteractionActive: boolean
-  maxSamples: number
+}
+
+export type PathTracingDefaultPreviewHandoffState = {
+  didPresentPathTracingFrame: boolean
+  isCameraInteractionActive: boolean
+  isDefaultPreviewActive: boolean
+  needsFreshFrameBeforeReveal: boolean
 }
 
 export type PathTracingFinalPostState = {
@@ -64,16 +70,24 @@ export function shouldScheduleNextPathTracingFrame({
   return needsSceneUpload || needsFinalPost || sampleCount < maxSamples
 }
 
-export function getPathTracingSampleLimit({
-  interactionSampleLimit,
+export function shouldPausePathTracingForDefaultPreview({
+  hasPriorityInputSignal,
   isCameraInteractionActive,
-  maxSamples,
-}: PathTracingSampleLimitState) {
-  if (!isCameraInteractionActive) {
-    return maxSamples
+}: PathTracingDefaultPreviewState) {
+  return isCameraInteractionActive || hasPriorityInputSignal
+}
+
+export function shouldCompletePathTracingDefaultPreviewHandoff({
+  didPresentPathTracingFrame,
+  isCameraInteractionActive,
+  isDefaultPreviewActive,
+  needsFreshFrameBeforeReveal,
+}: PathTracingDefaultPreviewHandoffState) {
+  if (!isDefaultPreviewActive || isCameraInteractionActive) {
+    return false
   }
 
-  return Math.min(maxSamples, Math.max(1, Math.floor(interactionSampleLimit)))
+  return didPresentPathTracingFrame || !needsFreshFrameBeforeReveal
 }
 
 export function shouldRunPathTracingFinalPost({

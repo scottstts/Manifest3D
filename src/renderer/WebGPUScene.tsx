@@ -60,6 +60,7 @@ type WebGPUSceneProps = {
   onCameraInteractionStarted?: () => void
   onCameraQuaternionChange: () => void
   onCameraSnapshotChange?: (snapshot: ViewportCameraSnapshot) => void
+  pathTracingDefaultPreviewActive: boolean
   renderMode: ViewportRenderMode
   rightPanelOcclusionWidth: number
   selectedTargetId: string | null
@@ -132,6 +133,7 @@ export function WebGPUScene({
   onCameraInteractionStarted,
   onCameraQuaternionChange,
   onCameraSnapshotChange,
+  pathTracingDefaultPreviewActive,
   renderMode,
   rightPanelOcclusionWidth,
   selectedTargetId,
@@ -157,7 +159,8 @@ export function WebGPUScene({
   const selectedTransformHandle = selectedTargetId
     ? assetGroupHandles.get(selectedTargetId) ?? null
     : null
-  const isPathTracingOverlay = renderMode === 'pathtracer'
+  const usesPathTracingInteractionProxy =
+    renderMode === 'pathtracer' && !pathTracingDefaultPreviewActive
   const orbitDistanceLimits = computeOrbitDistanceLimits(
     assetGroupHandles,
     selectedTargetId,
@@ -222,7 +225,7 @@ export function WebGPUScene({
         onTransformEnded={onTransformEnded}
         onTransformStarted={onTransformStarted}
       />
-      {isPathTracingOverlay ? (
+      {usesPathTracingInteractionProxy ? (
         <PathTracingInteractionWorld />
       ) : (
         <>
@@ -234,7 +237,7 @@ export function WebGPUScene({
       {assets.map((asset) => (
         <ManifestAssetObject
           instance={asset}
-          isInteractionProxy={isPathTracingOverlay}
+          isInteractionProxy={usesPathTracingInteractionProxy}
           isSelected={asset.instanceId === selectedTargetId}
           jointPreviewPoses={
             jointPreviewPosesByInstance[asset.instanceId] ?? emptyJointPoseValues

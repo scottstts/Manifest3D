@@ -1,5 +1,6 @@
 import {
   type MutableRefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -35,8 +36,9 @@ import {
 } from './pathTracingDenoisePipeline'
 import {
   formatPathTracingSampleCounter,
-  getPathTracingSampleLimit,
   shouldDeferPathTracingWork,
+  shouldCompletePathTracingDefaultPreviewHandoff,
+  shouldPausePathTracingForDefaultPreview,
   shouldRunPathTracingFinalPost,
   shouldScheduleNextPathTracingFrame,
   type PathTracingSampleCounterDenoiseStatus,
@@ -61,10 +63,13 @@ export type PathTracingCanvasProps = {
   assets: readonly SceneAssetInstance[]
   cameraSnapshot: ViewportCameraSnapshot | null
   denoiseEnabled: boolean
+  inputPrioritySignalRef: MutableRefObject<number>
   isCameraInteractionActive: boolean
+  isDefaultPreviewActive: boolean
   jointPreviewPosesByInstance: Readonly<Record<string, JointPoseValues>>
   leftPanelOcclusionWidth: number
   materialAnimationValuesByInstance: Readonly<Record<string, MaterialAnimationValues>>
+  onDefaultPreviewFrameReady: () => void
   rightPanelOcclusionWidth: number
   worldMode: ViewportWorldMode
 }
@@ -112,10 +117,13 @@ export function PathTracingCanvas({
   assets,
   cameraSnapshot,
   denoiseEnabled,
+  inputPrioritySignalRef,
   isCameraInteractionActive,
+  isDefaultPreviewActive,
   jointPreviewPosesByInstance,
   leftPanelOcclusionWidth,
   materialAnimationValuesByInstance,
+  onDefaultPreviewFrameReady,
   rightPanelOcclusionWidth,
   worldMode,
 }: PathTracingCanvasProps) {
@@ -132,6 +140,10 @@ export function PathTracingCanvas({
   const finalPostDirtyRef = useRef(true)
   const requestFrameRef = useRef<(() => void) | null>(null)
   const sceneUploadPromiseRef = useRef<Promise<void> | null>(null)
+  const needsFreshDefaultPreviewHandoffFrameRef = useRef(false)
+  const currentDefaultPreviewActiveRef = useRef(isDefaultPreviewActive)
+  const onDefaultPreviewFrameReadyRef = useRef(onDefaultPreviewFrameReady)
+  const lastHandledInputPrioritySignalRef = useRef(0)
   const sampleOptions = useMemo(() => getPathTracingMaxSampleOptions(), [])
   const [selectedMaxSamples, setSelectedMaxSamples] =
     useState<PathTracingMaxSampleCount>(() =>
@@ -162,6 +174,25 @@ export function PathTracingCanvas({
       ),
     [viewportSize.height, viewportSize.width],
   )
+
+  const completeDefaultPreviewHandoffIfReady = useCallback((
+    didPresentPathTracingFrame: boolean,
+  ) => {
+    if (
+      !shouldCompletePathTracingDefaultPreviewHandoff({
+        didPresentPathTracingFrame,
+        isCameraInteractionActive: currentCameraInteractionActiveRef.current,
+        isDefaultPreviewActive: currentDefaultPreviewActiveRef.current,
+        needsFreshFrameBeforeReveal:
+          needsFreshDefaultPreviewHandoffFrameRef.current,
+      })
+    ) {
+      return
+    }
+
+    needsFreshDefaultPreviewHandoffFrameRef.current = false
+    onDefaultPreviewFrameReadyRef.current()
+  }, [])
 
   useEffect(() => {
     const container = containerRef.current
@@ -288,6 +319,9 @@ export function PathTracingCanvas({
 
     syncPathTracingRendererSize(runtime, viewportSize, rendererDpr)
     finalPostDirtyRef.current = true
+    if (currentDefaultPreviewActiveRef.current) {
+      needsFreshDefaultPreviewHandoffFrameRef.current = true
+    }
     resetPathTracingCameraAndSamples({
       lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth: currentLeftPanelOcclusionWidthRef.current,
@@ -313,6 +347,9 @@ export function PathTracingCanvas({
     }
 
     finalPostDirtyRef.current = true
+    if (currentDefaultPreviewActiveRef.current) {
+      needsFreshDefaultPreviewHandoffFrameRef.current = true
+    }
     resetPathTracingCameraAndSamples({
       lastPublishedSampleCounterTextRef,
       leftPanelOcclusionWidth,
@@ -343,6 +380,9 @@ export function PathTracingCanvas({
     })
     needsSceneUploadRef.current = true
     finalPostDirtyRef.current = true
+    if (currentDefaultPreviewActiveRef.current) {
+      needsFreshDefaultPreviewHandoffFrameRef.current = true
+    }
     publishPathTracingSampleCount({
       lastPublishedSampleCounterTextRef,
       maxSamples: currentMaxSamplesRef.current,
@@ -367,8 +407,46 @@ export function PathTracingCanvas({
 
   useEffect(() => {
     currentCameraInteractionActiveRef.current = isCameraInteractionActive
+
+    if (isCameraInteractionActive) {
+      const runtime = runtimeRef.current
+
+      needsFreshDefaultPreviewHandoffFrameRef.current = true
+
+      if (runtime) {
+        finalPostDirtyRef.current = true
+        resetPathTracingCameraAndSamples({
+          lastPublishedSampleCounterTextRef,
+          leftPanelOcclusionWidth: currentLeftPanelOcclusionWidthRef.current,
+          maxSamples: currentMaxSamplesRef.current,
+          rightPanelOcclusionWidth: currentRightPanelOcclusionWidthRef.current,
+          runtime,
+          sampleCounterRef,
+          snapshot: currentCameraSnapshotRef.current,
+          viewportSize: currentViewportSizeRef.current,
+        })
+      }
+    }
+
+    completeDefaultPreviewHandoffIfReady(false)
     requestPathTracingFrame(requestFrameRef)
-  }, [isCameraInteractionActive])
+  }, [completeDefaultPreviewHandoffIfReady, isCameraInteractionActive])
+
+  useEffect(() => {
+    currentDefaultPreviewActiveRef.current = isDefaultPreviewActive
+
+    if (!isDefaultPreviewActive) {
+      needsFreshDefaultPreviewHandoffFrameRef.current = false
+      return
+    }
+
+    completeDefaultPreviewHandoffIfReady(false)
+    requestPathTracingFrame(requestFrameRef)
+  }, [completeDefaultPreviewHandoffIfReady, isDefaultPreviewActive])
+
+  useEffect(() => {
+    onDefaultPreviewFrameReadyRef.current = onDefaultPreviewFrameReady
+  }, [onDefaultPreviewFrameReady])
 
   useEffect(() => {
     currentMaxSamplesRef.current = selectedMaxSamples
@@ -473,6 +551,35 @@ export function PathTracingCanvas({
         return
       }
 
+      const maxSamples = currentMaxSamplesRef.current
+      const hasPriorityInputSignal =
+        inputPrioritySignalRef.current !==
+        lastHandledInputPrioritySignalRef.current
+
+      if (hasPriorityInputSignal) {
+        lastHandledInputPrioritySignalRef.current =
+          inputPrioritySignalRef.current
+        needsFreshDefaultPreviewHandoffFrameRef.current = true
+      }
+
+      if (
+        shouldPausePathTracingForDefaultPreview({
+          hasPriorityInputSignal,
+          isCameraInteractionActive: currentCameraInteractionActiveRef.current,
+        })
+      ) {
+        publishPathTracingSampleCount({
+          lastPublishedSampleCounterTextRef,
+          maxSamples,
+          sampleCount: Math.min(
+            maxSamples,
+            Math.floor(runtime.pathTracer.samples),
+          ),
+          sampleCounterRef,
+        })
+        return
+      }
+
       if (
         shouldDeferPathTracingWork({
           hasPendingInput: hasPendingPathTracingInput(),
@@ -487,19 +594,13 @@ export function PathTracingCanvas({
         return
       }
 
-      const maxSamples = currentMaxSamplesRef.current
-      const sampleLimit = getPathTracingSampleLimit({
-        interactionSampleLimit:
-          pathTracingViewportConfig.interaction.activeSampleLimit,
-        isCameraInteractionActive: currentCameraInteractionActiveRef.current,
-        maxSamples,
-      })
       let didRenderSample = false
 
-      if (runtime.pathTracer.samples < sampleLimit) {
+      if (runtime.pathTracer.samples < maxSamples) {
         runtime.pathTracer.renderSample()
         finalPostDirtyRef.current = true
         didRenderSample = true
+        completeDefaultPreviewHandoffIfReady(true)
       }
 
       const displayedSampleCount = Math.min(
@@ -551,6 +652,7 @@ export function PathTracingCanvas({
         )
 
         finalPostDirtyRef.current = false
+        completeDefaultPreviewHandoffIfReady(true)
         publishPathTracingSampleCount({
           denoiseStatus,
           lastPublishedSampleCounterTextRef,
@@ -563,7 +665,7 @@ export function PathTracingCanvas({
 
       if (
         shouldScheduleNextPathTracingFrame({
-          maxSamples: sampleLimit,
+          maxSamples,
           needsFinalPost: shouldRunFinalPost,
           needsSceneUpload: needsSceneUploadRef.current,
           sampleCount: runtime.pathTracer.samples,
@@ -591,11 +693,14 @@ export function PathTracingCanvas({
         deferredFrameTimeoutRef.current = null
       }
     }
-  }, [])
+  }, [completeDefaultPreviewHandoffIfReady, inputPrioritySignalRef])
 
   return (
     <div className="pathtracing-stage" ref={containerRef}>
-      <canvas ref={canvasRef} />
+      <canvas
+        ref={canvasRef}
+        style={{ visibility: isDefaultPreviewActive ? 'hidden' : 'visible' }}
+      />
       <details
         className="pathtracing-sample-counter"
         onBlur={(event) => {

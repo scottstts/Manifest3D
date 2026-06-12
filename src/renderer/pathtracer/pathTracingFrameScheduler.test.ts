@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatPathTracingSampleCounter,
-  getPathTracingSampleLimit,
   shouldDeferPathTracingWork,
+  shouldCompletePathTracingDefaultPreviewHandoff,
+  shouldPausePathTracingForDefaultPreview,
   shouldRunPathTracingFinalPost,
   shouldScheduleNextPathTracingFrame,
 } from './pathTracingFrameScheduler'
@@ -52,24 +53,75 @@ describe('path tracing viewport frame scheduling', () => {
     ).toBe(true)
   })
 
-  it('caps live accumulation while direct camera input is active', () => {
+  it('pauses path tracing work while the default WebGPU preview handles direct camera input', () => {
     expect(
-      getPathTracingSampleLimit({
-        interactionSampleLimit: 1,
+      shouldPausePathTracingForDefaultPreview({
+        hasPriorityInputSignal: false,
         isCameraInteractionActive: true,
-        maxSamples: 256,
       }),
-    ).toBe(1)
+    ).toBe(true)
   })
 
-  it('uses the selected max sample count once camera input has settled', () => {
+  it('pauses path tracing work immediately when viewport input is captured before OrbitControls starts', () => {
     expect(
-      getPathTracingSampleLimit({
-        interactionSampleLimit: 1,
+      shouldPausePathTracingForDefaultPreview({
+        hasPriorityInputSignal: true,
         isCameraInteractionActive: false,
-        maxSamples: 256,
       }),
-    ).toBe(256)
+    ).toBe(true)
+  })
+
+  it('resumes path tracing work once camera input has settled', () => {
+    expect(
+      shouldPausePathTracingForDefaultPreview({
+        hasPriorityInputSignal: false,
+        isCameraInteractionActive: false,
+      }),
+    ).toBe(false)
+  })
+
+  it('keeps the default preview visible after settle until a fresh path-traced frame is presented', () => {
+    expect(
+      shouldCompletePathTracingDefaultPreviewHandoff({
+        didPresentPathTracingFrame: false,
+        isCameraInteractionActive: false,
+        isDefaultPreviewActive: true,
+        needsFreshFrameBeforeReveal: true,
+      }),
+    ).toBe(false)
+  })
+
+  it('completes the default preview handoff after the settled path tracer presents a fresh frame', () => {
+    expect(
+      shouldCompletePathTracingDefaultPreviewHandoff({
+        didPresentPathTracingFrame: true,
+        isCameraInteractionActive: false,
+        isDefaultPreviewActive: true,
+        needsFreshFrameBeforeReveal: true,
+      }),
+    ).toBe(true)
+  })
+
+  it('does not complete the default preview handoff while camera input is active', () => {
+    expect(
+      shouldCompletePathTracingDefaultPreviewHandoff({
+        didPresentPathTracingFrame: true,
+        isCameraInteractionActive: true,
+        isDefaultPreviewActive: true,
+        needsFreshFrameBeforeReveal: true,
+      }),
+    ).toBe(false)
+  })
+
+  it('can end the default preview immediately when no camera change dirtied the path-traced frame', () => {
+    expect(
+      shouldCompletePathTracingDefaultPreviewHandoff({
+        didPresentPathTracingFrame: false,
+        isCameraInteractionActive: false,
+        isDefaultPreviewActive: true,
+        needsFreshFrameBeforeReveal: false,
+      }),
+    ).toBe(true)
   })
 })
 

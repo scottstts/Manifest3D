@@ -91,7 +91,7 @@ The viewport has two render modes:
 - default WebGPU/TSL
 - optional WebGL2 path tracer
 
-In path tracer mode, the WebGPU canvas stays mounted but is visually hidden so existing camera controls, selection, picking, and transform flows continue to run. `PathTracingCanvas` overlays the viewport with `pointer-events: none` and mirrors the current camera, world settings, renderable assets, pose preview, and material preview.
+In path tracer mode, the WebGPU canvas stays mounted so existing camera controls, selection, picking, and transform flows continue to run. While the path-traced image is visible, that WebGPU layer uses a lightweight interaction proxy behind the `pointer-events: none` path-tracing overlay. During direct camera interaction, the path-traced canvas is temporarily hidden and the WebGPU layer renders the normal default viewport preview. When the navigation settle delay expires, path tracing resumes from the latest mirrored camera snapshot, and the default preview remains visible until the path tracer presents its first fresh frame at that camera.
 
 Path tracer mode hides the animation panel and clears active preview playback when entered. The path-traced view is a still progressive render, not an animation preview surface.
 
@@ -99,7 +99,7 @@ Path tracer mode hides the animation panel and clears active preview playback wh
 
 The path tracer pipeline is isolated in `src/renderer/pathtracer/`. It rebuilds a path-tracing-specific Three scene from the same scene snapshot, applies the same world lighting/ground settings, converts Manifest3D node materials to plain `MeshStandardMaterial`, and uses `three-gpu-pathtracer` for progressive emissive-lighting samples.
 
-Render tuning such as bounces, bloom, emission gain, texture size, tile layout, emissive mesh sampling, interaction sample cap, and max sample count lives in `pathTracingConfig.ts`.
+Render tuning such as bounces, bloom, emission gain, texture size, tile layout, emissive mesh sampling, and max sample count lives in `pathTracingConfig.ts`.
 
 The live path tracer viewport uses a `1x1` tile layout so early convergence fills the whole viewport. Accumulation stops once the selected max sample count is reached and restarts only when path tracer inputs change.
 
@@ -143,11 +143,13 @@ It does not add proxy lights or alter emissive strength, bloom, or tone mapping.
 
 When patching the path-tracer material shader at startup, mark the material dirty through Three's base `Material.needsUpdate` setter. Avoid `MaterialBase.needsUpdate`, which can trigger noisy early `compileAsync()` paths before `currentProgram` exists.
 
-## Interaction Sampling
+## Interaction Preview
 
-Direct OrbitControls input in path tracer mode uses an interactive-preview sample cap. While pan/orbit/wheel input is active, `PathTracingCanvas` uses `pathTracingConfig.interaction.activeSampleLimit`. After the navigation settle delay, full progressive accumulation resumes from the current camera.
+Direct OrbitControls input in path tracer mode temporarily switches the visible viewport back to the default WebGPU renderer. While pan/orbit/wheel input is active, `PathTracingCanvas` stays mounted but hides only its canvas and pauses path-tracing render work. `WebGPUScene` disables its path-tracer interaction proxy during that window so the normal WebGPU world, materials, bloom, and outline stack are visible.
 
-This keeps navigation responsive while avoiding expensive full-sample accumulation during active viewport movement.
+Viewport pointer and wheel events are captured on the WebGPU canvas before OrbitControls runs. That capture path synchronously marks the default preview active and mutates an input-priority signal that `PathTracingCanvas` checks immediately before starting any path-tracing sample or final post pass. This prevents queued path-tracing work from taking priority over recorded camera input. JavaScript cannot preempt a `renderSample()` call that is already executing, so keep individual path-tracing work units bounded and do not add multi-sample batches to the live loop.
+
+After the navigation settle delay, path tracing renders the first fresh sample while the WebGPU preview remains visible. Only after that fresh path-traced frame is presented does the WebGPU layer return to the hidden interaction proxy and the path-traced canvas become visible again. This keeps navigation responsive while avoiding path-tracing samples during active viewport movement and prevents a flash of the pre-interaction path-traced camera pose.
 
 ## Final-Frame Denoising
 
